@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- XML 标签对应的样式类 --- */
+
+/* 场景：加粗，顶部间距 */
+.xml-scene {
+  display: block;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+  opacity: 0.9;
+  border-left: 4px solid #009393; /* 装饰线 */
+  padding-left: 0.5rem;
+}
+
+/* 当前任务：半透明背景，圆角 */
+.xml-current-task {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.95em;
+}
+
+/* 参与者 & 环境 & 对话：块级布局 */
+.xml-participants, .xml-environment, .xml-dialogue, .xml-response {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+/* --- Markdown 基础样式 --- */
+.prose { 
+  @apply text-base-content max-w-none; 
+}
+.prose p { 
+  margin-bottom: 0.5rem; 
+  line-height: 1.6;
+}
+.prose code { 
+  @apply bg-base-300 px-1 py-0.5 rounded text-primary font-mono text-sm; 
+}
+.prose pre { 
+  @apply bg-base-300 p-2 rounded-lg overflow-x-auto; 
+}
+
+/* --- 滚动条 --- */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-gray-600 rounded-full; }
+
+html, body, #root {
+  height: 100dvh;
+  overflow: hidden;
+}
