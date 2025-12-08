@@ -5,8 +5,8 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-// 移除了大部分图标，只保留核心 UI 用到的
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pencil, Plus, Trash2, Code, X, Sparkles, AlertCircle } from 'lucide-react';
+// 修复：移除了未使用的 AlertCircle
+import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pencil, Plus, Trash2, Code, X, Sparkles } from 'lucide-react';
 
 function App() {
   const [selectedCharId, setSelectedCharId] = useState<number>();
@@ -79,7 +79,6 @@ function App() {
 
     setIsGenImage(true);
     try {
-      // 这里的处理变简单了，因为没有复杂的 xml 标签要清理
       let prompt = lastMsg.slice(0, 300); 
       if (settings.baidu_appid) prompt = await translateToEnglish(prompt, settings.baidu_appid, settings.baidu_secret);
       
@@ -174,7 +173,6 @@ function App() {
                 ) : (
                   <div className={`${isUser ? 'chat-bubble chat-bubble-primary shadow-lg' : 'w-full max-w-3xl bg-transparent text-base-content p-0'}`}>
                     <div className={`prose max-w-none ${isUser ? 'text-sm' : ''}`}>
-                      {/* 回归纯净 Markdown，不使用自定义组件 */}
                       <ReactMarkdown rehypePlugins={[rehypeRaw]}>
                         {m.content}
                       </ReactMarkdown>
@@ -212,7 +210,7 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><SidebarContent /></div>
       
-      {/* Settings Modal (简化的代码) */}
+      {/* Settings Modal */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-base-100 w-full max-w-lg max-h-[85vh] rounded-2xl flex flex-col shadow-2xl border border-white/10">
