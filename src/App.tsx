@@ -5,7 +5,6 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-// 修复：已从下方列表中删除了未使用的 'Code'
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, 
   Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, 
@@ -17,22 +16,20 @@ const HELP_DOC = `
 
 ### 1. 基础功能
 - **新建角色**: 点击侧边栏顶部的 \`+\` 号。
-- **角色设定**: 点击顶部的铅笔图标。可在 Description 中填入自然语言设定。
-- **复制角色**: 侧边栏角色右侧的复制图标，开启“平行宇宙”剧情。
+- **角色设定**: 点击顶部的铅笔图标。
+- **复制角色**: 侧边栏角色右侧的复制图标。
 
 ### 2. 记忆与总结
-- **长时记忆**: 点击顶部的 **📖 总结按钮**，AI 会压缩历史并存入记忆。
-- **清空对话**: 点击 **橡皮擦**。只清屏，不删记忆。
+- **长时记忆**: 点击顶部的 **📖 总结按钮**。
+- **清空对话**: 点击 **橡皮擦**。
 
-### 3. 世界书 (Lorebook)
+### 3. 世界书
 - 点击侧边栏底部的 **📚 世界书**。
-- 设置关键词和内容，对话触发关键词时自动注入设定。
 
 ### 4. 图像生成
 - 点击输入框左侧图片图标。
-- 系统会自动清理 URL 空格并翻译提示词。
 
-### 5. 高级操作
+### 5. 高级
 - **重新生成**: 悬停在 AI 消息上点击 🔄。
 - **编辑消息**: 悬停在消息上点击 ✏️。
 `.trim();
@@ -204,36 +201,36 @@ function App() {
   };
 
   const SidebarContent = () => (
-    <div className="flex flex-col h-full bg-base-100/95 backdrop-blur-xl text-base-content w-80 p-4 border-r border-white/5 shadow-2xl">
+    <div className="flex flex-col h-full bg-base-200 text-base-content w-80 p-4 border-r border-base-content/10 shadow-2xl">
       <div className="flex justify-between items-center mb-6 pl-2">
-        <h2 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary flex items-center gap-2">
-            <Sparkles size={20} className="text-primary"/> SimpleRP
+        <h2 className="text-xl font-black flex items-center gap-2 text-primary">
+            <Sparkles size={20}/> SimpleRP
         </h2>
         <div className="flex gap-1">
-             <button className="btn btn-sm btn-ghost btn-square hover:bg-white/10" onClick={() => { setShowHelp(true); setMobileMenuOpen(false); }} title="说明"><HelpCircle size={18}/></button>
-             <button className="btn btn-sm btn-ghost btn-square hover:bg-white/10" onClick={() => {
+             <button className="btn btn-sm btn-ghost btn-square" onClick={() => { setShowHelp(true); setMobileMenuOpen(false); }} title="说明"><HelpCircle size={18}/></button>
+             <button className="btn btn-sm btn-ghost btn-square" onClick={() => {
                 const name = prompt("角色名:"); if(name) db.characters.add({ name, description:"", first_message:"你好！", summary:"" });
              }}><Plus size={20}/></button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
         {characters?.map(c => (
-          <div key={c.id} className={`group relative flex items-center rounded-xl p-3 transition-all duration-200 border border-transparent ${selectedCharId===c.id ? 'bg-gradient-to-r from-primary/20 to-transparent border-primary/30 shadow-lg translate-x-1' : 'hover:bg-white/5 hover:translate-x-1'}`}>
+          <div key={c.id} className={`group relative flex items-center rounded-lg p-3 transition-all ${selectedCharId===c.id ? 'bg-primary text-primary-content shadow-md' : 'hover:bg-base-300'}`}>
             <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }}>
-                <div className={`font-bold truncate ${selectedCharId===c.id ? 'text-primary' : 'text-base-content/80'}`}>{c.name}</div>
+                <div className="font-bold truncate">{c.name}</div>
             </div>
             {selectedCharId === c.id && (
                 <div className="flex items-center gap-1">
-                    <button className="btn btn-xs btn-ghost btn-square opacity-60 hover:opacity-100" title="复制" onClick={(e)=>handleDuplicate(e, c.id!)}><Copy size={14}/></button>
-                    <button className="btn btn-xs btn-ghost btn-square opacity-60 hover:opacity-100 text-error" title="删除" onClick={(e)=>{e.stopPropagation();if(confirm("删除?")) db.characters.delete(c.id!)}}><Trash2 size={14}/></button>
+                    <button className="btn btn-xs btn-ghost btn-square text-primary-content/70 hover:text-white" title="复制" onClick={(e)=>handleDuplicate(e, c.id!)}><Copy size={14}/></button>
+                    <button className="btn btn-xs btn-ghost btn-square text-primary-content/70 hover:text-white" title="删除" onClick={(e)=>{e.stopPropagation();if(confirm("删除?")) db.characters.delete(c.id!)}}><Trash2 size={14}/></button>
                 </div>
             )}
           </div>
         ))}
       </div>
-      <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
-        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowLorebook(true); setMobileMenuOpen(false); }}><Book size={16}/> 世界书 / Lore</button>
-        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}><SettingsIcon size={16}/> 系统设置</button>
+      <div className="mt-4 pt-4 border-t border-base-content/10 space-y-2">
+        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal" onClick={() => { setShowLorebook(true); setMobileMenuOpen(false); }}><Book size={16}/> 世界书 / Lore</button>
+        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}><SettingsIcon size={16}/> 系统设置</button>
       </div>
     </div>
   );
@@ -242,30 +239,35 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full font-sans text-base-content overflow-hidden">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e => setMobileMenuOpen(e.target.checked)} />
       
-      <div className="drawer-content flex flex-col h-full overflow-hidden relative bg-transparent">
+      {/* 
+         修复核心：
+         1. 移除 absolute 背景。
+         2. 使用实色背景 bg-base-100。
+      */}
+      <div className="drawer-content flex flex-col h-full overflow-hidden relative bg-base-100">
         
-        {/* Navbar */}
-        <div className="flex-none p-2 z-30 bg-gradient-to-b from-black/20 to-transparent">
-            <div className="navbar min-h-[3rem] glass-panel rounded-2xl px-4">
+        {/* Navbar (Solid Background) */}
+        <div className="flex-none p-2 z-30 bg-base-100 border-b border-base-300 shadow-sm">
+            <div className="navbar min-h-[3rem] px-2">
                 <div className="flex-none md:hidden mr-2"><label htmlFor="my-drawer" className="btn btn-square btn-ghost btn-sm"><Menu/></label></div>
                 <div className="flex-1 overflow-hidden">
                     <span className="font-bold text-base md:text-lg truncate flex items-center gap-2">
                         {currentChar?.name}
-                        <button className="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100" onClick={() => setShowCharEdit(true)}><Pencil size={12}/></button>
+                        <button className="btn btn-xs btn-ghost btn-circle" onClick={() => setShowCharEdit(true)}><Pencil size={12}/></button>
                     </span>
                 </div>
                 <div className="flex-none flex items-center gap-2">
                     <button className="btn btn-sm btn-ghost btn-square text-info" onClick={handleSummarize} disabled={isSummarizing} title="总结"><BookOpen size={18}/></button>
                     <button className="btn btn-sm btn-ghost btn-square text-error" onClick={handleClearChat} title="清空"><Eraser size={18}/></button>
-                    <select className="select select-bordered select-sm max-w-[5rem] md:max-w-[8rem] bg-base-100/50 border-white/10 text-xs" value={settings?.model || ''} onChange={(e) => db.settings.update(settings!.id!, { model: e.target.value })}>
+                    <select className="select select-bordered select-sm max-w-[5rem] md:max-w-[8rem] text-xs" value={settings?.model || ''} onChange={(e) => db.settings.update(settings!.id!, { model: e.target.value })}>
                         {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                 </div>
             </div>
         </div>
 
-        {/* Chat List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 z-10 scroll-smooth w-full max-w-5xl mx-auto">
+        {/* Chat List (Solid Background) */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 z-10 scroll-smooth w-full max-w-5xl mx-auto bg-base-100">
           {messages?.map((m, index) => {
             const isUser = m.role === 'user';
             const isImage = !!m.image;
@@ -283,14 +285,14 @@ function App() {
                   </div>
                 </div>
                 {isImage ? (
-                  <div className="chat-bubble p-1 bg-base-200/50 backdrop-blur rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                  <div className="chat-bubble p-1 bg-base-200 rounded-2xl overflow-hidden shadow-md border border-base-300">
                     <img src={m.image} className="max-w-full md:max-w-md object-cover rounded-xl"/>
                   </div>
                 ) : (
-                  <div className={`chat-bubble shadow-xl backdrop-blur-md border ${isUser ? 'chat-bubble-primary bg-gradient-to-br from-primary to-accent text-primary-content border-white/10' : 'bg-base-200/80 text-base-content border-white/5'} max-w-full`}>
+                  <div className={`chat-bubble shadow-md border ${isUser ? 'chat-bubble-primary' : 'bg-base-200 text-base-content border-base-300'} max-w-full`}>
                     {isEditing ? (
                         <div className="flex flex-col gap-2 min-w-[200px]">
-                            <textarea className="textarea textarea-bordered textarea-sm w-full text-base-content bg-base-100/50" value={editContent} onChange={e => setEditContent(e.target.value)} rows={3}/>
+                            <textarea className="textarea textarea-bordered textarea-sm w-full text-base-content bg-base-100" value={editContent} onChange={e => setEditContent(e.target.value)} rows={3}/>
                             <div className="flex justify-end gap-2"><button className="btn btn-xs btn-ghost" onClick={()=>setEditingMsgId(null)}>Cancel</button><button className="btn btn-xs btn-primary" onClick={saveEdit}>Save</button></div>
                         </div>
                     ) : (
@@ -303,44 +305,44 @@ function App() {
               </div>
             );
           })}
-          {isTyping && <div className="chat chat-start"><div className="chat-bubble bg-transparent text-xs opacity-50 animate-pulse">Thinking...</div></div>}
+          {isTyping && <div className="chat chat-start"><div className="chat-bubble bg-base-200 text-xs opacity-50 animate-pulse">Thinking...</div></div>}
           <div ref={bottomRef} className="h-4"/>
         </div>
 
-        {/* Input Area */}
-        <div className="flex-none p-2 md:p-4 z-20 bg-gradient-to-t from-black/20 to-transparent">
-          <div className="max-w-4xl mx-auto flex gap-2 items-end glass-panel p-2 rounded-3xl ring-1 ring-white/10 focus-within:ring-primary/50 transition-all">
+        {/* Input Area (Solid Background) */}
+        <div className="flex-none p-2 md:p-4 z-20 bg-base-100 border-t border-base-300">
+          <div className="max-w-4xl mx-auto flex gap-2 items-end solid-panel p-2 rounded-3xl bg-base-200">
             <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={openGenImageModal} disabled={isGenImage}>
                {isGenImage ? <span className="loading loading-spinner loading-xs"/> : <ImageIcon size={20}/>}
             </button>
             <textarea 
-              className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-32 leading-relaxed resize-none py-2 px-2 focus:outline-none bg-transparent placeholder:text-white/20 text-base" 
+              className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-32 leading-relaxed resize-none py-2 px-2 focus:outline-none bg-transparent text-base" 
               value={input} rows={1} 
               onChange={e=>{ setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} 
               onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); handleSend(); } }} 
               placeholder="发送指令..."
             />
-            <button className="btn btn-circle btn-primary btn-sm shrink-0 mb-1 shadow-lg shadow-primary/40 border-0 bg-gradient-to-r from-primary to-accent text-white" onClick={handleSend} disabled={isTyping}><Send size={18}/></button>
+            <button className="btn btn-circle btn-primary btn-sm shrink-0 mb-1 shadow-md" onClick={handleSend} disabled={isTyping}><Send size={18}/></button>
           </div>
         </div>
       </div>
       
       {/* Sidebar */}
       <div className="drawer-side z-[50]">
-        <label htmlFor="my-drawer" className="drawer-overlay backdrop-blur-sm bg-black/40"></label>
+        <label htmlFor="my-drawer" className="drawer-overlay bg-black/60"></label>
         <SidebarContent />
       </div>
       
-      {/* Modals */}
+      {/* Modals (Solid) */}
       {showSettings && settings && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-base-100 w-full max-w-lg rounded-3xl flex flex-col shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
-            <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl">系统设置</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button></div>
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300 max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">系统设置</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button></div>
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.settings.update(settings.id!, Object.fromEntries(fd) as any).then(()=>{ setShowSettings(false); window.location.reload(); }); }} className="p-6 space-y-4">
-               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full bg-base-200/50 mb-2"/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full bg-base-200/50"/></div>
-               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 bg-base-200/50 font-mono text-xs"/></div>
-               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full bg-base-200/50"/></div>
-               <div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full bg-base-200/50"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full bg-base-200/50"/></div></div>
+               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full mb-2"/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full"/></div>
+               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 text-xs"/></div>
+               <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div>
+               <div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full"/></div></div>
                <button type="button" className="btn btn-error btn-outline btn-block btn-sm" onClick={handleDeleteAllImages}>删除所有图片</button>
                <button className="btn btn-primary btn-block mt-4 rounded-xl">保存</button>
             </form>
@@ -349,14 +351,14 @@ function App() {
       )}
 
       {showCharEdit && currentChar && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-base-100 w-full max-w-3xl max-h-[90vh] rounded-3xl flex flex-col shadow-2xl border border-white/10">
-            <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div>
-            <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
-               <div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full bg-base-200/50 font-bold text-lg"/></div>
-               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed bg-base-200/50"/></div>
-               <div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs bg-base-300/50"/></div>
-               <div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20 bg-base-200/50"/></div>
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-base-100 w-full max-w-3xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl border border-base-300">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div>
+            <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-6 overflow-y-auto space-y-5 flex-1">
+               <div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full font-bold text-lg"/></div>
+               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed"/></div>
+               <div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs"/></div>
+               <div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20"/></div>
                <button className="btn btn-primary btn-block rounded-xl"><Save size={18}/> 保存</button>
             </form>
           </div>
@@ -364,12 +366,12 @@ function App() {
       )}
 
       {showLorebook && selectedCharId && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-3xl flex flex-col shadow-2xl border border-white/10">
-                <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><Book size={20}/> 世界书</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X size={20}/></button></div>
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-xl flex flex-col shadow-2xl border border-base-300">
+                <div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><Book size={20}/> 世界书</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X size={20}/></button></div>
                 <div className="p-4 flex-1 overflow-y-auto custom-scrollbar space-y-3">
                     {lorebookEntries?.map(entry => (
-                        <div key={entry.id} className="collapse collapse-arrow bg-base-200/50 border border-white/5">
+                        <div key={entry.id} className="collapse collapse-arrow bg-base-200 border border-base-300">
                             <input type="checkbox" /> 
                             <div className="collapse-title font-bold text-sm flex items-center gap-2"><span className={entry.isActive ? 'text-success' : 'text-base-content/30'}>●</span>{entry.keywords}</div>
                             <div className="collapse-content space-y-2">
@@ -382,7 +384,6 @@ function App() {
                             </div>
                         </div>
                     ))}
-                    {/* 修复 TS 错误：显式断言 selectedCharId! */}
                     <button className="btn btn-ghost btn-block border-dashed border-2 border-base-content/20" onClick={()=>db.lorebook.add({ char_id: selectedCharId!, keywords: "新词条", content: "", isActive: true })}><Plus size={16}/> 添加</button>
                 </div>
             </div>
@@ -390,11 +391,11 @@ function App() {
       )}
 
       {showGenModal && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-base-100 w-full max-w-lg rounded-3xl flex flex-col shadow-2xl border border-white/10">
-            <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><ImageIcon size={20}/> 生图</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGenModal(false)}><X size={20}/></button></div>
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><ImageIcon size={20}/> 生图</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGenModal(false)}><X size={20}/></button></div>
             <div className="p-6 space-y-4">
-                <textarea className="textarea textarea-bordered h-32 w-full bg-base-200/50 text-sm leading-relaxed" value={genPrompt} onChange={(e) => setGenPrompt(e.target.value)} placeholder="描述..."/>
+                <textarea className="textarea textarea-bordered h-32 w-full text-sm leading-relaxed" value={genPrompt} onChange={(e) => setGenPrompt(e.target.value)} placeholder="描述..."/>
                 <div className="flex gap-3 mt-4"><button className="btn flex-1 rounded-xl" onClick={()=>setShowGenModal(false)}>取消</button><button className="btn btn-primary flex-1 rounded-xl" onClick={executeGenImage}><Sparkles size={16}/> 生成</button></div>
             </div>
           </div>
@@ -402,9 +403,9 @@ function App() {
       )}
 
       {showHelp && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-3xl flex flex-col shadow-2xl border border-white/10">
-            <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><BookOpen size={20}/> 帮助手册</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowHelp(false)}><X size={20}/></button></div>
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-xl flex flex-col shadow-2xl border border-base-300">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><BookOpen size={20}/> 帮助手册</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowHelp(false)}><X size={20}/></button></div>
             <div className="p-6 overflow-y-auto custom-scrollbar">
                 <div className="prose prose-sm max-w-none"><ReactMarkdown>{HELP_DOC}</ReactMarkdown></div>
             </div>
