@@ -57,8 +57,8 @@ export async function initDB() {
     await db.settings.add({
       api_base: import.meta.env.VITE_API_BASE || "https://ark.cn-beijing.volces.com/api/v3",
       api_key: import.meta.env.VITE_API_KEY || "",
-      model: "doubao-pro-4k",
-      model_list: "doubao-pro-4k,ep-xxxxx",
+      model: "",
+      model_list: "",
       sd_url: import.meta.env.VITE_SD_URL || "http://127.0.0.1:7860",
       baidu_appid: "",
       baidu_secret: "",
