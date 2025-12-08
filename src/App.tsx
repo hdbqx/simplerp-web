@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, initDB } from './lib/db';
-import { LLMClient } from './lib/llm'; // 假设 fetchModels 已被移除或未使用，这里只导入 LLMClient
+import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-// 确保导入的图标都在代码里用到了
 import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pencil, Plus, Trash2, Code, X } from 'lucide-react';
 
 function App() {
@@ -107,7 +106,6 @@ function App() {
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e => setMobileMenuOpen(e.target.checked)} />
       
       <div className="drawer-content flex flex-col h-full overflow-hidden bg-base-100">
-        {/* Topbar */}
         <div className="navbar bg-base-100 border-b border-base-content/10 min-h-[3.5rem] z-10 shadow-sm">
           <div className="flex-none md:hidden"><label htmlFor="my-drawer" className="btn btn-square btn-ghost"><Menu/></label></div>
           <div className="flex-1 px-2 mx-2 flex items-center gap-2 overflow-hidden">
@@ -122,7 +120,6 @@ function App() {
           </div>
         </div>
 
-        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-2 md:p-4 space-y-4 bg-base-200/50">
           {currentChar?.custom_css && <style>{currentChar.custom_css}</style>}
 
@@ -132,7 +129,6 @@ function App() {
             return (
               <div key={m.id} className={`chat ${isUser ? 'chat-end' : 'chat-start'}`}>
                 <div className="chat-header opacity-50 text-xs mb-1 flex items-center gap-1">
-                  {/* 使用 User 和 Bot 图标，解决 TS6133 报错 */}
                   {isUser ? <User size={12}/> : <Bot size={12}/>} 
                   {isUser ? 'You' : currentChar?.name}
                 </div>
@@ -143,15 +139,15 @@ function App() {
                     <div className={`prose prose-invert max-w-none ${isUser ? 'text-sm' : ''}`}>
                       <ReactMarkdown 
                         rehypePlugins={[rehypeRaw]}
+                        // 核心修复点：这里加上了 as any，强制绕过 TS 检查
                         components={{
-                          // 修复点：添加 :any 类型，解决 TS7031 报错
                           "response": ({node, ...props}: any) => <div className="xml-response" {...props} />,
                           "scene": ({node, ...props}: any) => <div className="xml-scene" {...props} />,
                           "current_task": ({node, ...props}: any) => <div className="xml-current-task" {...props} />,
                           "participants": ({node, ...props}: any) => <div className="xml-participants" {...props} />,
                           "environment": ({node, ...props}: any) => <div className="xml-environment" {...props} />,
                           "dialogue": ({node, ...props}: any) => <div className="xml-dialogue" {...props} />
-                        }}
+                        } as any} 
                       >
                         {m.content}
                       </ReactMarkdown>
@@ -164,7 +160,6 @@ function App() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div className="p-2 md:p-4 bg-base-100 border-t border-base-content/10">
           <div className="flex gap-2 max-w-4xl mx-auto items-end">
             <button className="btn btn-circle btn-ghost text-accent shrink-0" onClick={handleGenImage} disabled={isGenImage}>
@@ -178,7 +173,6 @@ function App() {
 
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><SidebarContent /></div>
 
-      {/* Settings Modal */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
           <div className="bg-base-100 w-full max-w-lg max-h-[80vh] rounded-xl flex flex-col shadow-2xl">
@@ -186,7 +180,7 @@ function App() {
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.settings.update(settings.id!, Object.fromEntries(fd) as any).then(()=>{ setShowSettings(false); window.location.reload(); }); }} className="p-4 overflow-y-auto space-y-4">
                <div><label className="label-text">API Base</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full"/></div>
                <div><label className="label-text">API Key</label><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full"/></div>
-               <div><label className="label-text">模型列表 (Endpoint ID, 逗号分隔)</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full"/></div>
+               <div><label className="label-text">模型列表 (Endpoint ID)</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full"/></div>
                <div className="divider">生图</div>
                <div><label className="label-text">SD URL (HTTPS)</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div>
                <div className="grid grid-cols-2 gap-2"><input name="baidu_appid" placeholder="AppID" defaultValue={settings.baidu_appid} className="input input-bordered"/><input name="baidu_secret" placeholder="Secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered"/></div>
@@ -196,7 +190,6 @@ function App() {
         </div>
       )}
 
-      {/* Character Edit Modal */}
       {showCharEdit && currentChar && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
           <div className="bg-base-100 w-full max-w-lg max-h-[90vh] rounded-xl flex flex-col shadow-2xl">
@@ -204,19 +197,7 @@ function App() {
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-4 overflow-y-auto space-y-4 flex-1">
                <input name="name" defaultValue={currentChar.name} className="input input-bordered w-full" placeholder="姓名"/>
                <textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered w-full h-20" placeholder="简介"/>
-               
-               {/* XML & CSS 编辑器 - 使用了 Code 图标，解决 TS6133 报错 */}
-               <div className="collapse collapse-arrow bg-base-200">
-                 <input type="checkbox"/>
-                 <div className="collapse-title font-medium text-sm flex items-center gap-2">
-                   <Code size={14}/> XML 模板 & CSS
-                 </div>
-                 <div className="collapse-content space-y-2">
-                   <textarea name="output_template" defaultValue={currentChar.output_template} className="textarea textarea-bordered w-full h-32 font-mono text-xs" placeholder="<response>..."/>
-                   <textarea name="custom_css" defaultValue={currentChar.custom_css} className="textarea textarea-bordered w-full h-20 font-mono text-xs" placeholder="custom css..."/>
-                 </div>
-               </div>
-
+               <div className="collapse collapse-arrow bg-base-200"><input type="checkbox"/><div className="collapse-title font-medium text-sm flex items-center gap-2"><Code size={14}/> XML 模板 & CSS</div><div className="collapse-content space-y-2"><textarea name="output_template" defaultValue={currentChar.output_template} className="textarea textarea-bordered w-full h-32 font-mono text-xs" placeholder="<response>..."/><textarea name="custom_css" defaultValue={currentChar.custom_css} className="textarea textarea-bordered w-full h-20 font-mono text-xs" placeholder="custom css..."/></div></div>
                <div className="grid grid-cols-2 gap-2"><input name="personality" defaultValue={currentChar.personality} className="input input-bordered" placeholder="性格"/><input name="scenario" defaultValue={currentChar.scenario} className="input input-bordered" placeholder="场景"/></div>
                <textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered w-full" placeholder="开场白"/>
                <button className="btn btn-primary btn-block">保存</button>
