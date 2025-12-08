@@ -1,19 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-// 修复：添加 Message 类型导入
-import { db, initDB, LorebookEntry, Message } from './lib/db';
+// 修复 1: 使用 'type' 关键字导入接口，解决 TS1484 报错
+import { db, initDB, type LorebookEntry, type Message } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-// 修复：移除了未使用的 FileText
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, 
   Pencil, Plus, Trash2, Code, X, Sparkles, BookOpen, Eraser, 
   Save, Copy, RefreshCw, Book, HelpCircle 
 } from 'lucide-react';
 
-// === 内置帮助文档 ===
 const HELP_DOC = `
 # 📘 SimpleRP 操作指南
 
@@ -65,7 +63,8 @@ function App() {
     () => selectedCharId ? db.messages.where('char_id').equals(selectedCharId).toArray() : [], 
     [selectedCharId]
   );
-  const lorebookEntries = useLiveQuery(
+  // LorebookEntry 现在被视为类型使用，修复了 unused value 报错
+  const lorebookEntries = useLiveQuery<LorebookEntry[]>(
     () => selectedCharId ? db.lorebook.where('char_id').equals(selectedCharId).toArray() : [],
     [selectedCharId]
   );
@@ -94,26 +93,21 @@ function App() {
     }
   }, [settings?.model_list, settings?.model, settings?.id]);
 
-  // === 核心逻辑：发送消息 ===
-  // 修复：明确 historyOverride 类型为 Message[] | undefined
+  // 修复：明确类型 Message[]
   const processChat = async (text: string, historyOverride?: Message[]) => {
     if (!selectedCharId || !settings) return;
     setIsTyping(true);
     
     const history = historyOverride || (await db.messages.where('char_id').equals(selectedCharId).toArray());
-    
-    // 创建一个空的 Assistant 消息用于流式接收
     const aiMsgId = await db.messages.add({ char_id: selectedCharId, role: 'assistant', content: '...', timestamp: Date.now()+1 });
     
     const char = await db.characters.get(selectedCharId);
-    // 获取世界书 (加个兜底 || [])
     const lore = (await db.lorebook.where('char_id').equals(selectedCharId).toArray()) || [];
 
     if(char) {
       const llm = new LLMClient(settings);
       let fullText = "";
       try {
-        // 传入 lorebook 数据
         for await (const chunk of llm.chatStream(char, history, text, settings, lore)) {
           fullText += chunk;
           await db.messages.update(aiMsgId, { content: fullText });
@@ -129,39 +123,31 @@ function App() {
     if (!input.trim() || isTyping) return;
     const text = input; 
     setInput(''); 
+    // 修复：使用 ! 断言 selectedCharId 存在
     await db.messages.add({ char_id: selectedCharId!, role: 'user', content: text, timestamp: Date.now() });
     await processChat(text); 
   };
 
-  // === 功能 2: 重新生成 (Regenerate) ===
   const handleRegenerate = async () => {
     if (!messages || messages.length === 0 || isTyping) return;
-    
     const lastMsg = messages[messages.length - 1];
-    
-    // 创建副本用于逻辑处理
     let historyToUse = [...messages];
     let triggerText = "";
 
     if (lastMsg.role === 'assistant') {
-        // 删除这条不满意的回复
         if(lastMsg.id) await db.messages.delete(lastMsg.id);
-        
-        historyToUse.pop(); // 内存中也去掉
-        
+        historyToUse.pop();
         const lastUserMsg = historyToUse[historyToUse.length - 1];
         if (lastUserMsg && lastUserMsg.role === 'user') {
             triggerText = lastUserMsg.content;
-            historyToUse.pop(); // chatStream 不包含当前的 user input，所以要拿出来
+            historyToUse.pop();
         }
     } else {
         return; 
     }
-
     await processChat(triggerText, historyToUse);
   };
 
-  // === 功能 2.1: 编辑消息 (Edit) ===
   const startEditing = (id: number, content: string) => {
     setEditingMsgId(id);
     setEditContent(content);
@@ -174,9 +160,8 @@ function App() {
     }
   };
 
-  // === 功能 3: 删除所有图片 (清理空间) ===
   const handleDeleteAllImages = async () => {
-    if(!confirm("确定要删除所有图片吗？\n文本聊天记录将保留，仅清除图片以释放数据库空间。\n（本地 SD 目录下的原图不会被删除）")) return;
+    if(!confirm("确定要删除所有图片吗？\n文本聊天记录将保留，仅清除图片以释放数据库空间。")) return;
     await db.messages.filter(m => !!m.image).modify({ image: '' });
     alert("✅ 图片已清理。");
     window.location.reload();
@@ -236,6 +221,7 @@ function App() {
         });
         if (!res.ok) throw new Error(`SD Error: ${res.status}`);
         const data = await res.json();
+        // 修复：使用 ! 断言 selectedCharId
         await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
       } catch (e: any) { alert(e.message); } finally { setIsGenImage(false); }
   };
@@ -286,11 +272,8 @@ function App() {
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e => setMobileMenuOpen(e.target.checked)} />
       
       <div className="drawer-content flex flex-col h-full overflow-hidden relative bg-base-100">
-        
-        {/* 1. Background Layer */}
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/50 via-transparent to-transparent z-0"></div>
 
-        {/* 2. Header */}
         <div className="flex-none p-2 z-30 bg-gradient-to-b from-base-100 to-transparent">
             <div className="navbar min-h-[3rem] glass-panel rounded-2xl px-4">
                 <div className="flex-none md:hidden mr-2"><label htmlFor="my-drawer" className="btn btn-square btn-ghost btn-sm"><Menu/></label></div>
@@ -310,7 +293,6 @@ function App() {
             </div>
         </div>
 
-        {/* 3. Chat List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 z-10 scroll-smooth w-full max-w-5xl mx-auto">
           {messages?.map((m, index) => {
             const isUser = m.role === 'user';
@@ -322,7 +304,6 @@ function App() {
               <div key={m.id || index} className={`chat animate-message group ${isUser ? 'chat-end' : 'chat-start'}`}>
                 <div className="chat-header opacity-40 text-[10px] mb-1 flex items-center gap-1 font-mono uppercase tracking-wide">
                   {isUser ? 'Commander' : currentChar?.name}
-                  {/* Action Bar */}
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 ml-2">
                      {!isImage && <button onClick={() => startEditing(m.id!, m.content)} className="hover:text-primary" title="编辑"><Pencil size={10}/></button>}
                      {!isUser && isLastMsg && <button onClick={handleRegenerate} className="hover:text-primary" title="重新生成"><RefreshCw size={10}/></button>}
@@ -355,7 +336,6 @@ function App() {
           <div ref={bottomRef} className="h-4"/>
         </div>
 
-        {/* 4. Input Area */}
         <div className="flex-none p-2 md:p-4 z-20 bg-gradient-to-t from-base-100 via-base-100/90 to-transparent">
           <div className="max-w-4xl mx-auto flex gap-2 items-end glass-panel p-2 rounded-3xl ring-1 ring-white/10 focus-within:ring-primary/50 transition-all">
             <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={openGenImageModal} disabled={isGenImage}>
@@ -373,13 +353,11 @@ function App() {
         </div>
       </div>
       
-      {/* Sidebar */}
       <div className="drawer-side z-50">
         <label htmlFor="my-drawer" className="drawer-overlay backdrop-blur-sm"></label>
         <SidebarContent />
       </div>
       
-      {/* Modals */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-base-100 w-full max-w-lg rounded-3xl flex flex-col shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
@@ -402,7 +380,7 @@ function App() {
             <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div>
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
                <div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full bg-base-200/50 font-bold text-lg"/></div>
-               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed bg-base-200/50"/></div>
+               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm flex justify-between"><span>底层指令</span><Code size={14} className="opacity-50"/></label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed bg-base-200/50"/></div>
                <div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs bg-base-300/50"/></div>
                <div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20 bg-base-200/50"/></div>
                <button className="btn btn-primary btn-block rounded-xl"><Save size={18}/> 保存</button>
@@ -411,7 +389,7 @@ function App() {
         </div>
       )}
 
-      {showLorebook && (
+      {showLorebook && selectedCharId && (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
             <div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-3xl flex flex-col shadow-2xl border border-white/10">
                 <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><Book size={20}/> 世界书</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X size={20}/></button></div>
@@ -430,7 +408,8 @@ function App() {
                             </div>
                         </div>
                     ))}
-                    <button className="btn btn-ghost btn-block border-dashed border-2 border-base-content/20" onClick={()=>db.lorebook.add({ char_id: selectedCharId, keywords: "新词条", content: "", isActive: true })}><Plus size={16}/> 添加</button>
+                    {/* 修复 TS 错误：显式断言 selectedCharId! */}
+                    <button className="btn btn-ghost btn-block border-dashed border-2 border-base-content/20" onClick={()=>db.lorebook.add({ char_id: selectedCharId!, keywords: "新词条", content: "", isActive: true })}><Plus size={16}/> 添加</button>
                 </div>
             </div>
         </div>
