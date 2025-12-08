@@ -12,7 +12,7 @@ import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pe
 // ==========================================
 const XMLComponents = {
   // 1. NPC 识别卡 (类似酒馆的 Character Card)
-  "npc_card": ({children, ...props}: any) => (
+  "npc_card": ({children}: any) => (
     <div className="card bg-base-100 shadow-xl border-l-4 border-warning my-4 w-full max-w-md overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="card-body p-4 gap-2">
         <h2 className="card-title text-sm opacity-50 uppercase tracking-widest flex items-center gap-2">
@@ -22,11 +22,22 @@ const XMLComponents = {
       </div>
     </div>
   ),
+  
   // 子标签映射
   "name": ({children}: any) => <div className="text-xl font-black text-primary">{children}</div>,
   "identity": ({children}: any) => <div className="text-sm font-bold opacity-80">{children}</div>,
   "tags": ({children}: any) => <div className="flex flex-wrap gap-1 my-1">{children}</div>,
-  "tag": ({children, color="neutral"}: any) => <span className={`badge badge-sm badge-outline`}>{children}</span>,
+  
+  // 修复 TS 报错：真正使用 color 参数
+  "tag": ({children, color}: any) => {
+    let badgeColor = "badge-neutral";
+    if (color === "accent") badgeColor = "badge-accent";
+    else if (color === "secondary") badgeColor = "badge-secondary";
+    else if (color === "primary") badgeColor = "badge-primary";
+    
+    return <span className={`badge badge-sm badge-outline ${badgeColor}`}>{children}</span>;
+  },
+
   // 稀有度特殊处理
   "rarity": ({children}: any) => {
     const text = String(children).toLowerCase();
@@ -36,11 +47,11 @@ const XMLComponents = {
     else if(text.includes("blue") || text.includes("rare")) colorClass = "text-blue-400 font-bold";
     return <div className={`text-xs uppercase tracking-wide border px-2 py-0.5 rounded ${colorClass} border-current opacity-80 inline-block`}>{children}</div>;
   },
+  
   "stats": ({children}: any) => <div className="bg-base-300 rounded p-2 text-xs font-mono grid grid-cols-3 gap-2 text-center mt-2">{children}</div>,
   "stat": ({children, label}: any) => <div className="flex flex-col"><span className="opacity-50 text-[10px]">{label}</span><span className="font-bold text-accent">{children}</span></div>,
   "xp": ({children}: any) => <div className="text-xs text-error mt-1 flex items-center gap-1"><Brain size={12}/> <span className="italic">{children}</span></div>,
   "action": ({children}: any) => <div className="text-sm mt-2 italic border-l-2 border-base-content/20 pl-2">{children}</div>,
-
 
   // 2. 底部状态栏 (类似 RPG 游戏的 HUD)
   "status_panel": ({children}: any) => (
@@ -48,6 +59,7 @@ const XMLComponents = {
       {children}
     </div>
   ),
+  
   // HUD 的子组件
   "hud_item": ({children, icon, label, color="text-primary"}: any) => (
     <div className="stat p-2 place-items-center">
@@ -60,6 +72,7 @@ const XMLComponents = {
       <div className="stat-value text-sm md:text-base">{children}</div>
     </div>
   ),
+  
   "suggestion": ({children}: any) => (
     <div className="alert alert-info py-1 px-3 text-xs rounded-none bg-info/10 border-0 flex gap-2">
       <Sparkles size={14} className="shrink-0"/>
@@ -67,17 +80,15 @@ const XMLComponents = {
     </div>
   ),
 
-  // 3. 通用容器
-  "div": ({node, className, ...props}: any) => <div className={className} {...props}/>,
-  "span": ({node, className, ...props}: any) => <span className={className} {...props}/>,
-  // 必须加上这个，否则根级 response 会破坏布局
+  // 3. 通用容器 (修复 TS 报错：移除未使用的 node 参数)
+  "div": ({className, ...props}: any) => <div className={className} {...props}/>,
+  "span": ({className, ...props}: any) => <span className={className} {...props}/>,
+  
+  // 根容器
   "response": ({children}: any) => <div className="w-full space-y-2">{children}</div>
 };
 
-// ... (App 组件的其他部分代码保持不变，除了下面提到的 XMLComponents 引用)
-
 function App() {
-  // ... (状态定义保持不变)
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -139,64 +150,63 @@ function App() {
     }
     setIsTyping(false);
   };
-    // ... (生图 handleGenImage 逻辑保持不变)
-    const handleGenImage = async () => {
-        if (!settings?.sd_url) return alert("请在设置中配置 Stable Diffusion URL");
-        const lastMsg = messages?.[messages.length - 1]?.content;
-        if (!lastMsg) return;
-        if (!confirm("即将调用 SD 生成当前场景插图，确定吗？")) return;
-    
-        setIsGenImage(true);
-        try {
-          // 提取纯文本 Prompt，移除 XML 标签
-          let prompt = lastMsg.replace(/<[^>]*>?/gm, ' ').slice(0, 300); 
-          if (settings.baidu_appid) prompt = await translateToEnglish(prompt, settings.baidu_appid, settings.baidu_secret);
-          
-          const res = await fetch(`${settings.sd_url}/sdapi/v1/txt2img`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              prompt: `(masterpiece:1.2), best quality, anime style, ${prompt}`, 
-              negative_prompt: "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-              steps: 20, 
-              width: 512, 
-              height: 768, 
-              cfg_scale: 7,
-              sampler_name: "DPM++ 2M Karras"
-            })
-          });
-          
-          if (!res.ok) throw new Error(`SD API Error: ${res.status}`);
-          const data = await res.json();
-          if (!data.images || data.images.length === 0) throw new Error("No image generated");
-          
-          await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
-        } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsGenImage(false); }
-    };
 
-    // SidebarContent 保持不变
-    const SidebarContent = () => (
-        <div className="flex flex-col h-full bg-base-300 text-base-content w-80 p-4 border-r border-base-content/5">
-        <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-primary flex items-center gap-2"><Sparkles size={20}/> SimpleRP</h2>
-            <button className="btn btn-sm btn-ghost btn-square" onClick={() => {
-            const name = prompt("新建角色名:"); 
-            if(name) db.characters.add({ name, description:"", personality:"", scenario:"", first_message:"", mes_example:"" });
-            }}><Plus size={18}/></button>
-        </div>
-        <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-            {characters?.map(c => (
-            <div key={c.id} className={`flex group rounded-xl p-2 transition-all ${selectedCharId===c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-200'}`}>
-                <button onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className="flex-1 text-left font-medium truncate pl-2">{c.name}</button>
-                {selectedCharId === c.id && <button className="btn btn-xs btn-circle btn-ghost text-primary-content/70 hover:text-white" onClick={(e)=>{e.stopPropagation();if(confirm("删除此角色?")) db.characters.delete(c.id!)}}><Trash2 size={12}/></button>}
-            </div>
-            ))}
-        </div>
-        <div className="mt-4 pt-4 border-t border-base-content/10">
-            <button className="btn btn-outline btn-block gap-2" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}><SettingsIcon size={16}/> 设置</button>
-        </div>
-        </div>
-    );
+  const handleGenImage = async () => {
+    if (!settings?.sd_url) return alert("请在设置中配置 Stable Diffusion URL");
+    const lastMsg = messages?.[messages.length - 1]?.content;
+    if (!lastMsg) return;
+    if (!confirm("即将调用 SD 生成当前场景插图，确定吗？")) return;
+
+    setIsGenImage(true);
+    try {
+      // 提取纯文本 Prompt，移除 XML 标签
+      let prompt = lastMsg.replace(/<[^>]*>?/gm, ' ').slice(0, 300); 
+      if (settings.baidu_appid) prompt = await translateToEnglish(prompt, settings.baidu_appid, settings.baidu_secret);
+      
+      const res = await fetch(`${settings.sd_url}/sdapi/v1/txt2img`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          prompt: `(masterpiece:1.2), best quality, anime style, ${prompt}`, 
+          negative_prompt: "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
+          steps: 20, 
+          width: 512, 
+          height: 768, 
+          cfg_scale: 7,
+          sampler_name: "DPM++ 2M Karras"
+        })
+      });
+      
+      if (!res.ok) throw new Error(`SD API Error: ${res.status}`);
+      const data = await res.json();
+      if (!data.images || data.images.length === 0) throw new Error("No image generated");
+      
+      await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
+    } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsGenImage(false); }
+  };
+
+  const SidebarContent = () => (
+    <div className="flex flex-col h-full bg-base-300 text-base-content w-80 p-4 border-r border-base-content/5">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-primary flex items-center gap-2"><Sparkles size={20}/> SimpleRP</h2>
+        <button className="btn btn-sm btn-ghost btn-square" onClick={() => {
+           const name = prompt("新建角色名:"); 
+           if(name) db.characters.add({ name, description:"", personality:"", scenario:"", first_message:"", mes_example:"" });
+        }}><Plus size={18}/></button>
+      </div>
+      <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+        {characters?.map(c => (
+          <div key={c.id} className={`flex group rounded-xl p-2 transition-all ${selectedCharId===c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-200'}`}>
+            <button onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className="flex-1 text-left font-medium truncate pl-2">{c.name}</button>
+            {selectedCharId === c.id && <button className="btn btn-xs btn-circle btn-ghost text-primary-content/70 hover:text-white" onClick={(e)=>{e.stopPropagation();if(confirm("删除此角色?")) db.characters.delete(c.id!)}}><Trash2 size={12}/></button>}
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 pt-4 border-t border-base-content/10">
+        <button className="btn btn-outline btn-block gap-2" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}><SettingsIcon size={16}/> 设置</button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="drawer md:drawer-open h-full font-sans">
@@ -244,7 +254,6 @@ function App() {
                   </div>
                 ) : (
                   <div className={`${isUser ? 'chat-bubble chat-bubble-primary shadow-lg' : 'w-full max-w-3xl bg-transparent text-base-content p-0'}`}>
-                    {/* 移除 prose 的 padding，让卡片撑满 */}
                     <div className={`prose max-w-none ${isUser ? 'text-sm' : ''}`}>
                       <ReactMarkdown 
                         rehypePlugins={[rehypeRaw]}
@@ -261,7 +270,7 @@ function App() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input Area (保持不变) */}
+        {/* Input Area */}
         <div className="p-3 md:p-5 bg-base-100 border-t border-base-content/10">
           <div className="flex gap-2 max-w-4xl mx-auto items-end bg-base-200/50 p-2 rounded-2xl border border-base-content/5 focus-within:border-primary/50 transition-colors">
             <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={handleGenImage} disabled={isGenImage} title="SD 生图">
@@ -284,10 +293,9 @@ function App() {
         </div>
       </div>
       
-      {/* 侧边栏和 Modal 保持不变 */}
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><SidebarContent /></div>
       
-      {/* Settings Modal (保持不变，省略以节省空间，直接用上文的即可) */}
+      {/* Settings Modal */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-base-100 w-full max-w-lg max-h-[85vh] rounded-2xl flex flex-col shadow-2xl border border-white/10">
@@ -304,7 +312,7 @@ function App() {
         </div>
       )}
 
-      {/* Char Edit Modal (保持不变，省略) */}
+      {/* Char Edit Modal */}
       {showCharEdit && currentChar && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-base-100 w-full max-w-3xl max-h-[90vh] rounded-2xl flex flex-col shadow-2xl border border-white/10">
