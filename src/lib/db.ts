@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 
 // ==========================================
-// 1. 接口定义 (Interfaces)
+// 1. 接口定义
 // ==========================================
 
 export interface Character {
@@ -12,9 +12,8 @@ export interface Character {
   scenario: string;
   first_message: string;
   mes_example: string;
-  // 高级功能字段
-  output_template?: string; // 强制 XML 输出模板
-  custom_css?: string;      // 角色专属 CSS
+  output_template?: string; // 这里的名字虽然叫 template，实际存的是“附加指令”
+  custom_css?: string;      
 }
 
 export interface Message {
@@ -39,7 +38,7 @@ export interface Settings {
 }
 
 // ==========================================
-// 2. 数据库类定义 (Dexie Schema)
+// 2. 数据库类定义
 // ==========================================
 
 class RPDatabase extends Dexie {
@@ -60,7 +59,7 @@ class RPDatabase extends Dexie {
 export const db = new RPDatabase();
 
 // ==========================================
-// 3. 初始化逻辑 (Init Logic)
+// 3. 初始化逻辑
 // ==========================================
 
 export async function initDB() {
@@ -68,85 +67,89 @@ export async function initDB() {
   const count = await db.settings.count();
   if (count === 0) {
     await db.settings.add({
-      // 优先读取构建时的环境变量 (VITE_...)，实现"系统变量默认"
       api_base: import.meta.env.VITE_API_BASE || "https://ark.cn-beijing.volces.com/api/v3",
       api_key: import.meta.env.VITE_API_KEY || "", 
-      model: "", // 初始留空，由 App.tsx 自动纠正逻辑接管
+      model: "", 
       model_list: import.meta.env.VITE_MODEL_LIST || "gpt-4o, ep-20241208xxxxxx-xxxxx", 
       sd_url: import.meta.env.VITE_SD_URL || "http://127.0.0.1:7860",
       baidu_appid: import.meta.env.VITE_BAIDU_APPID || "",
       baidu_secret: import.meta.env.VITE_BAIDU_SECRET || "",
-      temperature: 0.8
+      temperature: 0.85 // 稍微提高一点温度，增加随机性
     });
   }
 
-  // --- B. 初始化默认角色 (星海学园) ---
+  // --- B. 初始化默认角色 (星海学园 - Markdown 版) ---
   const charCount = await db.characters.count();
   if (charCount === 0) {
     await db.characters.add({
       name: "星海学园系统",
-      description: `
-[角色: 游戏系统 / 旁白]
-[世界观: 星海学园 (Star Ocean Academy)]
-[核心机制: 色轮眼 (The Color Wheel) - 通过攻略不同颜色的女性升级能力]
-[职责: 描述环境、生成随机 NPC 卡片、管理玩家 EP 点数]
-`.trim(),
-      personality: "客观, 游戏化, 细节丰富, 沉浸式引导",
+      
+      // 1. 角色定义：告诉 AI 它的身份
+      description: `[Role: System / Narrator / Game Master]
+你不仅是旁白，更是掌管【星海学园】世界的底层系统。
+你需要负责：
+1. 细致地描写环境（赛博朋克与贵族校园的结合）。
+2. 管理主角的【色轮眼】能力与数值。
+3. 严格遵守设定的世界规则。`,
+      
+      personality: "客观, 冷静, 详尽, 带有游戏系统的提示风格",
+      
+      // 2. 场景与机制：将 XML 规则转为 System Prompt
       scenario: `
-<world_setting>
-    <surface>
-        星海学园：一座巨大的私立贵族学园，涵盖高中部、大学部及教职工生活区。
-        表面上是精英教育的圣地，充满了青春、社团活动和校园阶级。
-    </surface>
-    <shadow>
-        隐藏在校园表象下的欲望网络。地下拍卖会、奴隶调教俱乐部、用身体换取学分的潜规则。
-    </shadow>
-</world_setting>
+【世界观：星海学园 (Star Ocean Academy)】
+- 表世界：巨大的私立贵族学园，涵盖高中、大学及生活区。充满青春、社团与阶级差异。
+- 里世界：隐藏的欲望网络。包含地下拍卖会（周五深夜旧校舍）、奴隶调教俱乐部、学分潜规则交易。
 
-<mechanics>
-    Lv1 赤色·洞察: 透视三围、弱点。
-    Lv2 翠色·暗示: 催眠/常识改写。
-    Lv3 苍色·静止: 时间停止。
-    Lv4 黑色·主宰: 奴隶刻印。
-</mechanics>
-`.trim(),
-      first_message: "【系统启动】\n欢迎回到星海学园，宿主。\n色轮眼已激活 (Lv1 赤色·洞察)。\n\n你现在正站在学园正门，樱花飘落。眼前正是上学高峰期，形形色色的美少女正穿过校门。\n你想先去哪里？（教学楼 / 社团大楼 / 你的专属更衣室）",
-      mes_example: "", // 留空，通过 Prompt Template 强控
+【核心机制：色轮眼 (The Color Wheel)】
+主角通过攻略/调教不同颜色的女性获取 EP (色欲点) 来升级能力。
+- Lv1 赤色·洞察 (Red Sight): [初始] 透视三围、弱点、兴奋度。视野中显示攻略难度颜色。
+- Lv2 翠色·暗示 (Green Whisper): [需500EP] 催眠/常识改写。需判定意志力。
+- Lv3 苍色·静止 (Blue Stasis): [需2000EP] 时间停止。世界冻结，无法被拒绝或记忆。
+- Lv4 黑色·主宰 (Black Domination): [需5000EP+3奴隶] 奴隶刻印，永久抹除人格。开启地下拍卖会。
+
+【NPC 生成规则】
+当主角进入新场景（如图书馆、更衣室）且无交互对象时，必须自动生成一名随机女性 NPC。
+属性包含：
+1. 身份 (基于地点)
+2. 稀有度 (⚪Common / 🔵Rare / 🟣Epic / 🟡Legend)
+3. XP/性癖 (隐藏属性)
+4. 当前状态 (正在做什么)
+
+【经济系统】
+货币：EP (升级技能) / 金钱 (购买道具)
+商店命令：输入 --shop 可打开商店（贩卖媚药、项圈、记忆清除等）。
+`,
+
+      first_message: "【系统启动】\n欢迎回到星海学园，宿主。\n检测到「色轮眼」已激活 (当前等级: Lv1 赤色·洞察)。\n\n你正站在宏伟的校门前，夕阳将哥特式建筑群染成金色。正值放学时分，形形色色的美少女正穿过校门。\n\n校门口右侧的长椅上，一位女生似乎正在独自看书。\n你要怎么做？（直接观察 / 靠近搭讪 / 前往其他区域）",
       
-      // === 核心：适配 App.tsx 组件的 XML 模板 ===
+      mes_example: "",
+
+      // 3. 输出模板：使用 Markdown 语法控制视觉效果
       output_template: `
-(在这里描写剧情、对话和环境...)
+### 响应格式规范 (严格遵守)
 
-<!-- 🛑 规则：仅当新角色登场或被观察时，输出此卡片 -->
-<npc_card>
-  <name>[姓名]</name>
-  <identity>[身份/职业]</identity>
-  <rarity>[稀有度: White/Blue/Purple/Gold]</rarity>
-  <tags>
-    <!-- 使用 <tag> 包裹性格关键词 -->
-    <tag color="accent">[性格1]</tag>
-    <tag>[性格2]</tag>
-  </tags>
-  <stats>
-    <!-- 必须使用 stat 标签和 label 属性，以便 UI 渲染 -->
-    <stat label="BUST">[数字]</stat>
-    <stat label="WAIST">[数字]</stat>
-    <stat label="HIP">[数字]</stat>
-  </stats>
-  <xp>[隐藏性癖]</xp>
-  <action>[当前正在做什么]</action>
-</npc_card>
+1. **剧情描写**: 优先进行沉浸式的环境与动作描写。
 
-<!-- 🛑 规则：每次回复末尾必须包含此状态栏 -->
-<status_panel>
-  <hud_item icon="activity" label="LEVEL">Lv1 赤色</hud_item>
-  <hud_item icon="eye" label="EP">[当前点数] / 1000</hud_item>
-  <hud_item icon="map" label="LOCATION">[当前地点]</hud_item>
-  <suggestion>[AI 生成的下一步行动建议]</suggestion>
-</status_panel>
+2. **NPC 识别卡**: 
+   如果剧情中出现了新角色，或者主角使用了观察技能，**必须**使用以下 Markdown 引用块格式展示信息：
+   > **[ 👁️ 色轮眼扫描结果 ]**
+   > 👤 **姓名**: [名字] | **身份**: [职业]
+   > 🎨 **稀有度**: [⚪/🔵/🟣/🟡] | **攻略难度**: [⭐1-5]
+   > ❤️ **隐藏性癖**: [??? 或 具体内容]
+   > 📊 **三围**: [Bxx Wxx Hxx]
+   > 📝 **状态**: [当前行为]
+
+3. **系统状态栏**: 
+   **每次回复的最后**，必须附加以下 Markdown 格式的状态面板：
+   
+   ---
+   **[ 💻 系统状态栏 ]**
+   🌀 **阶段**: [Lv1~4] | 💰 **EP**: [数值] | 💵 **资金**: [$数值]
+   ⏳ **时停**: [ON/OFF] | ⛓️ **奴隶**: [数量]
+   📍 **位置**: [当前地点]
+   💡 **提示**: [AI生成的简短建议]
 `.trim(),
-      
-      // 自定义 CSS (可选，用于微调该角色的特定样式)
+
       custom_css: "" 
     });
   }

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import type { Character, Settings, Message } from './db';
-import { replaceVariables } from './variables'; // 确保你创建了 variables.ts
+import { replaceVariables } from './variables'; 
 
 export class LLMClient {
   private client: OpenAI;
@@ -12,17 +12,15 @@ export class LLMClient {
       apiKey: settings.api_key,
       dangerouslyAllowBrowser: true 
     });
-    // 初始化时可能为空，但在 chatStream 中会再次检查
     this.model = settings.model || "";
   }
 
   private buildSystemPrompt(char: Character, settings: Settings): string {
+    // 纯净的 System Prompt 构建
     let rawPrompt = `
-<system_instruction>
 You are roleplaying as <char_name>{{char}}</char_name>.
 Current Model: {{model}}
 Time: {{date}} {{time}}
-</system_instruction>
 
 <character_profile>
 <description>${char.description}</description>
@@ -35,33 +33,25 @@ ${char.mes_example}
 </dialogue_examples>
 `.trim();
 
+    // 如果用户定义了 output_template，直接作为普通文本追加，不再作为 XML 格式指令
     if (char.output_template) {
-      // 强指令：必须输出 XML，禁止 Markdown 代码块
-      rawPrompt += `\n\n<output_format_instruction>\nIMPORTANT: You must strictly follow the XML format below for every response.\nDo NOT use markdown code blocks.\nOutput raw XML directly.\n\nTemplate:\n${char.output_template}\n</output_format_instruction>`;
+      rawPrompt += `\n\n<additional_instructions>\n${char.output_template}\n</additional_instructions>`;
     }
 
     return replaceVariables(rawPrompt, settings, char);
   }
 
   async *chatStream(char: Character, history: Message[], userInputs: string, settings: Settings) {
-    
-    // === 终极模型回退逻辑 ===
     let currentModel = this.model;
-    
-    // 如果实例中的 model 为空，或者不在此次 settings 的列表中（防止脏数据）
     if (!currentModel || currentModel.trim() === "") {
         const availableModels = (settings.model_list || "").split(',').map(m => m.trim()).filter(m => m);
-        if (availableModels.length > 0) {
-            currentModel = availableModels[0];
-            console.warn(`[LLM] No model selected. Auto-using first available: ${currentModel}`);
-        }
+        if (availableModels.length > 0) currentModel = availableModels[0];
     }
     
     if (!currentModel) {
-      yield "\n[系统错误: 未找到可用模型]\n请在设置中配置模型列表 (Endpoint ID)。";
+      yield "\n[系统错误: 未找到可用模型]";
       return;
     }
-    // ========================
 
     const processedInput = replaceVariables(userInputs, settings, char);
     
@@ -86,7 +76,7 @@ ${char.mes_example}
 
     } catch (e: any) {
       console.error("LLM Error:", e);
-      yield `\n[连接错误: ${e.message}]\n当前尝试使用的模型: ${currentModel}\n请检查 API Key、Base URL 或 Endpoint ID 是否正确。`;
+      yield `\n[连接错误: ${e.message}]`;
     }
   }
 }

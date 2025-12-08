@@ -5,88 +5,8 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pencil, Plus, Trash2, Code, X, Sparkles, AlertCircle, Activity, MapPin, Brain, Eye } from 'lucide-react';
-
-// ==========================================
-// 🎨 愚者酒馆风格 - 扩展组件库 (Extensions)
-// ==========================================
-const XMLComponents = {
-  // 1. NPC 识别卡 (类似酒馆的 Character Card)
-  "npc_card": ({children}: any) => (
-    <div className="card bg-base-100 shadow-xl border-l-4 border-warning my-4 w-full max-w-md overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="card-body p-4 gap-2">
-        <h2 className="card-title text-sm opacity-50 uppercase tracking-widest flex items-center gap-2">
-          <User size={14}/> NPC Detected
-        </h2>
-        {children}
-      </div>
-    </div>
-  ),
-  
-  // 子标签映射
-  "name": ({children}: any) => <div className="text-xl font-black text-primary">{children}</div>,
-  "identity": ({children}: any) => <div className="text-sm font-bold opacity-80">{children}</div>,
-  "tags": ({children}: any) => <div className="flex flex-wrap gap-1 my-1">{children}</div>,
-  
-  // 修复 TS 报错：真正使用 color 参数
-  "tag": ({children, color}: any) => {
-    let badgeColor = "badge-neutral";
-    if (color === "accent") badgeColor = "badge-accent";
-    else if (color === "secondary") badgeColor = "badge-secondary";
-    else if (color === "primary") badgeColor = "badge-primary";
-    
-    return <span className={`badge badge-sm badge-outline ${badgeColor}`}>{children}</span>;
-  },
-
-  // 稀有度特殊处理
-  "rarity": ({children}: any) => {
-    const text = String(children).toLowerCase();
-    let colorClass = "text-base-content";
-    if(text.includes("gold") || text.includes("legend")) colorClass = "text-yellow-400 drop-shadow-md font-bold";
-    else if(text.includes("purple") || text.includes("epic")) colorClass = "text-purple-400 font-bold";
-    else if(text.includes("blue") || text.includes("rare")) colorClass = "text-blue-400 font-bold";
-    return <div className={`text-xs uppercase tracking-wide border px-2 py-0.5 rounded ${colorClass} border-current opacity-80 inline-block`}>{children}</div>;
-  },
-  
-  "stats": ({children}: any) => <div className="bg-base-300 rounded p-2 text-xs font-mono grid grid-cols-3 gap-2 text-center mt-2">{children}</div>,
-  "stat": ({children, label}: any) => <div className="flex flex-col"><span className="opacity-50 text-[10px]">{label}</span><span className="font-bold text-accent">{children}</span></div>,
-  "xp": ({children}: any) => <div className="text-xs text-error mt-1 flex items-center gap-1"><Brain size={12}/> <span className="italic">{children}</span></div>,
-  "action": ({children}: any) => <div className="text-sm mt-2 italic border-l-2 border-base-content/20 pl-2">{children}</div>,
-
-  // 2. 底部状态栏 (类似 RPG 游戏的 HUD)
-  "status_panel": ({children}: any) => (
-    <div className="stats stats-vertical md:stats-horizontal shadow bg-black/40 backdrop-blur-md border border-white/10 w-full my-4 text-xs md:text-sm">
-      {children}
-    </div>
-  ),
-  
-  // HUD 的子组件
-  "hud_item": ({children, icon, label, color="text-primary"}: any) => (
-    <div className="stat p-2 place-items-center">
-      <div className={`stat-title text-[10px] uppercase flex items-center gap-1 ${color}`}>
-        {icon === 'eye' && <Eye size={10}/>}
-        {icon === 'map' && <MapPin size={10}/>}
-        {icon === 'activity' && <Activity size={10}/>}
-        {label}
-      </div>
-      <div className="stat-value text-sm md:text-base">{children}</div>
-    </div>
-  ),
-  
-  "suggestion": ({children}: any) => (
-    <div className="alert alert-info py-1 px-3 text-xs rounded-none bg-info/10 border-0 flex gap-2">
-      <Sparkles size={14} className="shrink-0"/>
-      <span>{children}</span>
-    </div>
-  ),
-
-  // 3. 通用容器 (修复 TS 报错：移除未使用的 node 参数)
-  "div": ({className, ...props}: any) => <div className={className} {...props}/>,
-  "span": ({className, ...props}: any) => <span className={className} {...props}/>,
-  
-  // 根容器
-  "response": ({children}: any) => <div className="w-full space-y-2">{children}</div>
-};
+// 移除了大部分图标，只保留核心 UI 用到的
+import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, User, Bot, Pencil, Plus, Trash2, Code, X, Sparkles, AlertCircle } from 'lucide-react';
 
 function App() {
   const [selectedCharId, setSelectedCharId] = useState<number>();
@@ -159,8 +79,8 @@ function App() {
 
     setIsGenImage(true);
     try {
-      // 提取纯文本 Prompt，移除 XML 标签
-      let prompt = lastMsg.replace(/<[^>]*>?/gm, ' ').slice(0, 300); 
+      // 这里的处理变简单了，因为没有复杂的 xml 标签要清理
+      let prompt = lastMsg.slice(0, 300); 
       if (settings.baidu_appid) prompt = await translateToEnglish(prompt, settings.baidu_appid, settings.baidu_secret);
       
       const res = await fetch(`${settings.sd_url}/sdapi/v1/txt2img`, {
@@ -230,7 +150,6 @@ function App() {
               {modelOptions.length === 0 && <option value="" disabled>无模型配置</option>}
               {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            {!settings?.model && <div className="tooltip tooltip-left text-error" data-tip="未选择模型"><AlertCircle size={18}/></div>}
           </div>
         </div>
 
@@ -255,10 +174,8 @@ function App() {
                 ) : (
                   <div className={`${isUser ? 'chat-bubble chat-bubble-primary shadow-lg' : 'w-full max-w-3xl bg-transparent text-base-content p-0'}`}>
                     <div className={`prose max-w-none ${isUser ? 'text-sm' : ''}`}>
-                      <ReactMarkdown 
-                        rehypePlugins={[rehypeRaw]}
-                        components={XMLComponents as any} 
-                      >
+                      {/* 回归纯净 Markdown，不使用自定义组件 */}
+                      <ReactMarkdown rehypePlugins={[rehypeRaw]}>
                         {m.content}
                       </ReactMarkdown>
                     </div>
@@ -286,7 +203,7 @@ function App() {
                 e.target.style.height = e.target.scrollHeight + 'px';
               }} 
               onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); handleSend(); } }} 
-              placeholder="输入行动... (支持 {{char}} 等)"
+              placeholder="发送消息..."
             />
             <button className="btn btn-circle btn-primary btn-sm shrink-0 mb-1 shadow-lg shadow-primary/30" onClick={handleSend} disabled={isTyping}><Send size={16}/></button>
           </div>
@@ -295,7 +212,7 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><SidebarContent /></div>
       
-      {/* Settings Modal */}
+      {/* Settings Modal (简化的代码) */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-base-100 w-full max-w-lg max-h-[85vh] rounded-2xl flex flex-col shadow-2xl border border-white/10">
@@ -319,9 +236,9 @@ function App() {
             <div className="p-4 border-b border-base-content/10 flex justify-between items-center"><h3 className="font-bold text-lg">编辑角色</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={18}/></button></div>
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-6 overflow-y-auto space-y-4 flex-1">
                <div className="grid grid-cols-2 gap-4"><input name="name" defaultValue={currentChar.name} className="input input-bordered"/><input name="personality" defaultValue={currentChar.personality} className="input input-bordered"/></div>
-               <textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-24 text-xs"/>
-               <textarea name="scenario" defaultValue={currentChar.scenario} className="textarea textarea-bordered h-24 text-xs"/>
-               <div className="collapse collapse-arrow bg-base-200"><input type="checkbox"/><div className="collapse-title text-sm"><Code size={14}/> XML 模板</div><div className="collapse-content"><textarea name="output_template" defaultValue={currentChar.output_template} className="textarea textarea-bordered w-full h-40 font-mono text-xs"/></div></div>
+               <textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-24 text-xs" placeholder="系统提示词：角色描述"/>
+               <textarea name="scenario" defaultValue={currentChar.scenario} className="textarea textarea-bordered h-24 text-xs" placeholder="系统提示词：世界观"/>
+               <div className="collapse collapse-arrow bg-base-200"><input type="checkbox"/><div className="collapse-title text-sm"><Code size={14}/> 附加提示词 (Optional)</div><div className="collapse-content"><textarea name="output_template" defaultValue={currentChar.output_template} className="textarea textarea-bordered w-full h-40 font-mono text-xs" placeholder="在这里写下自然语言指令，例如：每次回复末尾请列出当前角色的好感度面板，使用 Markdown 表格格式。"/></div></div>
                <textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered"/>
                <button className="btn btn-primary btn-block">保存</button>
             </form>
