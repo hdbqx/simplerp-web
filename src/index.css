@@ -2,61 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
-/* --- 全局滚动条 --- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* --- 全局样式优化 --- */
+html, body, #root {
+  height: 100dvh;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* 添加一个深邃的网格背景 */
+  background-color: #0f172a; 
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+}
+
+/* --- 滚动条美化 --- */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { @apply bg-base-content/20 rounded-full hover:bg-base-content/40 transition-colors; }
+::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors; }
 
-html, body, #root { height: 100dvh; overflow: hidden; }
+/* --- 动画定义 --- */
+@keyframes messageIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
-/* --- 消息气泡基础 --- */
-.prose { @apply text-base-content max-w-none leading-relaxed; }
-.prose p { margin-bottom: 0.75rem; }
+.animate-message {
+  animation: messageIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* --- Markdown 内容深度美化 --- */
+.prose {
+  @apply text-base-content/90 max-w-none leading-relaxed text-[15px];
+}
+
+/* 1. 引用块 (用于 NPC 卡片) -> 转换为高科技面板 */
+.prose blockquote {
+  @apply not-italic border-l-4 border-accent bg-base-300/40 rounded-r-lg py-3 px-4 my-4 shadow-sm backdrop-blur-sm;
+  border-left-color: oklch(var(--wa)); /* 使用 Warning 颜色 (黄色) 对应传说度 */
+}
+.prose blockquote p {
+  @apply my-1;
+}
+
+/* 2. 分割线 -> 转换为发光分割线 */
+.prose hr {
+  @apply border-0 h-[1px] bg-gradient-to-r from-transparent via-primary/50 to-transparent my-6;
+}
+
+/* 3. 列表 -> 紧凑化 */
+.prose ul { @apply my-2 pl-4; }
+.prose li { @apply my-0.5; }
+
+/* 4. 加粗 -> 强调色 */
 .prose strong { @apply text-primary font-bold; }
-.prose blockquote { @apply border-l-4 border-primary/50 bg-base-300/30 py-2 px-4 rounded-r italic; }
 
-/* =========================================
-   XML / 游戏化 UI 组件样式 (SillyTavern 风格)
-   ========================================= */
+/* 5. 表格 -> 简单美化 */
+.prose table { @apply text-xs my-2; }
+.prose th { @apply text-primary; }
 
-/* 通用面板容器 */
-.st-panel {
-  @apply bg-base-300/60 border border-white/10 rounded-lg p-3 my-3 backdrop-blur-sm shadow-lg;
-  animation: fadeIn 0.3s ease-in-out;
+/* --- 玻璃拟态工具类 --- */
+.glass-panel {
+  @apply bg-base-100/60 backdrop-blur-md border border-white/5 shadow-xl;
 }
 
-/* 1. 状态栏 / 系统面板 (System Status) */
-.xml-system-status, .xml-status-panel {
-  @apply st-panel border-l-4 border-l-secondary;
-  background: linear-gradient(90deg, rgba(var(--s)/0.1) 0%, transparent 100%);
+.glass-bubble {
+  @apply bg-base-200/70 backdrop-blur-sm border border-white/5;
 }
-.xml-system-status::before { content: "🖥 SYSTEM STATUS"; @apply block text-xs font-mono opacity-50 mb-2 tracking-widest; }
-
-/* 2. NPC 卡片 (NPC Card) */
-.xml-npc-card, .xml-character-card {
-  @apply st-panel border-l-4 border-l-accent flex flex-col gap-2;
-  background: linear-gradient(135deg, rgba(var(--a)/0.1) 0%, transparent 100%);
-}
-.xml-npc-card strong { @apply text-accent; }
-
-/* 3. 物品/商店 (Inventory/Shop) */
-.xml-inventory, .xml-shop {
-  @apply st-panel border-t-4 border-t-warning grid gap-2;
-}
-
-/* 4. 场景描述 (Scene) */
-.xml-scene {
-  @apply text-sm text-base-content/70 italic border-b border-base-content/10 pb-2 mb-2 block;
-}
-
-/* 5. 色轮眼/特殊技能特效 */
-.xml-ability, .xml-color-wheel {
-  @apply st-panel border border-error/50 shadow-[0_0_15px_rgba(255,0,0,0.1)];
-}
-
-/* 动画 */
-@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-
-/* 隐藏特定的 prompt XML 标签不显示在聊天气泡中，但保留其结构用于解析(如果需要) 
-   通常我们希望AI返回的XML是可见的UI，所以这里只隐藏纯元数据标签 */
-.xml-hidden { display: none; }
