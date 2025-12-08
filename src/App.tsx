@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-// 修复 1: 使用 'type' 关键字导入接口，解决 TS1484 报错
 import { db, initDB, type LorebookEntry, type Message } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+// 修复：已从下方列表中删除了未使用的 'Code'
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, 
-  Pencil, Plus, Trash2, Code, X, Sparkles, BookOpen, Eraser, 
+  Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, 
   Save, Copy, RefreshCw, Book, HelpCircle 
 } from 'lucide-react';
 
@@ -43,7 +43,6 @@ function App() {
   const [isTyping, setIsTyping] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   
-  // Modals State
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -54,7 +53,6 @@ function App() {
   const [isGenImage, setIsGenImage] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
-  // Editing Message State
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
@@ -63,7 +61,6 @@ function App() {
     () => selectedCharId ? db.messages.where('char_id').equals(selectedCharId).toArray() : [], 
     [selectedCharId]
   );
-  // LorebookEntry 现在被视为类型使用，修复了 unused value 报错
   const lorebookEntries = useLiveQuery<LorebookEntry[]>(
     () => selectedCharId ? db.lorebook.where('char_id').equals(selectedCharId).toArray() : [],
     [selectedCharId]
@@ -93,17 +90,13 @@ function App() {
     }
   }, [settings?.model_list, settings?.model, settings?.id]);
 
-  // 修复：明确类型 Message[]
   const processChat = async (text: string, historyOverride?: Message[]) => {
     if (!selectedCharId || !settings) return;
     setIsTyping(true);
-    
     const history = historyOverride || (await db.messages.where('char_id').equals(selectedCharId).toArray());
     const aiMsgId = await db.messages.add({ char_id: selectedCharId, role: 'assistant', content: '...', timestamp: Date.now()+1 });
-    
     const char = await db.characters.get(selectedCharId);
     const lore = (await db.lorebook.where('char_id').equals(selectedCharId).toArray()) || [];
-
     if(char) {
       const llm = new LLMClient(settings);
       let fullText = "";
@@ -121,9 +114,7 @@ function App() {
 
   const handleSend = async () => {
     if (!input.trim() || isTyping) return;
-    const text = input; 
-    setInput(''); 
-    // 修复：使用 ! 断言 selectedCharId 存在
+    const text = input; setInput(''); 
     await db.messages.add({ char_id: selectedCharId!, role: 'user', content: text, timestamp: Date.now() });
     await processChat(text); 
   };
@@ -133,7 +124,6 @@ function App() {
     const lastMsg = messages[messages.length - 1];
     let historyToUse = [...messages];
     let triggerText = "";
-
     if (lastMsg.role === 'assistant') {
         if(lastMsg.id) await db.messages.delete(lastMsg.id);
         historyToUse.pop();
@@ -142,28 +132,16 @@ function App() {
             triggerText = lastUserMsg.content;
             historyToUse.pop();
         }
-    } else {
-        return; 
-    }
+    } else { return; }
     await processChat(triggerText, historyToUse);
   };
 
-  const startEditing = (id: number, content: string) => {
-    setEditingMsgId(id);
-    setEditContent(content);
-  };
-  
-  const saveEdit = async () => {
-    if (editingMsgId) {
-        await db.messages.update(editingMsgId, { content: editContent });
-        setEditingMsgId(null);
-    }
-  };
+  const startEditing = (id: number, content: string) => { setEditingMsgId(id); setEditContent(content); };
+  const saveEdit = async () => { if (editingMsgId) { await db.messages.update(editingMsgId, { content: editContent }); setEditingMsgId(null); } };
 
   const handleDeleteAllImages = async () => {
-    if(!confirm("确定要删除所有图片吗？\n文本聊天记录将保留，仅清除图片以释放数据库空间。")) return;
+    if(!confirm("确定删除所有图片？(文本保留)")) return;
     await db.messages.filter(m => !!m.image).modify({ image: '' });
-    alert("✅ 图片已清理。");
     window.location.reload();
   };
 
@@ -171,7 +149,7 @@ function App() {
     e.stopPropagation();
     const char = await db.characters.get(charId);
     if (char) {
-        if(!confirm(`复制「${char.name}」开启新剧情？`)) return;
+        if(!confirm(`复制「${char.name}」？`)) return;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id, ...rest } = char;
         await db.characters.add({ ...rest, name: `${char.name} (副本)`, summary: "" });
@@ -181,7 +159,7 @@ function App() {
 
   const handleSummarize = async () => {
     if (!selectedCharId || !settings || !messages || messages.length === 0) return;
-    if (!confirm("消耗 Token 进行历史总结？")) return;
+    if (!confirm("消耗 Token 总结？")) return;
     setIsSummarizing(true);
     try {
       const llm = new LLMClient(settings);
@@ -195,7 +173,7 @@ function App() {
   
   const handleClearChat = async () => {
     if (!selectedCharId) return;
-    if (!confirm("清空当前聊天记录？")) return;
+    if (!confirm("清空当前对话？(保留记忆)")) return;
     await db.messages.where('char_id').equals(selectedCharId).delete();
     window.location.reload();
   };
@@ -221,7 +199,6 @@ function App() {
         });
         if (!res.ok) throw new Error(`SD Error: ${res.status}`);
         const data = await res.json();
-        // 修复：使用 ! 断言 selectedCharId
         await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
       } catch (e: any) { alert(e.message); } finally { setIsGenImage(false); }
   };
@@ -233,13 +210,12 @@ function App() {
             <Sparkles size={20} className="text-primary"/> SimpleRP
         </h2>
         <div className="flex gap-1">
-             <button className="btn btn-sm btn-ghost btn-square hover:bg-white/10" onClick={() => { setShowHelp(true); setMobileMenuOpen(false); }} title="使用说明"><HelpCircle size={18}/></button>
+             <button className="btn btn-sm btn-ghost btn-square hover:bg-white/10" onClick={() => { setShowHelp(true); setMobileMenuOpen(false); }} title="说明"><HelpCircle size={18}/></button>
              <button className="btn btn-sm btn-ghost btn-square hover:bg-white/10" onClick={() => {
                 const name = prompt("角色名:"); if(name) db.characters.add({ name, description:"", first_message:"你好！", summary:"" });
              }}><Plus size={20}/></button>
         </div>
       </div>
-      
       <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
         {characters?.map(c => (
           <div key={c.id} className={`group relative flex items-center rounded-xl p-3 transition-all duration-200 border border-transparent ${selectedCharId===c.id ? 'bg-gradient-to-r from-primary/20 to-transparent border-primary/30 shadow-lg translate-x-1' : 'hover:bg-white/5 hover:translate-x-1'}`}>
@@ -255,14 +231,9 @@ function App() {
           </div>
         ))}
       </div>
-      
       <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
-        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowLorebook(true); setMobileMenuOpen(false); }}>
-            <Book size={16}/> 世界书 / World Info
-        </button>
-        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}>
-            <SettingsIcon size={16}/> 系统设置
-        </button>
+        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowLorebook(true); setMobileMenuOpen(false); }}><Book size={16}/> 世界书 / Lore</button>
+        <button className="btn btn-outline btn-sm btn-block gap-2 justify-start font-normal border-white/10" onClick={() => { setShowSettings(true); setMobileMenuOpen(false); }}><SettingsIcon size={16}/> 系统设置</button>
       </div>
     </div>
   );
@@ -271,10 +242,10 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full font-sans text-base-content overflow-hidden">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e => setMobileMenuOpen(e.target.checked)} />
       
-      <div className="drawer-content flex flex-col h-full overflow-hidden relative bg-base-100">
-        <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/50 via-transparent to-transparent z-0"></div>
-
-        <div className="flex-none p-2 z-30 bg-gradient-to-b from-base-100 to-transparent">
+      <div className="drawer-content flex flex-col h-full overflow-hidden relative bg-transparent">
+        
+        {/* Navbar */}
+        <div className="flex-none p-2 z-30 bg-gradient-to-b from-black/20 to-transparent">
             <div className="navbar min-h-[3rem] glass-panel rounded-2xl px-4">
                 <div className="flex-none md:hidden mr-2"><label htmlFor="my-drawer" className="btn btn-square btn-ghost btn-sm"><Menu/></label></div>
                 <div className="flex-1 overflow-hidden">
@@ -293,6 +264,7 @@ function App() {
             </div>
         </div>
 
+        {/* Chat List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 z-10 scroll-smooth w-full max-w-5xl mx-auto">
           {messages?.map((m, index) => {
             const isUser = m.role === 'user';
@@ -307,10 +279,9 @@ function App() {
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 ml-2">
                      {!isImage && <button onClick={() => startEditing(m.id!, m.content)} className="hover:text-primary" title="编辑"><Pencil size={10}/></button>}
                      {!isUser && isLastMsg && <button onClick={handleRegenerate} className="hover:text-primary" title="重新生成"><RefreshCw size={10}/></button>}
-                     <button onClick={() => { if(confirm("删除此条消息?")) db.messages.delete(m.id!) }} className="hover:text-error" title="删除"><Trash2 size={10}/></button>
+                     <button onClick={() => { if(confirm("Del?")) db.messages.delete(m.id!) }} className="hover:text-error" title="删除"><Trash2 size={10}/></button>
                   </div>
                 </div>
-                
                 {isImage ? (
                   <div className="chat-bubble p-1 bg-base-200/50 backdrop-blur rounded-2xl overflow-hidden shadow-2xl border border-white/10">
                     <img src={m.image} className="max-w-full md:max-w-md object-cover rounded-xl"/>
@@ -320,7 +291,7 @@ function App() {
                     {isEditing ? (
                         <div className="flex flex-col gap-2 min-w-[200px]">
                             <textarea className="textarea textarea-bordered textarea-sm w-full text-base-content bg-base-100/50" value={editContent} onChange={e => setEditContent(e.target.value)} rows={3}/>
-                            <div className="flex justify-end gap-2"><button className="btn btn-xs btn-ghost" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={saveEdit}>保存</button></div>
+                            <div className="flex justify-end gap-2"><button className="btn btn-xs btn-ghost" onClick={()=>setEditingMsgId(null)}>Cancel</button><button className="btn btn-xs btn-primary" onClick={saveEdit}>Save</button></div>
                         </div>
                     ) : (
                         <div className={`prose ${isUser ? 'text-sm' : ''} break-words`}>
@@ -336,7 +307,8 @@ function App() {
           <div ref={bottomRef} className="h-4"/>
         </div>
 
-        <div className="flex-none p-2 md:p-4 z-20 bg-gradient-to-t from-base-100 via-base-100/90 to-transparent">
+        {/* Input Area */}
+        <div className="flex-none p-2 md:p-4 z-20 bg-gradient-to-t from-black/20 to-transparent">
           <div className="max-w-4xl mx-auto flex gap-2 items-end glass-panel p-2 rounded-3xl ring-1 ring-white/10 focus-within:ring-primary/50 transition-all">
             <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={openGenImageModal} disabled={isGenImage}>
                {isGenImage ? <span className="loading loading-spinner loading-xs"/> : <ImageIcon size={20}/>}
@@ -353,11 +325,13 @@ function App() {
         </div>
       </div>
       
-      <div className="drawer-side z-50">
-        <label htmlFor="my-drawer" className="drawer-overlay backdrop-blur-sm"></label>
+      {/* Sidebar */}
+      <div className="drawer-side z-[50]">
+        <label htmlFor="my-drawer" className="drawer-overlay backdrop-blur-sm bg-black/40"></label>
         <SidebarContent />
       </div>
       
+      {/* Modals */}
       {showSettings && settings && (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-base-100 w-full max-w-lg rounded-3xl flex flex-col shadow-2xl border border-white/10 max-h-[90vh] overflow-y-auto">
@@ -380,7 +354,7 @@ function App() {
             <div className="p-5 border-b border-white/10 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div>
             <form onSubmit={(e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); db.characters.update(selectedCharId!, Object.fromEntries(fd) as any).then(()=>setShowCharEdit(false)); }} className="p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
                <div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full bg-base-200/50 font-bold text-lg"/></div>
-               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm flex justify-between"><span>底层指令</span><Code size={14} className="opacity-50"/></label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed bg-base-200/50"/></div>
+               <div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed bg-base-200/50"/></div>
                <div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs bg-base-300/50"/></div>
                <div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20 bg-base-200/50"/></div>
                <button className="btn btn-primary btn-block rounded-xl"><Save size={18}/> 保存</button>
