@@ -15,32 +15,55 @@ export class LLMClient {
     this.model = settings.model || "";
   }
 
+  // === 1. 构建提示词 (设定 + 记忆) ===
   private buildSystemPrompt(char: Character, settings: Settings): string {
-    // 纯净的 System Prompt 构建
-    let rawPrompt = `
-You are roleplaying as <char_name>{{char}}</char_name>.
-Current Model: {{model}}
-Time: {{date}} {{time}}
+    // 基础设定 (用户填写的完整提示词)
+    let prompt = char.description || "";
 
-<character_profile>
-<description>${char.description}</description>
-<personality>${char.personality}</personality>
-<scenario>${char.scenario}</scenario>
-</character_profile>
-
-<dialogue_examples>
-${char.mes_example}
-</dialogue_examples>
-`.trim();
-
-    // 如果用户定义了 output_template，直接作为普通文本追加，不再作为 XML 格式指令
-    if (char.output_template) {
-      rawPrompt += `\n\n<additional_instructions>\n${char.output_template}\n</additional_instructions>`;
+    // 注入历史记忆 (如果有)
+    if (char.summary && char.summary.trim() !== "") {
+      prompt += `\n\n=== [历史记忆 / Previous Memory] ===\n以下是之前的对话摘要，请将其作为长期记忆，确保持续性：\n${char.summary}`;
     }
 
-    return replaceVariables(rawPrompt, settings, char);
+    // 注入时间等变量
+    prompt += `\n\n[Current Time: ${new Date().toLocaleString()}]`;
+
+    return replaceVariables(prompt, settings, char);
   }
 
+  // === 2. 总结功能 (新) ===
+  async summarize(history: Message[], settings: Settings): Promise<string> {
+    if (history.length === 0) return "";
+    
+    // 确保有模型可用
+    let currentModel = this.model;
+    if (!currentModel) {
+       const list = (settings.model_list || "").split(',');
+       if(list.length > 0) currentModel = list[0].trim();
+    }
+    if(!currentModel) throw new Error("未选择模型");
+
+    // 构造总结请求
+    const historyText = history.map(m => `${m.role}: ${m.content}`).join("\n");
+    const systemPrompt = "你是一个助手。请简要总结以下对话的内容。保留关键事实、人物关系变化、重要事件结果和当前状态。不要过度冗长。";
+
+    try {
+      const res = await this.client.chat.completions.create({
+        model: currentModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: historyText }
+        ],
+        temperature: 0.5, // 总结需要准确，温度低一点
+      });
+      return res.choices[0]?.message?.content || "";
+    } catch (e) {
+      console.error("Summarize Error:", e);
+      throw e;
+    }
+  }
+
+  // === 3. 对话流 ===
   async *chatStream(char: Character, history: Message[], userInputs: string, settings: Settings) {
     let currentModel = this.model;
     if (!currentModel || currentModel.trim() === "") {
@@ -54,10 +77,15 @@ ${char.mes_example}
     }
 
     const processedInput = replaceVariables(userInputs, settings, char);
+    const systemPromptContent = this.buildSystemPrompt(char, settings);
     
+    // 调试用：可以在控制台看到发给 AI 的最终 Prompt，包含记忆
+    // console.log("Final System Prompt:", systemPromptContent);
+
     const messages: any[] = [
-      { role: 'system', content: this.buildSystemPrompt(char, settings) },
-      ...history.slice(-15).map(m => ({ role: m.role, content: m.content })),
+      { role: 'system', content: systemPromptContent },
+      // 这里可以控制上下文长度，比如只发最近 20 条，因为前面的都已经 summarize 进 system prompt 了
+      ...history.slice(-20).map(m => ({ role: m.role, content: m.content })),
       { role: 'user', content: processedInput }
     ];
 
