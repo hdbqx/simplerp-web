@@ -2,69 +2,113 @@
 @tailwind components;
 @tailwind utilities;
 
-/* --- 全局样式优化 --- */
+/* =========================================
+   全局基础设置
+   ========================================= */
 html, body, #root {
-  height: 100dvh;
-  overflow: hidden;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  /* 添加一个深邃的网格背景 */
+  height: 100dvh; /* 使用动态高度，完美适配手机浏览器地址栏 */
+  width: 100vw;
+  overflow: hidden; /* 禁止 Body 滚动，由内部容器接管 */
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  
+  /* 深邃的赛博空间背景 */
   background-color: #0f172a; 
   background-image: 
     radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
     radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
     radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+  background-size: cover;
+  background-attachment: fixed;
+
+  /* 移动端触摸优化 */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
-/* --- 滚动条美化 --- */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors; }
+/* =========================================
+   组件样式工具
+   ========================================= */
 
-/* --- 动画定义 --- */
+/* 1. 玻璃拟态面板 (用于 Navbar, Input, Modal) */
+.glass-panel {
+  @apply bg-base-100/60 backdrop-blur-md border border-white/10 shadow-xl;
+}
+
+/* 2. 消息气泡动画 */
 @keyframes messageIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 .animate-message {
   animation: messageIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* --- Markdown 内容深度美化 --- */
+/* 3. 自定义滚动条 (隐形但可用，或者细条) */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors; }
+
+/* 修复移动端滚动惯性 */
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =========================================
+   Markdown 内容深度美化 (The Magic)
+   ========================================= */
 .prose {
   @apply text-base-content/90 max-w-none leading-relaxed text-[15px];
 }
 
-/* 1. 引用块 (用于 NPC 卡片) -> 转换为高科技面板 */
+/* 段落间距 */
+.prose p {
+  @apply mb-2;
+}
+
+/* 1. 引用块 (Blockquote) -> 转化为信息面板 */
+/* 这里的样式让 AI 输出的 > 引用块变成高科技感的面板 */
 .prose blockquote {
-  @apply not-italic border-l-4 border-accent bg-base-300/40 rounded-r-lg py-3 px-4 my-4 shadow-sm backdrop-blur-sm;
-  border-left-color: oklch(var(--wa)); /* 使用 Warning 颜色 (黄色) 对应传说度 */
+  @apply not-italic border-l-4 border-primary bg-base-300/30 rounded-r-lg py-2 px-3 my-3 shadow-sm backdrop-blur-sm;
+  border-left-color: oklch(var(--p)); 
 }
-.prose blockquote p {
-  @apply my-1;
-}
+/* 针对不同类型的引用块，可以通过 CSS 选择器微调，或者保持统一 */
 
-/* 2. 分割线 -> 转换为发光分割线 */
+/* 2. 分割线 (HR) -> 转化为发光分割线 */
 .prose hr {
-  @apply border-0 h-[1px] bg-gradient-to-r from-transparent via-primary/50 to-transparent my-6;
+  @apply border-0 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent my-4;
 }
 
-/* 3. 列表 -> 紧凑化 */
-.prose ul { @apply my-2 pl-4; }
-.prose li { @apply my-0.5; }
+/* 3. 列表 (UL/OL) */
+.prose ul { @apply list-disc list-outside ml-4 my-2 opacity-90; }
+.prose ol { @apply list-decimal list-outside ml-4 my-2 opacity-90; }
+.prose li { @apply my-0.5 pl-1; }
 
-/* 4. 加粗 -> 强调色 */
+/* 4. 加粗 (Strong) -> 强调色 */
 .prose strong { @apply text-primary font-bold; }
 
-/* 5. 表格 -> 简单美化 */
-.prose table { @apply text-xs my-2; }
-.prose th { @apply text-primary; }
-
-/* --- 玻璃拟态工具类 --- */
-.glass-panel {
-  @apply bg-base-100/60 backdrop-blur-md border border-white/5 shadow-xl;
+/* 5. 标题 (Hx) */
+.prose h1, .prose h2, .prose h3 {
+  @apply font-bold text-base-content mt-4 mb-2;
 }
 
-.glass-bubble {
-  @apply bg-base-200/70 backdrop-blur-sm border border-white/5;
+/* 6. 代码块/行内代码 */
+.prose code {
+  @apply bg-base-300/50 px-1 py-0.5 rounded text-xs font-mono text-secondary;
+}
+.prose pre {
+  @apply bg-black/30 p-2 rounded-lg overflow-x-auto text-xs my-2 border border-white/5;
+}
+.prose pre code {
+  @apply bg-transparent text-current p-0;
+}
+
+/* 7. 表格 (Table) */
+.prose table {
+  @apply w-full text-xs my-2 border-collapse;
+}
+.prose th {
+  @apply text-left p-2 border-b border-white/10 text-primary uppercase tracking-wider;
+}
+.prose td {
+  @apply p-2 border-b border-white/5;
 }
