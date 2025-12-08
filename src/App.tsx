@@ -5,7 +5,6 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-// 修复：移除了未使用的 MoreVertical, User, Bot
 import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, Code, X, Sparkles, BookOpen, Eraser, Save, Copy } from 'lucide-react';
 
 function App() {
@@ -13,6 +12,12 @@ function App() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  
+  // === 新增状态：生图弹窗控制 ===
+  const [showGenModal, setShowGenModal] = useState(false);
+  const [genPrompt, setGenPrompt] = useState('');
+  // ==========================
+
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [isGenImage, setIsGenImage] = useState(false);
@@ -46,20 +51,13 @@ function App() {
     }
   }, [settings?.model_list, settings?.model, settings?.id]);
 
-  // === 核心功能：复制角色 (多周目) ===
   const handleDuplicate = async (e: React.MouseEvent, charId: number) => {
     e.stopPropagation();
     const char = await db.characters.get(charId);
     if (char) {
         if(!confirm(`确定要复制「${char.name}」吗？\n这将创建一个新的存档，设定相同，但聊天记录为空。`)) return;
-        
-        // 分离 id，创建一个新对象
         const { id, ...rest } = char;
-        const newId = await db.characters.add({
-            ...rest,
-            name: `${char.name} (副本)`,
-            summary: "", // 默认清空记忆
-        });
+        const newId = await db.characters.add({ ...rest, name: `${char.name} (副本)`, summary: "" });
         setSelectedCharId(newId as number);
     }
   };
@@ -76,7 +74,6 @@ function App() {
       const llm = new LLMClient(settings);
       const history = await db.messages.where('char_id').equals(selectedCharId).and(m => m.id !== aiMsgId).toArray();
       let fullText = "";
-      
       try {
         for await (const chunk of llm.chatStream(char, history, text, settings)) {
           fullText += chunk;
@@ -110,27 +107,64 @@ function App() {
     window.location.reload();
   };
 
-  const handleGenImage = async () => {
-    if (!settings?.sd_url) return alert("请配置 SD URL");
+  // === 逻辑修改 1: 点击按钮只负责打开弹窗 ===
+  const openGenImageModal = () => {
+    if (!settings?.sd_url) return alert("请在设置中配置 Stable Diffusion URL");
     const lastMsg = messages?.[messages.length - 1]?.content;
-    if (!lastMsg) return;
-    if (!confirm("生成插图？")) return;
-    setIsGenImage(true);
-    try {
-      let prompt = lastMsg.slice(0, 300); 
-      if (settings.baidu_appid) prompt = await translateToEnglish(prompt, settings.baidu_appid, settings.baidu_secret);
-      const res = await fetch(`${settings.sd_url}/sdapi/v1/txt2img`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: `(masterpiece:1.2), best quality, anime style, ${prompt}`, steps: 20, width: 512, height: 768, cfg_scale: 7, sampler_name: "DPM++ 2M Karras" })
-      });
-      if (!res.ok) throw new Error("SD Error");
-      const data = await res.json();
-      await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
-    } catch (e: any) { alert(e.message); } finally { setIsGenImage(false); }
+    if (!lastMsg) return alert("当前没有可用于生图的消息");
+
+    // 简单清洗一下 Prompt (去除 Markdown 符号，保留文本)
+    const cleanText = lastMsg.replace(/[#*`>]/g, '').slice(0, 500);
+    setGenPrompt(cleanText);
+    setShowGenModal(true);
   };
 
-  // --- 侧边栏组件 (美化版) ---
+  // === 逻辑修改 2: 真正的生图逻辑 (在弹窗点击确定后触发) ===
+  const executeGenImage = async () => {
+    if (!settings?.sd_url) return;
+    
+    // 修复 URL 空格问题
+    const cleanUrl = settings.sd_url.trim().replace(/\/$/, '');
+    
+    setIsGenImage(true);
+    // 关闭弹窗
+    setShowGenModal(false); 
+
+    try {
+      let finalPrompt = genPrompt; 
+      
+      // 自动翻译
+      if (settings.baidu_appid) {
+          try {
+             finalPrompt = await translateToEnglish(finalPrompt, settings.baidu_appid, settings.baidu_secret);
+          } catch (e) {
+             console.error("翻译失败，将使用原文", e);
+          }
+      }
+      
+      const res = await fetch(`${cleanUrl}/sdapi/v1/txt2img`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            prompt: `(masterpiece:1.2), best quality, anime style, ${finalPrompt}`, 
+            negative_prompt: "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, nsfw", // 加上 nsfw 视情况而定
+            steps: 20, 
+            width: 512, 
+            height: 768, 
+            cfg_scale: 7, 
+            sampler_name: "DPM++ 2M Karras" 
+        })
+      });
+      if (!res.ok) throw new Error(`SD Error: ${res.status}`);
+      const data = await res.json();
+      await db.messages.add({ char_id: selectedCharId!, role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now() });
+    } catch (e: any) { 
+        alert(e.message); 
+    } finally { 
+        setIsGenImage(false); 
+    }
+  };
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-base-100/80 backdrop-blur-xl text-base-content w-80 p-4 border-r border-white/5 shadow-2xl">
       <div className="flex justify-between items-center mb-6 pl-2">
@@ -150,16 +184,10 @@ function App() {
                 <div className={`font-bold truncate ${selectedCharId===c.id ? 'text-primary' : 'text-base-content/80'}`}>{c.name}</div>
                 <div className="text-[10px] opacity-40 truncate">#{c.id}</div>
             </div>
-            
-            {/* 悬浮操作栏 */}
             {selectedCharId === c.id && (
                 <div className="flex items-center gap-1 opacity-100 transition-opacity">
-                    <button className="btn btn-xs btn-ghost btn-square text-base-content/60 hover:text-info" title="复制/新周目" onClick={(e)=>handleDuplicate(e, c.id!)}>
-                        <Copy size={14}/>
-                    </button>
-                    <button className="btn btn-xs btn-ghost btn-square text-base-content/60 hover:text-error" title="删除" onClick={(e)=>{e.stopPropagation();if(confirm("删除?")) db.characters.delete(c.id!)}}>
-                        <Trash2 size={14}/>
-                    </button>
+                    <button className="btn btn-xs btn-ghost btn-square text-base-content/60 hover:text-info" title="复制/新周目" onClick={(e)=>handleDuplicate(e, c.id!)}><Copy size={14}/></button>
+                    <button className="btn btn-xs btn-ghost btn-square text-base-content/60 hover:text-error" title="删除" onClick={(e)=>{e.stopPropagation();if(confirm("删除?")) db.characters.delete(c.id!)}}><Trash2 size={14}/></button>
                 </div>
             )}
           </div>
@@ -179,10 +207,8 @@ function App() {
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e => setMobileMenuOpen(e.target.checked)} />
       
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* 背景装饰 */}
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/50 via-transparent to-transparent z-0"></div>
 
-        {/* Navbar (悬浮式) */}
         <div className="absolute top-0 left-0 right-0 z-20 p-2 md:p-4 pointer-events-none">
             <div className="navbar min-h-[3rem] glass-panel rounded-2xl pointer-events-auto px-4">
                 <div className="flex-none md:hidden mr-2"><label htmlFor="my-drawer" className="btn btn-square btn-ghost btn-sm"><Menu/></label></div>
@@ -217,7 +243,6 @@ function App() {
             </div>
         </div>
 
-        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 pt-20 pb-24 space-y-6 z-10 scroll-smooth">
           {messages?.map((m, index) => {
             const isUser = m.role === 'user';
@@ -246,10 +271,10 @@ function App() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input Area (底部悬浮) */}
         <div className="absolute bottom-0 left-0 right-0 p-4 z-20 bg-gradient-to-t from-base-100 via-base-100/80 to-transparent pointer-events-none">
           <div className="max-w-4xl mx-auto flex gap-2 items-end glass-panel p-2 rounded-3xl pointer-events-auto ring-1 ring-white/10 focus-within:ring-primary/50 transition-all">
-            <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1 hover:bg-white/10" onClick={handleGenImage} disabled={isGenImage}>
+            {/* 修改：点击按钮现在调用 openGenImageModal */}
+            <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1 hover:bg-white/10" onClick={openGenImageModal} disabled={isGenImage}>
                {isGenImage ? <span className="loading loading-spinner loading-xs"/> : <ImageIcon size={20}/>}
             </button>
             <textarea 
@@ -298,6 +323,41 @@ function App() {
                <div><label className="label font-bold text-sm">开场白 / First Message</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20 bg-base-200/50"/></div>
                <button className="btn btn-primary btn-block rounded-xl shadow-lg shadow-primary/20"><Save size={18}/> 保存档案</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* === 新增：生图 Prompt 确认弹窗 === */}
+      {showGenModal && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-base-100/95 backdrop-blur w-full max-w-lg rounded-3xl flex flex-col shadow-2xl border border-white/10">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center">
+                <h3 className="font-bold text-xl flex items-center gap-2"><ImageIcon size={20}/> 图像生成设定</h3>
+                <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGenModal(false)}><X size={20}/></button>
+            </div>
+            <div className="p-6 space-y-4">
+                <p className="text-sm opacity-60">
+                    以下是从对话提取的画面描述。您可以修改它以获得更精确的结果。
+                    <br/>(系统会自动翻译为英文后发送给 SD)
+                </p>
+                
+                <div className="form-control">
+                    <label className="label text-xs uppercase opacity-50 font-bold pb-1">画面描述 (Prompt)</label>
+                    <textarea 
+                        className="textarea textarea-bordered h-32 w-full bg-base-200/50 text-sm leading-relaxed" 
+                        value={genPrompt}
+                        onChange={(e) => setGenPrompt(e.target.value)}
+                        placeholder="描述想要生成的画面..."
+                    />
+                </div>
+
+                <div className="flex gap-3 mt-4">
+                    <button className="btn flex-1 rounded-xl" onClick={()=>setShowGenModal(false)}>取消</button>
+                    <button className="btn btn-primary flex-1 rounded-xl" onClick={executeGenImage}>
+                        <Sparkles size={16}/> 开始生成
+                    </button>
+                </div>
+            </div>
           </div>
         </div>
       )}
