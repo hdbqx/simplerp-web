@@ -35,7 +35,6 @@ function App() {
     try {
         const data = await api.characters.list();
         setCharacters(data);
-        // 如果有数据且未选中，默认选中第一个（即星海学园）
         if(data.length > 0 && !selectedCharId) setSelectedCharId(data[0].id);
     } catch(e) { console.error(e); } finally { setIsLoading(false); }
   };
@@ -55,7 +54,6 @@ function App() {
     setIsTyping(true);
     let history = historyOverride || messages;
     const tempTimestamp = Date.now() + 1;
-    // 乐观更新 UI
     setMessages(prev => [...prev, { char_id: selectedCharId, role: 'assistant', content: '...', timestamp: tempTimestamp }]);
     
     const llm = new LLMClient(settings);
@@ -70,7 +68,7 @@ function App() {
           });
         }
         await api.messages.add({ char_id: selectedCharId, role: 'assistant', content: fullText, timestamp: tempTimestamp });
-        loadMessages(); // 重新加载以获取真实ID
+        loadMessages(); 
     } catch (e: any) {
         setMessages(prev => { const copy = [...prev]; copy[copy.length - 1].content += `\n[Error: ${e.message}]`; return copy; });
     }
@@ -133,6 +131,15 @@ function App() {
     if (!selectedCharId || !confirm("清空当前对话？(保留记忆)")) return;
     await api.messages.clear(selectedCharId);
     setMessages([]);
+  };
+
+  // ✅ 修复点：补上了这个缺失的函数
+  const openGenImageModal = () => {
+    if (!settings?.sd_url) return alert("请配置 SD URL");
+    const lastMsg = messages?.[messages.length - 1]?.content;
+    if (!lastMsg) return alert("无消息可用于生图");
+    setGenPrompt(lastMsg.replace(/[#*`>]/g, '').slice(0, 500));
+    setShowGenModal(true);
   };
   
   const executeGenImage = async () => {
