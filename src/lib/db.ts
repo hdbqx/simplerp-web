@@ -17,7 +17,9 @@ export const api = {
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', body: JSON.stringify(m) }).then(r => r.json()),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
-    clear: (charId: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' })
+    clear: (charId: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' }),
+    // 新增：调用后端删除所有图片
+    clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' }) 
   },
   lorebook: {
     list: (charId: number) => fetch(`${API}/lorebook?char_id=${charId}`).then(r => r.json() as Promise<LorebookEntry[]>),
@@ -31,5 +33,5 @@ export const api = {
   }
 };
 
-export const db = {}; // Placeholder
+export const db = {}; 
 export async function initDB() { console.log("Cloudflare D1 Mode"); }

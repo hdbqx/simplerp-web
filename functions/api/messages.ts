@@ -1,4 +1,5 @@
 interface Env { DB: D1Database; }
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const charId = url.searchParams.get('char_id');
@@ -6,6 +7,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { results } = await context.env.DB.prepare("SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC").bind(charId).all();
   return Response.json(results);
 };
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare(
@@ -13,16 +15,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   ).bind(body.char_id, body.role, body.content, body.image || "", body.timestamp).run();
   return Response.json({ id: meta.last_row_id });
 };
+
 export const onRequestPut: PagesFunction<Env> = async (context) => {
     const body: any = await context.request.json();
     await context.env.DB.prepare("UPDATE messages SET content = ? WHERE id = ?").bind(body.content, body.id).run();
     return new Response("Updated");
 }
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const id = url.searchParams.get('id');
     const charId = url.searchParams.get('char_id'); 
-    if (id) await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
-    else if (charId) await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ?").bind(charId).run();
+    const type = url.searchParams.get('type'); // 新增：操作类型
+
+    if (type === 'all_images') {
+        // 新增逻辑：删除所有图片消息
+        // 逻辑：删除 image 字段不为空 且 不为空字符串 的记录
+        await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
+        return new Response("All images deleted");
+    } else if (id) {
+        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
+    } else if (charId) {
+        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ?").bind(charId).run();
+    }
     return new Response("Deleted");
 };

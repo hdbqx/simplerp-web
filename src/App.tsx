@@ -4,7 +4,7 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Copy, RefreshCw, Book, HelpCircle } from 'lucide-react';
+import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Copy, RefreshCw, Book, HelpCircle, HardDrive } from 'lucide-react';
 
 const HELP_DOC = `# 📘 SimpleRP Cloud\n数据已迁移至 Cloudflare D1 云数据库，不再丢失。`.trim();
 
@@ -133,7 +133,18 @@ function App() {
     setMessages([]);
   };
 
-  // ✅ 修复点：补上了这个缺失的函数
+  // 新增：清除所有图片功能
+  const handleClearImages = async () => {
+    if (!confirm("⚠️ 警告：这将永久删除数据库中所有角色生成的图片！\n\n此操作用于释放 D1 数据库空间，且不可恢复。\n是否继续？")) return;
+    try {
+        await api.messages.clearAllImages();
+        alert("✅ 所有图片已清除");
+        if (selectedCharId) loadMessages(); // 刷新当前视图
+    } catch (e: any) {
+        alert("删除失败: " + e.message);
+    }
+  };
+
   const openGenImageModal = () => {
     if (!settings?.sd_url) return alert("请配置 SD URL");
     const lastMsg = messages?.[messages.length - 1]?.content;
@@ -234,7 +245,27 @@ function App() {
       </div>
       <div className="drawer-side z-[50]"><label htmlFor="my-drawer" className="drawer-overlay bg-black/60"></label><SidebarContent /></div>
       
-      {showSettings && settings && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300 max-h-[90vh] overflow-y-auto"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">系统设置</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button></div><form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const newS = Object.fromEntries(fd) as any; await api.settings.update(newS); setSettings({...newS, id: settings.id}); setShowSettings(false); }} className="p-6 space-y-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full mb-2"/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 text-xs"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div><div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full"/></div></div><button className="btn btn-primary btn-block mt-4 rounded-xl">保存</button></form></div></div>)}
+      {showSettings && settings && (
+      <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+        <div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300 max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center">
+                <h3 className="font-bold text-xl">系统设置</h3>
+                <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button>
+            </div>
+            <form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const newS = Object.fromEntries(fd) as any; await api.settings.update(newS); setSettings({...newS, id: settings.id}); setShowSettings(false); }} className="p-6 space-y-4">
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full mb-2" placeholder="https://..."/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full" placeholder="sk-..."/></div>
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 text-xs" placeholder="gpt-4o, gpt-3.5-turbo"/></div>
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div>
+                <div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full"/></div></div>
+                <div className="pt-2 border-t border-base-content/10">
+                    <label className="label text-xs uppercase opacity-50 font-bold pb-1 text-error">Danger Zone</label>
+                    <button type="button" className="btn btn-error btn-outline btn-sm w-full" onClick={handleClearImages}><HardDrive size={16}/> 清除所有图片 (释放空间)</button>
+                </div>
+                <button className="btn btn-primary btn-block mt-4 rounded-xl">保存</button>
+            </form>
+        </div>
+      </div>
+      )}
       {showCharEdit && currentChar && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-3xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div><form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const updates = Object.fromEntries(fd) as any; await api.characters.update(selectedCharId!, updates); loadCharacters(); setShowCharEdit(false); }} className="p-6 overflow-y-auto space-y-5 flex-1"><div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full font-bold text-lg"/></div><div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed"/></div><div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs"/></div><div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20"/></div><button className="btn btn-primary btn-block rounded-xl"><Save size={18}/> 保存</button></form></div></div>)}
       {showLorebook && selectedCharId && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><Book size={20}/> 世界书</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X size={20}/></button></div><div className="p-4 flex-1 overflow-y-auto custom-scrollbar space-y-3">{lorebookEntries.map(entry => (<div key={entry.id} className="collapse collapse-arrow bg-base-200 border border-base-300"><input type="checkbox" /> <div className="collapse-title font-bold text-sm flex items-center gap-2"><span className={entry.isActive ? 'text-success' : 'text-base-content/30'}>●</span>{entry.keywords}</div><div className="collapse-content space-y-2"><textarea className="textarea textarea-bordered w-full text-xs font-mono h-24" defaultValue={entry.content} onBlur={(e) => api.lorebook.update(entry.id!, { content: e.target.value })} placeholder="内容..."/><div className="flex gap-2"><input className="input input-bordered input-sm flex-1 text-xs" defaultValue={entry.keywords} onBlur={(e) => api.lorebook.update(entry.id!, { keywords: e.target.value })} placeholder="触发词"/><button className={`btn btn-sm ${entry.isActive ? 'btn-success' : 'btn-ghost'}`} onClick={async ()=>{ await api.lorebook.update(entry.id!, { isActive: !entry.isActive }); loadLorebook(); }}>{entry.isActive ? 'On' : 'Off'}</button><button className="btn btn-sm btn-error btn-outline" onClick={async ()=>{ await api.lorebook.delete(entry.id!); loadLorebook(); }}><Trash2 size={14}/></button></div></div></div>))}<button className="btn btn-ghost btn-block border-dashed border-2 border-base-content/20" onClick={async ()=>{ await api.lorebook.add({ char_id: selectedCharId!, keywords: "新词条", content: "", isActive: true }); loadLorebook(); }}><Plus size={16}/> 添加</button></div></div></div>)}
       {showGenModal && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><ImageIcon size={20}/> 生图</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGenModal(false)}><X size={20}/></button></div><div className="p-6 space-y-4"><textarea className="textarea textarea-bordered h-32 w-full text-sm leading-relaxed" value={genPrompt} onChange={(e) => setGenPrompt(e.target.value)} placeholder="描述..."/><div className="flex gap-3 mt-4"><button className="btn flex-1 rounded-xl" onClick={()=>setShowGenModal(false)}>取消</button><button className="btn btn-primary flex-1 rounded-xl" onClick={executeGenImage}><Sparkles size={16}/> 生成</button></div></div></div></div>)}
