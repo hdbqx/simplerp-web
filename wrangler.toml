@@ -1,0 +1,8 @@
+name = "simplerp-web"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-12-09"
+
+[[d1_databases]]
+binding = "simplerp_db"
+database_name = "simplerp-db"
+database_id = "ea4f0db0-d1cb-4608-9a11-d3609a7d31d6"
