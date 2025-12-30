@@ -3,35 +3,30 @@ import type { Character, Settings, Message, LorebookEntry } from './db';
 import { replaceVariables } from './variables'; 
 
 export class LLMClient {
-  // === Chat Stream ===
   async *chatStream(
     char: Character, 
     history: Message[], 
     userInputs: string, 
     settings: Settings, 
-    lorebookEntries: LorebookEntry[] = [],
-    groupContext?: { name: string, description: string, members: Character[] } // 新增群聊上下文
+    _lorebookEntries: LorebookEntry[] = [], // 前缀加下划线表示暂时未使用
+    groupContext?: { name: string, description: string, members: Character[] }
   ) {
-    // 1. 决定配置：如果角色有独立配置则覆盖全局
     const apiBase = char.api_base_override || settings.api_base;
     const apiKey = char.api_key_override || settings.api_key;
-    let currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
+    const currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
 
     if (!currentModel) { yield "\n[系统错误: 未找到可用模型]"; return; }
 
     const client = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
 
-    // 2. 构建 System Prompt
     let systemPrompt = char.description || "";
     if (char.summary) systemPrompt += `\n\n=== [Long-term Memory] ===\n${char.summary}`;
 
     if (groupContext) {
-        // 群聊剧场模式注入
         const membersList = groupContext.members.map(m => `[${m.name}]: ${m.summary || '未知'}`).join('\n');
         systemPrompt = `【剧场大背景】\n${groupContext.description}\n\n【参与者列表】\n${membersList}\n\n【你的当前身份】\n${systemPrompt}`;
     }
 
-    // 3. 历史记录处理 (群聊模式下增加“名牌”)
     const messages = history.slice(-20).map(m => {
         let content = m.content;
         if (groupContext) {
@@ -61,7 +56,6 @@ export class LLMClient {
     }
   }
 
-  // Summarize 功能略 (保持原样)
   async summarize(history: Message[], settings: Settings): Promise<string> {
     const currentModel = settings.model || (settings.model_list?.split(',')[0].trim());
     if(!currentModel) return "Error: No Model";

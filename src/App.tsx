@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { api, type LorebookEntry, type Message, type Character, type Settings, type Group } from './lib/db';
+import { api, type Message, type Character, type Settings, type Group } from './lib/db';
 import { LLMClient } from './lib/llm';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Copy, RefreshCw, Book, HelpCircle, HardDrive, Users } from 'lucide-react';
+import { Send, Settings as SettingsIcon, Pencil, Plus, Eraser, Book } from 'lucide-react';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group'>('char');
@@ -123,7 +123,6 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full relative">
-        {/* 顶部导航 */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4">
             <div className="flex-1 font-bold text-lg">{currentHeaderName || "SimpleRP Theater"}</div>
             <div className="flex-none gap-2">
@@ -133,7 +132,6 @@ function App() {
             </div>
         </div>
 
-        {/* 消息区 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
             {messages.map((m, idx) => {
                 const sender = m.role === 'user' ? '用户' : (characters.find(c => c.id === m.char_id)?.name || 'AI');
@@ -150,18 +148,12 @@ function App() {
             <div ref={bottomRef} />
         </div>
 
-        {/* 底部输入区 */}
         <div className="p-4 bg-base-100 border-t border-base-300">
-            {/* AI点名条 (斗兽场核心) */}
             {viewMode === 'group' && selectedGroupId && (
                 <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
                     {groupMembers.map(m => (
                         <button key={m.id} onClick={()=>handleTriggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap">@{m.name}</button>
                     ))}
-                    <button className="btn btn-xs btn-ghost" onClick={async () => {
-                        const cid = prompt("请输入要加入剧场的角色ID:");
-                        if(cid) { /* 此处需后端支持追加成员，逻辑略 */ }
-                    }}><Plus size={12}/></button>
                 </div>
             )}
             {viewMode === 'char' && selectedCharId && (
@@ -177,7 +169,6 @@ function App() {
       </div>
       <div className="drawer-side"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* 设置模态框 */}
       {showSettings && (
           <div className="modal modal-open">
               <div className="modal-box max-w-lg">
@@ -195,7 +186,6 @@ function App() {
           </div>
       )}
 
-      {/* 角色编辑 (支持一员一模) */}
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open">
               <div className="modal-box max-w-2xl h-[80vh] flex flex-col">
@@ -213,7 +203,6 @@ function App() {
           </div>
       )}
 
-      {/* 剧场编辑 */}
       {showGroupEdit && selectedGroupId && (
           <div className="modal modal-open">
               <div className="modal-box max-w-2xl">
