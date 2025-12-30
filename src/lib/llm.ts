@@ -29,56 +29,55 @@ export class LLMClient {
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
 
     const isGroupMode = !!groupCtx;
-    const STOP_MARKER = "Ω"; // 选一个生僻且短的符号作为物理停止锚点
+    const STOP_MARKER = "Ω"; 
+    const playerDisplayName = isGroupMode ? (settings.user_name || "User") : "User";
 
-    // --- 1. 视角锁定 & 物理锚定 (Prompt) ---
+    // --- 1. 视角锁定 (System Prompt) ---
     let systemPrompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     systemPrompt += this.scanLorebook(userInputs, lorebookEntries);
 
     if (isGroupMode) {
       const others = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
-      
-      systemPrompt = `【群聊/剧场模式指令】
+      systemPrompt = `【剧场模式协议】
 1. 当前场景：${groupCtx.description}
 2. 你的唯一身份：[${char.name}]
-3. 严格禁令：严禁代写、模拟或提及以下角色的对话：${others.join(', ')} 以及 User。
+3. 玩家(User)身份：[${playerDisplayName}]
+4. 禁令：严禁代写 [${playerDisplayName}] 或 ${others.join(', ')} 的任何对白或内心活动。
 
-【输出协议】
-- 回复必须且仅包含 [${char.name}] 的言行描述。
-- 回复结束时，必须立即输出一个 "${STOP_MARKER}" 符号作为终止符。
-- 严禁在 "${STOP_MARKER}" 之后输出任何内容。
+【输出规范】
+- 仅描述 [${char.name}] 的言行。
+- 必须以 "${STOP_MARKER}" 符号严格结束回复。
+- 严禁在 "${STOP_MARKER}" 后输出任何字符。
 
 【设定】
 ${systemPrompt}`;
     }
 
-    // --- 2. 逻辑隔离 (History Formatting) ---
+    // --- 2. 逻辑隔离 (History Serialization) ---
     const messages = history.slice(-15).map(m => {
       let content = m.content;
       if (isGroupMode) {
         const sender = groupCtx.members.find((c:any) => c.id === m.char_id);
-        const name = m.role === 'user' ? "User" : (sender?.name || 'AI');
-        // 将剧本格式 "A: ..." 改为日志格式 "(Record: A) -> ..."
-        // 这能打破 AI “写续集”的思维惯性
-        content = `(Past_Log: ${name}) -> ${m.content}`;
+        const name = m.role === 'user' ? playerDisplayName : (sender?.name || 'AI');
+        content = `(Log: ${name}) -> ${m.content}`;
       }
       return { role: m.role, content };
     });
 
     if (userInputs) {
-        const processedInput = replaceVariables(userInputs, settings, char);
+        const pInput = replaceVariables(userInputs, settings, char);
         messages.push({ 
             role: 'user', 
-            content: isGroupMode ? `(Current_Input: User) -> ${processedInput}` : processedInput 
+            content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${pInput}` : pInput 
         });
     }
 
-    // --- 3. 动态黑名单构建 (仅群聊有效) ---
+    // --- 3. 动态黑名单 (仅群聊模式) ---
     let stopRegex: RegExp | null = null;
     if (isGroupMode) {
-      const forbiddenNames = ["User", "用户", "作者", "系统", ...groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name)];
-      const escapedNames = forbiddenNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\[|【|#|\\*|\\s)*(${escapedNames})(\\]|】|\\*|:|：|\\s)`, 'i');
+      const fNames = [playerDisplayName, "User", "用户", "作者", "系统", ...groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name)];
+      const escaped = fNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\[|【|#|\\*|\\s)*(${escaped})(\\]|】|\\*|:|：|\\s|\\n)`, 'i');
     }
 
     try {
@@ -87,9 +86,8 @@ ${systemPrompt}`;
         messages: [{ role: 'system', content: replaceVariables(systemPrompt, settings, char) }, ...messages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        // --- 4. 物理停止词 (API-side) ---
-        // 只有群聊才会开启 Ω 停止词
-        stop: isGroupMode ? [STOP_MARKER, "User:", "(Past_Log"] : ["User:", "\nUser:"] 
+        // 火山停止词优化
+        stop: isGroupMode ? [STOP_MARKER, "(Log:"] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
 
       let accumulated = ""; 
@@ -99,21 +97,19 @@ ${systemPrompt}`;
         if (text) {
           const newAccumulated = accumulated + text;
           
-          // --- 5. 动态巡逻 (Frontend Safe-Guard) ---
           if (isGroupMode && stopRegex && stopRegex.test(newAccumulated)) {
             const match = newAccumulated.match(stopRegex);
             if (match && match.index !== undefined) {
-              const matchPosInCurrent = match.index - accumulated.length;
-              const safePart = text.substring(0, matchPosInCurrent);
-              if (safePart) yield safePart;
+              const pos = match.index - accumulated.length;
+              const safe = text.substring(0, pos);
+              if (safe) yield safe;
             }
-            console.warn(`[防串流巡逻] 发现违规角色扮演，已执行物理切断。`);
+            console.warn(`[剧场拦截] 捕获越权扮演行为。`);
             if (controller) controller.abort(); 
             return; 
           }
 
           accumulated = newAccumulated;
-          // 过滤掉输出中可能出现的停止符 Ω
           yield text.replace(STOP_MARKER, "");
         }
       }

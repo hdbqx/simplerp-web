@@ -2,7 +2,12 @@ export interface Character { id?: number; name: string; description: string; fir
 export interface Message { id?: number; char_id?: number; group_id?: number; role: 'user' | 'assistant'; content: string; image?: string; timestamp: number; }
 export interface Group { id?: number; name: string; description: string; memberIds?: number[]; }
 export interface ApiPreset { id?: number; name: string; api_base: string; api_key: string; }
-export interface Settings { id?: number; api_base?: string; api_key?: string; model?: string; model_list?: string; sd_url?: string; baidu_appid?: string; baidu_secret?: string; temperature?: number; }
+export interface Settings { 
+    id?: number; api_base?: string; api_key?: string; model?: string; 
+    model_list?: string; sd_url?: string; baidu_appid?: string; 
+    baidu_secret?: string; temperature?: number; 
+    user_name?: string; // 新增：群聊专用用户名
+}
 export interface LorebookEntry { id?: number; char_id: number; keywords: string; content: string; isActive: boolean; }
 
 const API = '/api';
@@ -28,8 +33,6 @@ export const api = {
     update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
-  // src/lib/db.ts 局部更新 messages 对象部分
-
   messages: {
     list: (charId?: number, groupId?: number) => {
         let url = `${API}/messages?`;
@@ -39,12 +42,11 @@ export const api = {
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{id: number}>),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', headers, body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
-    // 修复：确保清除请求包含明确的 ID 参数
     clear: (charId?: number, groupId?: number) => {
-        const params = new URLSearchParams();
-        if (groupId) params.append('group_id', groupId.toString());
-        else if (charId) params.append('char_id', charId.toString());
-        return fetch(`${API}/messages?${params.toString()}`, { method: 'DELETE' });
+        const p = new URLSearchParams();
+        if (groupId) p.append('group_id', groupId.toString());
+        else if (charId) p.append('char_id', charId.toString());
+        return fetch(`${API}/messages?${p.toString()}`, { method: 'DELETE' });
     },
     clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' }) 
   },
