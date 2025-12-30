@@ -1,3 +1,5 @@
+// functions/api/messages.ts 完整覆盖
+
 interface Env { DB: D1Database; }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -5,12 +7,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const charId = url.searchParams.get('char_id');
   const groupId = url.searchParams.get('group_id');
 
-  if (groupId) {
+  if (groupId && groupId !== 'undefined') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC"
     ).bind(groupId).all();
     return Response.json(results);
-  } else if (charId) {
+  } else if (charId && charId !== 'undefined') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC"
     ).bind(charId).all();
@@ -42,13 +44,24 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
     if (type === 'all_images') {
         await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
-    } else if (id && id !== 'undefined' && id !== 'null') {
-        // 关键修复：执行物理删除
-        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(parseInt(id)).run();
-    } else if (groupId) {
-        await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
-    } else if (charId) {
-        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ? AND group_id IS NULL").bind(charId).run();
+        return new Response("Images Cleared");
+    } 
+    
+    if (id && id !== 'undefined') {
+        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
+        return new Response("Deleted Single");
     }
-    return new Response("Deleted");
+
+    // 修复全量删除：根据传入的参数决定删除哪个范围
+    if (groupId && groupId !== 'undefined') {
+        await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
+        return new Response("Group Cleared");
+    } 
+    
+    if (charId && charId !== 'undefined') {
+        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ? AND group_id IS NULL").bind(charId).run();
+        return new Response("Char Cleared");
+    }
+
+    return new Response("No Action", { status: 400 });
 };

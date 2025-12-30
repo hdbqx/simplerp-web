@@ -28,17 +28,24 @@ export const api = {
     update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
+  // src/lib/db.ts 局部更新 messages 对象部分
+
   messages: {
     list: (charId?: number, groupId?: number) => {
         let url = `${API}/messages?`;
         if (groupId) url += `group_id=${groupId}`; else url += `char_id=${charId}`;
         return fetch(url).then(r => r.json() as Promise<Message[]>);
     },
-    // 关键修复：确保返回结果包含数据库分配的 id
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{id: number}>),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', headers, body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
-    clear: (charId?: number, groupId?: number) => fetch(`${API}/messages?${groupId?`group_id=${groupId}`:`char_id=${charId}`}`, { method: 'DELETE' }),
+    // 修复：确保清除请求包含明确的 ID 参数
+    clear: (charId?: number, groupId?: number) => {
+        const params = new URLSearchParams();
+        if (groupId) params.append('group_id', groupId.toString());
+        else if (charId) params.append('char_id', charId.toString());
+        return fetch(`${API}/messages?${params.toString()}`, { method: 'DELETE' });
+    },
     clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' }) 
   },
   settings: {

@@ -1,3 +1,5 @@
+// src/lib/llm.ts 完整覆盖
+
 import OpenAI from 'openai';
 import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
 import { replaceVariables } from './variables'; 
@@ -28,33 +30,34 @@ export class LLMClient {
 
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
 
-    // --- 逻辑分水岭：单人 vs 多人 ---
     const isGroupMode = !!groupCtx;
     let stopRegex: RegExp | null = null;
 
     if (isGroupMode) {
-      // 仅在多人模式构建黑名单：包含“用户”和“除了AI自己以外的成员”
-      const forbiddenNames: string[] = ["User", "用户", "作者", "旁白"]; 
-      const otherMembers = groupCtx.members
-        .filter((m: any) => m.name !== char.name) // 排除掉正在说话的 AI 自己
-        .map((m: any) => m.name);
-      
+      // 多人模式黑名单：用户、作者、系统，以及除了AI自己之外的所有人
+      const forbiddenNames: string[] = ["User", "用户", "作者", "旁白", "系统", "System"]; 
+      const otherMembers = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
       forbiddenNames.push(...otherMembers);
 
-      // 构建正则：匹配换行后出现的 [名字]、名字:、名字：、*名字* 或 名字+换行
       const escapedNames = forbiddenNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      stopRegex = new RegExp(`\\n(\\[|【|#|\\*|\\s)*(${escapedNames})(\\]|】|\\*|:|：|\\s|\\n)`, 'i');
+      // 优化正则：匹配 (换行/空格/句末标点) + (修饰符) + 名字 + (标识符)
+      // 这样即便 AI 不换行直接写 "我不是AI。陈墨:" 也能被拦住
+      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\[|【|#|\\*|\\s)*(${escapedNames})(\\]|】|\\*|:|：|\\s)`, 'i');
     }
 
     let systemPrompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     systemPrompt += this.scanLorebook(userInputs, lorebookEntries);
 
     if (isGroupMode) {
-      // 多人模式：强调身份唯一性
-      systemPrompt = `【群聊剧场：${groupCtx.name}】\n${groupCtx.description}\n\n` +
-               `【你的唯一角色】[${char.name}]\n` +
-               `【规则】你现在只能以[${char.name}]的视角进行描写。严禁越权替其他成员发言。当[${char.name}]的行为结束，请立即停止。` +
-               `\n\n【你的设定】\n${systemPrompt}`;
+      systemPrompt = `【群聊剧场强制指令】
+1. 你当前的角色：[${char.name}]
+2. 禁止代写角色：${groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name).join(', ')}
+3. 你的输出必须严格限制在 [${char.name}] 的言行内。
+4. 严禁使用其他角色的名字作为段落开头或结尾。
+5. 每一段描述完成后，必须立即停止。禁止输出 "Next:" 或开启下一位角色的回合。
+
+【设定】
+${systemPrompt}`;
     }
 
     const messages = history.slice(-15).map(m => {
@@ -75,8 +78,8 @@ export class LLMClient {
         messages: [{ role: 'system', content: replaceVariables(systemPrompt, settings, char) }, ...messages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        // API 层停止词：仅保留最基础的结构化停止词，防止干扰单人创作
-        stop: isGroupMode ? ["\n\n", "\n[", "\n【"] : ["\nUser:", "\n用户:"] 
+        // 火山引擎 4 字符停止词：这里保留结构化停止词
+        stop: isGroupMode ? ["\n[", "\n【", "User:"] : ["\nUser:"] 
       }, { signal: controller?.signal });
 
       let accumulated = ""; 
@@ -86,22 +89,18 @@ export class LLMClient {
         if (text) {
           const newAccumulated = accumulated + text;
           
-          // --- 多人模式下的动态名单拦截 ---
           if (isGroupMode && stopRegex && stopRegex.test(newAccumulated)) {
             const match = newAccumulated.match(stopRegex);
             if (match && match.index !== undefined) {
-              // 计算当前 chunk 中安全的部分
               const matchPosInCurrent = match.index - accumulated.length;
               const safePart = text.substring(0, matchPosInCurrent);
               if (safePart) yield safePart;
             }
-
-            console.warn(`[剧场拦截] AI 试图串人设: ${match ? match[2] : '未知'}`);
-            if (controller) controller.abort(); // 物理停机，节省火山 Token
+            console.warn(`[剧场截断] 检测到 AI 试图越权回复: ${match ? match[3] : '未知'}`);
+            if (controller) controller.abort(); 
             return; 
           }
 
-          // 单人模式直接输出，不进行正则拦截
           accumulated = newAccumulated;
           yield text;
         }

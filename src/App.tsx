@@ -231,7 +231,24 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
-            <button className="btn btn-sm btn-ghost text-error" onClick={() => {if(confirm("清空对话？")) api.messages.clear(selectedCharId, selectedGroupId).then(()=>setMessages([]))}}><Eraser size={18}/></button>
+
+                    <button 
+                      className="btn btn-sm btn-ghost text-error" 
+                      onClick={() => {
+                        if(confirm("确定要清空当前窗口的所有对话记录吗？")) {
+                          // 修复：明确根据模式传递参数
+                          const cid = viewMode === 'char' ? selectedCharId : undefined;
+                          const gid = viewMode === 'group' ? selectedGroupId : undefined;
+                          
+                          api.messages.clear(cid, gid).then(() => {
+                            setMessages([]);
+                            alert("已清空");
+                          });
+                        }
+                      }}
+                    >
+                      <Eraser size={18}/>
+                    </button>
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结对话" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("已更新总结");}}><BookOpen size={18}/></button>
