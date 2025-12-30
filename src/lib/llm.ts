@@ -28,22 +28,32 @@ export class LLMClient {
 
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
 
+    // 1. 强化 Prompt 约束
     let prompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     prompt += this.scanLorebook(userInputs, lorebookEntries);
 
     if (groupCtx) {
       const membersText = groupCtx.members.map((m: any) => `[${m.name}]: ${m.summary || '...'}`).join('\n');
       prompt = `【剧场背景】\n${groupCtx.description}\n\n【成员列表】\n${membersText}\n\n` +
-               `【任务】你只能扮演[${char.name}]回复。严禁代替他人对话或描写。` +
-               `若对话结束，请停止输出。\n\n【你的身份】\n${prompt}`;
+               `【任务】你只能扮演[${char.name}]进行回复。严禁输出其他成员的名字或替其发言。\n` +
+               `如果你认为对话已结束，请直接停止输出。\n\n【你的当前身份设定】\n${prompt}`;
     }
 
-    const stopWords = ["User:", "用户:", "User："];
+    // 2. 优化停止词逻辑 (解决 400 错误)
+    // 强制限制在 4 个以内，优先防止 User 串号
+    let stopWords = ["User:", "用户:"];
     if (groupCtx) {
-      groupCtx.members.forEach((m: any) => {
-        stopWords.push(`${m.name}:`, `${m.name}：`);
+      // 动态加入其他成员的名字作为停止符，但受限于总数 4 个
+      const otherMembers = groupCtx.members
+        .filter((m: any) => m.id !== char.id)
+        .slice(0, 2); // 只取前两个其他成员名字，确保总数不超标
+      
+      otherMembers.forEach((m: any) => {
+        stopWords.push(`${m.name}:`);
       });
     }
+    // 最终截取前4个，确保万无一失
+    const finalStopWords = stopWords.slice(0, 4);
 
     const messages = history.slice(-20).map(m => {
       let content = m.content;
@@ -62,7 +72,7 @@ export class LLMClient {
         messages: [{ role: 'system', content: replaceVariables(prompt, settings, char) }, ...messages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        stop: stopWords
+        stop: finalStopWords // 使用修正后的 4 个停止词
       }, { signal });
 
       for await (const chunk of stream) {
