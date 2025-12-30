@@ -3,16 +3,29 @@ interface Env { DB: D1Database; }
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const charId = url.searchParams.get('char_id');
-  if (!charId) return Response.json([]);
-  const { results } = await context.env.DB.prepare("SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC").bind(charId).all();
-  return Response.json(results);
+  const groupId = url.searchParams.get('group_id');
+
+  if (groupId) {
+    // 剧场模式：查询该剧场下的所有消息
+    const { results } = await context.env.DB.prepare(
+      "SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC"
+    ).bind(groupId).all();
+    return Response.json(results);
+  } else if (charId) {
+    // 私聊模式：查询该角色且【不属于剧场】的消息
+    const { results } = await context.env.DB.prepare(
+      "SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC"
+    ).bind(charId).all();
+    return Response.json(results);
+  }
+  return Response.json([]);
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare(
-    "INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)"
-  ).bind(body.char_id, body.role, body.content, body.image || "", body.timestamp).run();
+    "INSERT INTO messages (char_id, group_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)"
+  ).bind(body.char_id || null, body.group_id || null, body.role, body.content, body.image || "", body.timestamp).run();
   return Response.json({ id: meta.last_row_id });
 };
 
@@ -25,18 +38,18 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const id = url.searchParams.get('id');
-    const charId = url.searchParams.get('char_id'); 
-    const type = url.searchParams.get('type'); // 新增：操作类型
+    const charId = url.searchParams.get('char_id');
+    const groupId = url.searchParams.get('group_id');
+    const type = url.searchParams.get('type');
 
     if (type === 'all_images') {
-        // 新增逻辑：删除所有图片消息
-        // 逻辑：删除 image 字段不为空 且 不为空字符串 的记录
         await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
-        return new Response("All images deleted");
     } else if (id) {
         await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
+    } else if (groupId) {
+        await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
     } else if (charId) {
-        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ?").bind(charId).run();
+        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ? AND group_id IS NULL").bind(charId).run();
     }
     return new Response("Deleted");
 };
