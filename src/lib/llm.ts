@@ -3,6 +3,14 @@ import type { Character, Settings, Message, LorebookEntry } from './db';
 import { replaceVariables } from './variables'; 
 
 export class LLMClient {
+  private client: OpenAI;
+  private model: string;
+
+  constructor(settings: Settings) {
+    this.client = new OpenAI({ baseURL: settings.api_base, apiKey: settings.api_key, dangerouslyAllowBrowser: true });
+    this.model = settings.model || "";
+  }
+
   private scanLorebook(text: string, entries: LorebookEntry[]): string {
     const hits = entries.filter(e => e.isActive && e.keywords.split(/[,，]/).some(k => text.includes(k.trim())));
     return hits.length ? `\n\n=== [Lorebook] ===\n${hits.map(h => h.content).join('\n')}` : "";
@@ -14,9 +22,9 @@ export class LLMClient {
   ) {
     const apiBase = char.api_base_override || settings.api_base;
     const apiKey = char.api_key_override || settings.api_key;
-    const model = char.model_id || settings.model || settings.model_list?.split(',')[0];
+    const model = char.model_id || settings.model || settings.model_list?.split(',')[0].trim();
 
-    const client = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
+    const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
 
     let prompt = char.description + (char.summary ? `\n\n[长期记忆]: ${char.summary}` : "");
     prompt += this.scanLorebook(userInputs, lorebookEntries);
@@ -38,7 +46,7 @@ export class LLMClient {
     if (userInputs) messages.push({ role: 'user', content: replaceVariables(userInputs, settings, char) });
 
     try {
-      const stream = await client.chat.completions.create({
+      const stream = await dynamicClient.chat.completions.create({
         model: model!, messages: [{ role: 'system', content: replaceVariables(prompt, settings, char) }, ...messages],
         stream: true, temperature: settings.temperature || 0.8
       });
@@ -50,10 +58,9 @@ export class LLMClient {
   }
 
   async summarize(history: Message[], settings: Settings): Promise<string> {
-    const client = new OpenAI({ baseURL: settings.api_base, apiKey: settings.api_key, dangerouslyAllowBrowser: true });
-    const res = await client.chat.completions.create({
-      model: settings.model || 'gpt-4o-mini',
-      messages: [{ role: 'system', content: "请精简总结上述对话事实，保留性格变化和重要事件。" }, { role: 'user', content: history.map(m=>m.content).slice(-30).join('\n') }]
+    const res = await this.client.chat.completions.create({
+      model: this.model || 'gpt-4o-mini',
+      messages: [{ role: 'system', content: "请精简总结上述对话事实。" }, { role: 'user', content: history.map(m=>m.content).slice(-30).join('\n') }]
     });
     return res.choices[0]?.message?.content || "";
   }
