@@ -1,5 +1,3 @@
-// src/lib/llm.ts
-
 import OpenAI from 'openai';
 import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
 import { replaceVariables } from './variables'; 
@@ -11,9 +9,34 @@ export class LLMClient {
     this.client = new OpenAI({ baseURL: settings.api_base, apiKey: settings.api_key, dangerouslyAllowBrowser: true });
   }
 
-  private scanLorebook(text: string, entries: LorebookEntry[]): string {
-    const hits = entries.filter((e: LorebookEntry) => e.isActive && e.keywords.split(/[,，]/).some((k: string) => text.includes(k.trim())));
-    return hits.length ? `\n\n=== [世界书注入] ===\n${hits.map((h: LorebookEntry) => h.content).join('\n')}` : "";
+  /**
+   * 优化后的世界书扫描逻辑
+   * 1. 增加大小写不敏感支持
+   * 2. 增加多关键词容错
+   * 3. 增强触发稳定性
+   */
+  private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
+    if (!entries || entries.length === 0) return "";
+
+    // 扫描范围：当前输入 + 最近 3 条历史记录（确保上下文连贯触发）
+    const contextText = (currentInput + " " + history.slice(-3).map(m => m.content).join(" ")).toLowerCase();
+    
+    const hits = entries.filter((e: LorebookEntry) => {
+        if (!e.isActive || !e.keywords) return false;
+        
+        // 支持中英文逗号分隔关键词
+        const kwList = e.keywords.split(/[,，]/);
+        return kwList.some((k: string) => {
+            const trimmedK = k.trim().toLowerCase();
+            // 过滤空关键词，防止全量触发
+            return trimmedK.length > 0 && contextText.includes(trimmedK);
+        });
+    });
+
+    if (hits.length === 0) return "";
+
+    // 格式化注入内容
+    return `\n\n### [世界书/背景设定注入]\n${hits.map((h: LorebookEntry) => `内容: ${h.content}`).join('\n---\n')}\n`;
   }
 
   async *chatStream(
@@ -34,29 +57,30 @@ export class LLMClient {
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = isGroupMode ? (settings.user_name || "User") : "User";
 
-    // --- 1. System Prompt ---
+    // --- 1. 构造 System Prompt ---
     let systemPromptRaw = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
-    systemPromptRaw += this.scanLorebook(userInputs, lorebookEntries);
+    
+    // 【核心修复】：传入历史记录进行多轮扫描，提高世界书触发率
+    systemPromptRaw += this.scanLorebook(userInputs, history, lorebookEntries);
 
     if (isGroupMode) {
       const others = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
-      systemPromptRaw = `【剧场协议】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
+      systemPromptRaw = `【群聊剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
     }
 
     const systemPrompt = replaceVariables(systemPromptRaw, settings, char);
 
     // --- 2. 构造消息流 ---
-    // 明确类型以符合 OpenAI 要求
-    const chatMessages: Message[] = [];
+    const chatMessages: any[] = [];
 
     // 添加历史记录
     history.slice(-15).forEach((m: Message) => {
       if (isGroupMode) {
         const sender = groupCtx.members.find((c: any) => c.id === m.char_id);
         const name = m.role === 'user' ? playerDisplayName : (sender?.name || 'AI');
-        chatMessages.push({ ...m, content: `(Log: ${name}) -> ${m.content}` });
+        chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
       } else {
-        chatMessages.push(m);
+        chatMessages.push({ role: m.role, content: m.content });
       }
     });
 
@@ -65,17 +89,15 @@ export class LLMClient {
         const pInput = replaceVariables(userInputs, settings, char);
         chatMessages.push({ 
             role: 'user', 
-            content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${pInput}` : pInput,
-            timestamp: Date.now()
+            content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${pInput}` : pInput
         });
     }
 
-    // 添加群聊引导（System 角色）
+    // 添加引导指令
     if (isGroupMode) {
       chatMessages.push({ 
         role: 'system', 
-        content: `请直接开始描述 [${char.name}] 的言行，严禁带标签前缀。`,
-        timestamp: Date.now()
+        content: `请开始以 [${char.name}] 的身份回复，不要输出标签。`
       });
     }
 
@@ -90,7 +112,7 @@ export class LLMClient {
     try {
       const stream = await dynamicClient.chat.completions.create({
         model: currentModel, 
-        messages: [{ role: 'system', content: systemPrompt }, ...chatMessages.map(m => ({ role: m.role, content: m.content }))] as any,
+        messages: [{ role: 'system', content: systemPrompt }, ...chatMessages],
         stream: true, 
         temperature: settings.temperature || 0.8,
         stop: isGroupMode ? [STOP_MARKER, playerDisplayName + ":"] : ["User:", "\nUser:"] 
