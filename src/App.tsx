@@ -144,14 +144,14 @@ function App() {
   const Sidebar = () => (
     <div className="flex flex-col h-full bg-base-200 w-80 p-4 border-r border-base-content/10 shadow-xl overflow-hidden">
       <div className="flex justify-between items-center mb-6 pl-2">
-        <h2 className="font-black text-primary text-xl tracking-tighter">SimpleRP Cloud</h2>
+        <h2 className="font-black text-primary text-xl">SimpleRP Cloud</h2>
         <button className="md:hidden btn btn-ghost btn-xs" onClick={() => setMobileMenuOpen(false)}><X/></button>
       </div>
       <div className="tabs tabs-boxed mb-6">
         <button className={`tab flex-1 transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('char')}>单人</button>
         <button className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('group')}>剧场</button>
       </div>
-      <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1">
+      <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
             <span className="font-bold truncate">{c.name}</span>
@@ -171,12 +171,13 @@ function App() {
 
   const modelOptions = settings?.model_list?.split(',').map(m => m.trim()).filter(m => m) || [];
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100 text-base-content"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
+        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
@@ -238,7 +239,7 @@ function App() {
             )}
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
+              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="发送消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
               
               {isTyping ? (
                   <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
@@ -251,8 +252,9 @@ function App() {
       </div>
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
+      {/* Modals */}
       {showGroupEdit && selectedGroupId && (
-          <div className="modal modal-open">
+          <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center"><h3 className="text-xl flex items-center gap-2"><Users/> 剧场设定</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGroupEdit(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -279,8 +281,8 @@ function App() {
       )}
 
       {showCharEdit && selectedCharId && (
-          <div className="modal modal-open">
-              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden text-base-content">
+          <div className="modal modal-open text-base-content">
+              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-6 border-b flex justify-between bg-base-200 items-center font-bold">角色驱动档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
                       <div className="grid grid-cols-2 gap-4">
@@ -306,9 +308,9 @@ function App() {
 
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-4xl h-[80vh] flex flex-col p-0 overflow-hidden text-base-content">
+              <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden text-base-content">
                   <div className="p-6 border-b bg-base-200 font-bold flex justify-between items-center text-xl">系统配置<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                       <section>
                           <h4 className="text-sm font-black mb-3 text-primary uppercase">全局 API</h4>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -345,22 +347,24 @@ function App() {
 
                       <section className="bg-error/10 p-4 rounded-xl border border-error/20">
                           <h4 className="text-sm font-black mb-3 text-error uppercase">危险区域</h4>
-                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("清理所有图片？")) api.messages.clearAllImages().then(()=>alert("清理完成"))}}><HardDrive size={16}/> 清理生成图片</button>
+                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("确定清理所有图片消息？")) api.messages.clearAllImages().then(()=>alert("清理完成"))}}><HardDrive size={16}/> 清理生成图片</button>
                       </section>
                   </div>
                   <div className="p-4 border-t bg-base-200 flex gap-2">
-                      <button className="btn btn-primary flex-1" onClick={async ()=>{await api.settings.update(settings); setShowSettings(false); loadData();}}>保存并关闭</button>
+                      <button className="btn btn-primary btn-block" onClick={async ()=>{await api.settings.update(settings!); setShowSettings(false); loadData();}}>保存并关闭</button>
                   </div>
               </div>
           </div>
       )}
 
+      {/* SD Modal */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 描述画面</h3><textarea className="textarea textarea-bordered w-full h-32 text-base-content" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1 text-base-content" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 生成画面</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
           </div>
       )}
 
+      {/* Worldbook Modal */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[70vh] flex flex-col p-0 overflow-hidden">
