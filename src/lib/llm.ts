@@ -4,12 +4,9 @@ import { replaceVariables } from './variables';
 
 export class LLMClient {
   private client: OpenAI;
-  private model: string;
 
   constructor(settings: Settings) {
     this.client = new OpenAI({ baseURL: settings.api_base, apiKey: settings.api_key, dangerouslyAllowBrowser: true });
-    // 默认模型逻辑：当前选择 > 列表第一个
-    this.model = settings.model || settings.model_list?.split(',')[0].trim() || "";
   }
 
   private scanLorebook(text: string, entries: LorebookEntry[]): string {
@@ -25,12 +22,23 @@ export class LLMClient {
     const preset = presets.find(p => p.id === char.api_preset_id);
     const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
     const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
-    // 严格模型选择：角色专用 > 全局选择 > 全局列表首位
-    const currentModel = char.model_id || settings.model || settings.model_list?.split(',')[0].trim();
+    
+    // 【修复 404 的核心逻辑】
+    // 优先级：角色绑定模型 > 全局选择模型 > 模型列表第一个
+    const firstModelInList = settings.model_list ? settings.model_list.split(',')[0].trim() : "";
+    const currentModel = char.model_id || settings.model || firstModelInList;
 
-    if (!currentModel) { yield "\n[系统错误]: 未检测到模型设置，请在全局设置中配置模型列表。"; return; }
+    if (!currentModel || currentModel === "") {
+        yield "\n[系统提示]: 未配置模型。请前往 [设置] 填写模型列表，并在顶部下拉框选择一个。";
+        return;
+    }
 
-    const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
+    const dynamicClient = new OpenAI({ 
+        baseURL: apiBase, 
+        apiKey: apiKey, 
+        dangerouslyAllowBrowser: true,
+        maxRetries: 0 
+    });
 
     let prompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     prompt += this.scanLorebook(userInputs, lorebookEntries);
@@ -42,8 +50,7 @@ export class LLMClient {
                `如果你认为发言已结束，请直接停止输出。\n\n【你的当前身份设定】\n${prompt}`;
     }
 
-    // 物理阻断停止词，防止 AI 伪造对话
-    const finalStopWords = ["\nUser", "\n用户", "\n[", "\n#"];
+    const finalStopWords = ["\nUser:", "\n用户:", "\n[", "\n#"];
 
     const messages = history.slice(-15).map(m => {
       let content = m.content;
@@ -72,7 +79,7 @@ export class LLMClient {
       }
     } catch (e: any) {
       if (e.name === 'AbortError') yield "\n[回复已中断]";
-      else yield `\n[模型调用错误]: ${e.message}`;
+      else yield `\n[模型调用失败]: ${e.message}\n(请求模型: ${currentModel})`;
     }
   }
 

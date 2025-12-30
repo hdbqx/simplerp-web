@@ -11,7 +11,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     ).bind(groupId).all();
     return Response.json(results);
   } else if (charId) {
-    // 关键：私聊模式必须排除 group_id 不为空的消息
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC"
     ).bind(charId).all();
@@ -43,8 +42,9 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
     if (type === 'all_images') {
         await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
-    } else if (id) {
-        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
+    } else if (id && id !== 'undefined' && id !== 'null') {
+        // 关键修复：物理删除单条消息记录
+        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(parseInt(id)).run();
     } else if (groupId) {
         await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
     } else if (charId) {

@@ -73,6 +73,8 @@ function App() {
     setIsTyping(true);
     const tempTs = Date.now() + 1;
     const currentHistory = historyOverride || messages;
+    
+    // UI 占位
     setMessages(prev => [...prev, { role: 'assistant', content: '...', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(settings);
@@ -84,7 +86,8 @@ function App() {
     } : undefined;
 
     try {
-      for await (const chunk of llm.chatStream(char, currentHistory, textOverride || "", settings, lorebookEntries, groupCtx, presets, controller.signal)) {
+      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, lorebookEntries, groupCtx, presets, controller.signal);
+      for await (const chunk of stream) {
         full += chunk;
         setMessages(prev => { 
             const copy = [...prev]; 
@@ -92,8 +95,15 @@ function App() {
             return copy; 
         });
       }
+      
       if (!controller.signal.aborted) {
-          await api.messages.add({ role: 'assistant', content: full, char_id: char.id, group_id: viewMode === 'group' ? selectedGroupId : undefined, timestamp: tempTs });
+          // 【修复点】：存入数据库并同步 ID
+          const res = await api.messages.add({ 
+            role: 'assistant', content: full, char_id: char.id, 
+            group_id: viewMode === 'group' ? selectedGroupId : undefined, 
+            timestamp: tempTs 
+          });
+          setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
       }
     } catch (e) { console.error(e); }
     setIsTyping(false);
@@ -103,23 +113,42 @@ function App() {
   const handleSend = async () => {
     if (!input.trim() || !settings || isTyping) return;
     const text = input; setInput('');
+    
+    // 重置 textarea 高度
+    const tx = document.querySelector('textarea');
+    if (tx) tx.style.height = 'auto';
+
+    const timestamp = Date.now();
     const userMsg: Message = { 
-      role: 'user', content: text, timestamp: Date.now(),
+      role: 'user', content: text, timestamp,
       char_id: viewMode === 'char' ? selectedCharId : undefined,
       group_id: viewMode === 'group' ? selectedGroupId : undefined
     };
+
+    // 先进 UI
     setMessages(prev => [...prev, userMsg]);
-    await api.messages.add(userMsg);
-    if (viewMode === 'char' && selectedCharId) triggerAI(characters.find(c=>c.id===selectedCharId)!, text);
+
+    try {
+      // 【修复点】：拿到数据库分配的 ID 并同步到 State
+      const res = await api.messages.add(userMsg);
+      setMessages(prev => prev.map(m => m.timestamp === timestamp ? { ...m, id: res.id } : m));
+      
+      if (viewMode === 'char' && selectedCharId) {
+        triggerAI(characters.find(c=>c.id===selectedCharId)!, text, [...messages, { ...userMsg, id: res.id }]);
+      }
+    } catch (e) { console.error(e); }
   };
 
   const handleRegenerate = async () => {
     if (messages.length === 0 || isTyping) return;
     const lastMsg = messages[messages.length - 1];
     if (lastMsg.role !== 'assistant') return;
+    
     const newHistory = messages.slice(0, -1);
     setMessages(newHistory);
+    
     if (lastMsg.id) await api.messages.delete(lastMsg.id);
+    
     const char = characters.find(c => c.id === lastMsg.char_id);
     const lastUserMsg = [...newHistory].reverse().find(m => m.role === 'user');
     if (char) triggerAI(char, lastUserMsg?.content || "", newHistory);
@@ -135,9 +164,16 @@ function App() {
             body: JSON.stringify({ prompt: `(masterpiece), anime style, ${finalP}`, steps: 20, width: 512, height: 768 })
         });
         const data = await res.json();
-        const msg: Message = { role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now(), group_id: selectedGroupId, char_id: selectedCharId };
-        setMessages(prev => [...prev, msg]);
-        await api.messages.add(msg);
+        const msgData = { 
+          role: 'assistant' as const, 
+          content: '', 
+          image: `data:image/png;base64,${data.images[0]}`, 
+          timestamp: Date.now(), 
+          group_id: selectedGroupId, 
+          char_id: selectedCharId 
+        };
+        const dbRes = await api.messages.add(msgData);
+        setMessages(prev => [...prev, { ...msgData, id: dbRes.id }]);
     } catch (e: any) { alert(e.message); }
   };
 
@@ -177,21 +213,21 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
           <div className="flex-none gap-2">
             {settings && (
               <select className="select select-bordered select-sm max-w-[6rem] md:max-w-[10rem] text-xs" value={settings.model || ''} onChange={async (e) => { const newM = e.target.value; setSettings({...settings, model: newM}); await api.settings.update({...settings, model: newM}); }}>
+                <option value="">未选择模型</option>
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
             <button className="btn btn-sm btn-ghost text-error" onClick={() => {if(confirm("清空对话？")) api.messages.clear(selectedCharId, selectedGroupId).then(()=>setMessages([]))}}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
-                <button className="btn btn-sm btn-ghost text-info" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData();}}><BookOpen size={18}/></button>
-                <button className="btn btn-sm btn-ghost text-warning" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
+                <button className="btn btn-sm btn-ghost text-info" title="总结对话" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("已更新总结");}}><BookOpen size={18}/></button>
+                <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
                 <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
             )}
@@ -205,19 +241,25 @@ function App() {
             const name = isUser ? 'User' : (characters.find(c=>c.id===m.char_id)?.name || 'AI');
             const isLast = idx === messages.length - 1;
             return (
-              <div key={idx} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group`}>
+              <div key={`${m.id}-${idx}`} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group animate-message`}>
                 <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
                     {name}
-                    <div className="opacity-0 group-hover:opacity-100 flex gap-1">
+                    <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
                         {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                         {!isUser && isLast && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                        <button className="hover:text-error" onClick={async ()=>{if(confirm("删除?")) {await api.messages.delete(m.id!); setMessages(messages.filter(msg=>msg.id!==m.id))}}}><Trash2 size={10}/></button>
+                        <button className="hover:text-error" onClick={async ()=>{if(confirm("确定彻底从数据库删除该消息？")) { if(m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg=>msg.id!==m.id)); }}}><Trash2 size={10}/></button>
                     </div>
                 </div>
                 {m.image ? <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden"><img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/></div> : (
                   <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                     {editingMsgId === m.id ? (
-                        <div className="flex flex-col gap-2 min-w-[200px] text-base-content"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(messages.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
+                        <div className="flex flex-col gap-2 min-w-[200px] text-base-content">
+                            <textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/>
+                            <div className="flex justify-end gap-1">
+                                <button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button>
+                                <button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button>
+                            </div>
+                        </div>
                     ) : <div className="prose prose-sm break-words text-inherit"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
                   </div>
                 )}
@@ -239,8 +281,14 @@ function App() {
             )}
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="发送消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
-              
+              <textarea 
+                className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" 
+                rows={1} 
+                value={input} 
+                onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} 
+                placeholder="发送消息..." 
+                onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} 
+              />
               {isTyping ? (
                   <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
               ) : (
@@ -252,7 +300,7 @@ function App() {
       </div>
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* Modals */}
+      {/* Modals 保持不变 */}
       {showGroupEdit && selectedGroupId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -317,9 +365,8 @@ function App() {
                             <input className="input input-bordered w-full" placeholder="API BASE" value={settings.api_base} onChange={e=>setSettings({...settings, api_base:e.target.value})} />
                             <input className="input input-bordered w-full" placeholder="API KEY" type="password" value={settings.api_key} onChange={e=>setSettings({...settings, api_key:e.target.value})} />
                           </div>
-                          <textarea className="textarea textarea-bordered w-full text-xs h-20 mt-4" placeholder="模型列表" value={settings.model_list} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
+                          <textarea className="textarea textarea-bordered w-full text-xs h-20 mt-4" placeholder="模型列表 (用逗号隔开)" value={settings.model_list} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
                       </section>
-
                       <section>
                           <div className="flex justify-between items-end mb-3">
                               <h4 className="text-sm font-black text-primary uppercase">API 预设管理</h4>
@@ -344,7 +391,6 @@ function App() {
                               </table>
                           </div>
                       </section>
-
                       <section className="bg-error/10 p-4 rounded-xl border border-error/20">
                           <h4 className="text-sm font-black mb-3 text-error uppercase">危险区域</h4>
                           <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("确定清理所有图片消息？")) api.messages.clearAllImages().then(()=>alert("清理完成"))}}><HardDrive size={16}/> 清理生成图片</button>
@@ -357,14 +403,12 @@ function App() {
           </div>
       )}
 
-      {/* SD Modal */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 生成画面</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
           </div>
       )}
 
-      {/* Worldbook Modal */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[70vh] flex flex-col p-0 overflow-hidden">

@@ -34,7 +34,8 @@ export const api = {
         if (groupId) url += `group_id=${groupId}`; else url += `char_id=${charId}`;
         return fetch(url).then(r => r.json() as Promise<Message[]>);
     },
-    add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json()),
+    // 关键修复：确保返回结果包含数据库分配的 id
+    add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{id: number}>),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', headers, body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
     clear: (charId?: number, groupId?: number) => fetch(`${API}/messages?${groupId?`group_id=${groupId}`:`char_id=${charId}`}`, { method: 'DELETE' }),
