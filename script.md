@@ -14,6 +14,7 @@ root: simplerp-web
 ├── vite.config.ts
 ├── wrangler.toml
 │   ├── functions/
+│   │   ├── _middleware.ts
 │   │   ├── api/
 │   │   │   ├── characters.ts
 │   │   │   ├── lorebook.ts
@@ -524,9 +525,58 @@ pages_build_output_dir = "dist"
 compatibility_date = "2024-12-09"
 
 [[d1_databases]]
-binding = "simplerp_db"
+binding = "DB"
 database_name = "simplerp-db"
-database_id = "ea4f0db0-d1cb-4608-9a11-d3609a7d31d6"
+database_id = "740b4cf9-8916-480a-9b8e-f0c0977a3b0c"
+```
+
+
+## File: functions\_middleware.ts
+
+```ts
+interface Env {
+  AUTH_USER: string;
+  AUTH_PASS: string;
+}
+
+export const onRequest: PagesFunction<Env> = async (context) => {
+  // 1. 获取环境变量中的账号密码
+  // 如果没有设置环境变量，为了防止死锁，默认不拦截（或者你可以改为默认拒绝）
+  const validUser = context.env.AUTH_USER;
+  const validPass = context.env.AUTH_PASS;
+
+  if (!validUser || !validPass) {
+    // 未配置密码时，直接放行 (或者你可以选择返回 500 提示配置)
+    return await context.next();
+  }
+
+  // 2. 获取请求头中的 Authorization
+  const authHeader = context.request.headers.get("Authorization");
+
+  // 3. 检查是否包含 Basic 认证信息
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    return new Response("需要登录", {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Basic realm="SimpleRP Admin"' },
+    });
+  }
+
+  // 4. 解码并比对
+  const base64Credentials = authHeader.split(" ")[1];
+  const credentials = atob(base64Credentials); // 解码 Base64
+  const [username, password] = credentials.split(":");
+
+  if (username === validUser && password === validPass) {
+    // 密码正确，放行
+    return await context.next();
+  } else {
+    // 密码错误
+    return new Response("账号或密码错误", {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Basic realm="SimpleRP Admin"' },
+    });
+  }
+};
 ```
 
 
@@ -572,30 +622,81 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 
 ```ts
 interface Env { DB: D1Database; }
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
-    const url = new URL(context.request.url);
-    const charId = url.searchParams.get('char_id');
-    if(!charId) return Response.json([]);
-    const { results } = await context.env.DB.prepare("SELECT * FROM lorebook WHERE char_id = ?").bind(charId).all();
-    return Response.json(results.map((r: any) => ({ ...r, isActive: r.is_active === 1 })));
+    try {
+        const url = new URL(context.request.url);
+        const charId = url.searchParams.get('char_id');
+        if(!charId) return Response.json([]);
+
+        const { results } = await context.env.DB.prepare("SELECT * FROM lorebook WHERE char_id = ?").bind(charId).all();
+        // 增加空值安全检查
+        const safeResults = Array.isArray(results) ? results : [];
+        return Response.json(safeResults.map((r: any) => ({ ...r, isActive: r.is_active === 1 })));
+    } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
 };
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-    const body: any = await context.request.json();
-    const { meta } = await context.env.DB.prepare("INSERT INTO lorebook (char_id, keywords, content, is_active) VALUES (?, ?, ?, ?)")
-        .bind(body.char_id, body.keywords, body.content, body.isActive ? 1 : 0).run();
-    return Response.json({ id: meta.last_row_id });
+    try {
+        const body: any = await context.request.json();
+        // 插入时提供默认值，防止 undefined 报错
+        const { meta } = await context.env.DB.prepare("INSERT INTO lorebook (char_id, keywords, content, is_active) VALUES (?, ?, ?, ?)")
+            .bind(body.char_id, body.keywords || "", body.content || "", body.isActive ? 1 : 0).run();
+        return Response.json({ id: meta.last_row_id });
+    } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
 };
+
+// 【核心修复】PUT 方法改为动态构建 SQL
 export const onRequestPut: PagesFunction<Env> = async (context) => {
-    const body: any = await context.request.json();
-    await context.env.DB.prepare("UPDATE lorebook SET keywords = ?, content = ?, is_active = ? WHERE id = ?")
-        .bind(body.keywords, body.content, body.isActive ? 1 : 0, body.id).run();
-    return new Response("Updated");
+    try {
+        const body: any = await context.request.json();
+        const { id, ...updates } = body;
+        
+        if (!id) return new Response("Missing ID", { status: 400 });
+
+        // 1. 映射前端字段到数据库字段
+        const dbUpdates: Record<string, any> = {};
+        
+        // 只有当前端传了这个值时（不为 undefined），才加入更新列表
+        if (updates.keywords !== undefined) dbUpdates.keywords = updates.keywords;
+        if (updates.content !== undefined) dbUpdates.content = updates.content;
+        // 特殊处理 isActive (boolean) -> is_active (int)
+        if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive ? 1 : 0;
+
+        const keys = Object.keys(dbUpdates);
+        
+        // 如果没有有效字段需要更新，直接返回成功
+        if (keys.length === 0) return new Response("No updates", { status: 200 });
+
+        // 2. 动态构建 SQL 语句: "UPDATE lorebook SET keywords = ?, content = ? WHERE id = ?"
+        const setClause = keys.map(k => `${k} = ?`).join(', ');
+        const sql = `UPDATE lorebook SET ${setClause} WHERE id = ?`;
+        
+        // 3. 准备参数数组，最后加上 id
+        const values = [...Object.values(dbUpdates), id];
+
+        await context.env.DB.prepare(sql).bind(...values).run();
+        
+        return new Response("Updated");
+    } catch (e: any) {
+        // 返回具体错误信息以便调试
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json'} });
+    }
 };
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
-    const url = new URL(context.request.url);
-    const id = url.searchParams.get('id');
-    if(id) await context.env.DB.prepare("DELETE FROM lorebook WHERE id = ?").bind(id).run();
-    return new Response("Deleted");
+    try {
+        const url = new URL(context.request.url);
+        const id = url.searchParams.get('id');
+        if(id) await context.env.DB.prepare("DELETE FROM lorebook WHERE id = ?").bind(id).run();
+        return new Response("Deleted");
+    } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
 };
 ```
 
@@ -604,6 +705,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
 ```ts
 interface Env { DB: D1Database; }
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const charId = url.searchParams.get('char_id');
@@ -611,6 +713,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { results } = await context.env.DB.prepare("SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC").bind(charId).all();
   return Response.json(results);
 };
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare(
@@ -618,17 +721,29 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   ).bind(body.char_id, body.role, body.content, body.image || "", body.timestamp).run();
   return Response.json({ id: meta.last_row_id });
 };
+
 export const onRequestPut: PagesFunction<Env> = async (context) => {
     const body: any = await context.request.json();
     await context.env.DB.prepare("UPDATE messages SET content = ? WHERE id = ?").bind(body.content, body.id).run();
     return new Response("Updated");
 }
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const id = url.searchParams.get('id');
     const charId = url.searchParams.get('char_id'); 
-    if (id) await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
-    else if (charId) await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ?").bind(charId).run();
+    const type = url.searchParams.get('type'); // 新增：操作类型
+
+    if (type === 'all_images') {
+        // 新增逻辑：删除所有图片消息
+        // 逻辑：删除 image 字段不为空 且 不为空字符串 的记录
+        await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
+        return new Response("All images deleted");
+    } else if (id) {
+        await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
+    } else if (charId) {
+        await context.env.DB.prepare("DELETE FROM messages WHERE char_id = ?").bind(charId).run();
+    }
     return new Response("Deleted");
 };
 ```
@@ -661,7 +776,7 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Copy, RefreshCw, Book, HelpCircle } from 'lucide-react';
+import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Copy, RefreshCw, Book, HelpCircle, HardDrive } from 'lucide-react';
 
 const HELP_DOC = `# 📘 SimpleRP Cloud\n数据已迁移至 Cloudflare D1 云数据库，不再丢失。`.trim();
 
@@ -790,7 +905,18 @@ function App() {
     setMessages([]);
   };
 
-  // ✅ 修复点：补上了这个缺失的函数
+  // 新增：清除所有图片功能
+  const handleClearImages = async () => {
+    if (!confirm("⚠️ 警告：这将永久删除数据库中所有角色生成的图片！\n\n此操作用于释放 D1 数据库空间，且不可恢复。\n是否继续？")) return;
+    try {
+        await api.messages.clearAllImages();
+        alert("✅ 所有图片已清除");
+        if (selectedCharId) loadMessages(); // 刷新当前视图
+    } catch (e: any) {
+        alert("删除失败: " + e.message);
+    }
+  };
+
   const openGenImageModal = () => {
     if (!settings?.sd_url) return alert("请配置 SD URL");
     const lastMsg = messages?.[messages.length - 1]?.content;
@@ -891,7 +1017,27 @@ function App() {
       </div>
       <div className="drawer-side z-[50]"><label htmlFor="my-drawer" className="drawer-overlay bg-black/60"></label><SidebarContent /></div>
       
-      {showSettings && settings && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300 max-h-[90vh] overflow-y-auto"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">系统设置</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button></div><form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const newS = Object.fromEntries(fd) as any; await api.settings.update(newS); setSettings({...newS, id: settings.id}); setShowSettings(false); }} className="p-6 space-y-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full mb-2"/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 text-xs"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div><div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full"/></div></div><button className="btn btn-primary btn-block mt-4 rounded-xl">保存</button></form></div></div>)}
+      {showSettings && settings && (
+      <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in">
+        <div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300 max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-base-300 flex justify-between items-center">
+                <h3 className="font-bold text-xl">系统设置</h3>
+                <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X size={20}/></button>
+            </div>
+            <form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const newS = Object.fromEntries(fd) as any; await api.settings.update(newS); setSettings({...newS, id: settings.id}); setShowSettings(false); }} className="p-6 space-y-4">
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">API Config</label><input name="api_base" defaultValue={settings.api_base} className="input input-bordered w-full mb-2" placeholder="https://..."/><input name="api_key" type="password" defaultValue={settings.api_key} className="input input-bordered w-full" placeholder="sk-..."/></div>
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Model List</label><textarea name="model_list" defaultValue={settings.model_list} className="textarea textarea-bordered w-full h-16 text-xs" placeholder="gpt-4o, gpt-3.5-turbo"/></div>
+                <div><label className="label text-xs uppercase opacity-50 font-bold pb-1">SD URL</label><input name="sd_url" defaultValue={settings.sd_url} className="input input-bordered w-full"/></div>
+                <div className="grid grid-cols-2 gap-4"><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">AppID</label><input name="baidu_appid" defaultValue={settings.baidu_appid} className="input input-bordered w-full"/></div><div><label className="label text-xs uppercase opacity-50 font-bold pb-1">Secret</label><input name="baidu_secret" type="password" defaultValue={settings.baidu_secret} className="input input-bordered w-full"/></div></div>
+                <div className="pt-2 border-t border-base-content/10">
+                    <label className="label text-xs uppercase opacity-50 font-bold pb-1 text-error">Danger Zone</label>
+                    <button type="button" className="btn btn-error btn-outline btn-sm w-full" onClick={handleClearImages}><HardDrive size={16}/> 清除所有图片 (释放空间)</button>
+                </div>
+                <button className="btn btn-primary btn-block mt-4 rounded-xl">保存</button>
+            </form>
+        </div>
+      </div>
+      )}
       {showCharEdit && currentChar && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-3xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl">角色档案</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X size={20}/></button></div><form onSubmit={async (e:any)=>{ e.preventDefault(); const fd=new FormData(e.target); const updates = Object.fromEntries(fd) as any; await api.characters.update(selectedCharId!, updates); loadCharacters(); setShowCharEdit(false); }} className="p-6 overflow-y-auto space-y-5 flex-1"><div><label className="label font-bold text-sm">代号</label><input name="name" defaultValue={currentChar.name} className="input input-bordered w-full font-bold text-lg"/></div><div className="flex-1 flex flex-col"><label className="label font-bold text-sm">底层指令</label><textarea name="description" defaultValue={currentChar.description} className="textarea textarea-bordered h-48 font-mono text-xs leading-relaxed"/></div><div><label className="label font-bold text-sm">长期记忆</label><textarea name="summary" defaultValue={currentChar.summary} className="textarea textarea-bordered h-24 font-mono text-xs"/></div><div><label className="label font-bold text-sm">开场白</label><textarea name="first_message" defaultValue={currentChar.first_message} className="textarea textarea-bordered h-20"/></div><button className="btn btn-primary btn-block rounded-xl"><Save size={18}/> 保存</button></form></div></div>)}
       {showLorebook && selectedCharId && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-2xl max-h-[85vh] rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><Book size={20}/> 世界书</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X size={20}/></button></div><div className="p-4 flex-1 overflow-y-auto custom-scrollbar space-y-3">{lorebookEntries.map(entry => (<div key={entry.id} className="collapse collapse-arrow bg-base-200 border border-base-300"><input type="checkbox" /> <div className="collapse-title font-bold text-sm flex items-center gap-2"><span className={entry.isActive ? 'text-success' : 'text-base-content/30'}>●</span>{entry.keywords}</div><div className="collapse-content space-y-2"><textarea className="textarea textarea-bordered w-full text-xs font-mono h-24" defaultValue={entry.content} onBlur={(e) => api.lorebook.update(entry.id!, { content: e.target.value })} placeholder="内容..."/><div className="flex gap-2"><input className="input input-bordered input-sm flex-1 text-xs" defaultValue={entry.keywords} onBlur={(e) => api.lorebook.update(entry.id!, { keywords: e.target.value })} placeholder="触发词"/><button className={`btn btn-sm ${entry.isActive ? 'btn-success' : 'btn-ghost'}`} onClick={async ()=>{ await api.lorebook.update(entry.id!, { isActive: !entry.isActive }); loadLorebook(); }}>{entry.isActive ? 'On' : 'Off'}</button><button className="btn btn-sm btn-error btn-outline" onClick={async ()=>{ await api.lorebook.delete(entry.id!); loadLorebook(); }}><Trash2 size={14}/></button></div></div></div>))}<button className="btn btn-ghost btn-block border-dashed border-2 border-base-content/20" onClick={async ()=>{ await api.lorebook.add({ char_id: selectedCharId!, keywords: "新词条", content: "", isActive: true }); loadLorebook(); }}><Plus size={16}/> 添加</button></div></div></div>)}
       {showGenModal && (<div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in fade-in"><div className="bg-base-100 w-full max-w-lg rounded-xl flex flex-col shadow-2xl border border-base-300"><div className="p-5 border-b border-base-300 flex justify-between items-center"><h3 className="font-bold text-xl flex items-center gap-2"><ImageIcon size={20}/> 生图</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGenModal(false)}><X size={20}/></button></div><div className="p-6 space-y-4"><textarea className="textarea textarea-bordered h-32 w-full text-sm leading-relaxed" value={genPrompt} onChange={(e) => setGenPrompt(e.target.value)} placeholder="描述..."/><div className="flex gap-3 mt-4"><button className="btn flex-1 rounded-xl" onClick={()=>setShowGenModal(false)}>取消</button><button className="btn btn-primary flex-1 rounded-xl" onClick={executeGenImage}><Sparkles size={16}/> 生成</button></div></div></div></div>)}
@@ -1026,7 +1172,9 @@ export const api = {
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', body: JSON.stringify(m) }).then(r => r.json()),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
-    clear: (charId: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' })
+    clear: (charId: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' }),
+    // 新增：调用后端删除所有图片
+    clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' }) 
   },
   lorebook: {
     list: (charId: number) => fetch(`${API}/lorebook?char_id=${charId}`).then(r => r.json() as Promise<LorebookEntry[]>),
@@ -1040,7 +1188,7 @@ export const api = {
   }
 };
 
-export const db = {}; // Placeholder
+export const db = {}; 
 export async function initDB() { console.log("Cloudflare D1 Mode"); }
 ```
 
