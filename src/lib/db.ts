@@ -1,12 +1,22 @@
+// src/lib/db.ts
+
 export interface Character { id?: number; name: string; description: string; first_message: string; summary?: string; model_id?: string; api_base_override?: string; api_key_override?: string; api_preset_id?: number; }
-export interface Message { id?: number; char_id?: number; group_id?: number; role: 'user' | 'assistant'; content: string; image?: string; timestamp: number; }
+export interface Message { 
+    id?: number; 
+    char_id?: number; 
+    group_id?: number; 
+    role: 'user' | 'assistant' | 'system'; // 允许 system 角色
+    content: string; 
+    image?: string; 
+    timestamp: number; 
+}
 export interface Group { id?: number; name: string; description: string; memberIds?: number[]; }
 export interface ApiPreset { id?: number; name: string; api_base: string; api_key: string; }
 export interface Settings { 
     id?: number; api_base?: string; api_key?: string; model?: string; 
     model_list?: string; sd_url?: string; baidu_appid?: string; 
     baidu_secret?: string; temperature?: number; 
-    user_name?: string; // 新增：群聊专用用户名
+    user_name?: string; 
 }
 export interface LorebookEntry { id?: number; char_id: number; keywords: string; content: string; isActive: boolean; }
 
@@ -16,20 +26,20 @@ const headers = { 'Content-Type': 'application/json' };
 export const api = {
   characters: {
     list: () => fetch(`${API}/characters`).then(r => r.json() as Promise<Character[]>),
-    add: (c: Character) => fetch(`${API}/characters`, { method: 'POST', headers, body: JSON.stringify(c) }).then(r=>r.json()),
+    add: (c: Character) => fetch(`${API}/characters`, { method: 'POST', headers, body: JSON.stringify(c) }).then(r=>r.json() as Promise<{id: number}>),
     update: (id: number, c: Partial<Character>) => fetch(`${API}/characters`, { method: 'PUT', headers, body: JSON.stringify({ id, ...c }) }),
     delete: (id: number) => fetch(`${API}/characters?id=${id}`, { method: 'DELETE' }),
   },
   groups: {
     list: () => fetch(`${API}/groups`).then(r => r.json() as Promise<Group[]>),
-    add: (g: Group) => fetch(`${API}/groups`, { method: 'POST', headers, body: JSON.stringify(g) }).then(r=>r.json()),
+    add: (g: Group) => fetch(`${API}/groups`, { method: 'POST', headers, body: JSON.stringify(g) }).then(r=>r.json() as Promise<{id: number}>),
     update: (id: number, g: Partial<Group>) => fetch(`${API}/groups`, { method: 'PUT', headers, body: JSON.stringify({ id, ...g }) }),
     delete: (id: number) => fetch(`${API}/groups?id=${id}`, { method: 'DELETE' }),
     getMembers: (groupId: number) => fetch(`${API}/groups?type=members&group_id=${groupId}`).then(r => r.json() as Promise<number[]>),
   },
   presets: {
     list: () => fetch(`${API}/presets`).then(r => r.json() as Promise<ApiPreset[]>),
-    add: (p: ApiPreset) => fetch(`${API}/presets`, { method: 'POST', headers, body: JSON.stringify(p) }).then(r => r.json()),
+    add: (p: ApiPreset) => fetch(`${API}/presets`, { method: 'POST', headers, body: JSON.stringify(p) }).then(r => r.json() as Promise<{id: number}>),
     update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
@@ -56,7 +66,7 @@ export const api = {
   },
   lorebook: {
     list: (charId: number) => fetch(`${API}/lorebook?char_id=${charId}`).then(r => r.json() as Promise<LorebookEntry[]>),
-    add: (l: LorebookEntry) => fetch(`${API}/lorebook`, { method: 'POST', headers, body: JSON.stringify(l) }).then(r => r.json()),
+    add: (l: LorebookEntry) => fetch(`${API}/lorebook`, { method: 'POST', headers, body: JSON.stringify(l) }).then(r => r.json() as Promise<{id: number}>),
     update: (id: number, l: Partial<LorebookEntry>) => fetch(`${API}/lorebook`, { method: 'PUT', headers, body: JSON.stringify({ id, ...l }) }),
     delete: (id: number) => fetch(`${API}/lorebook?id=${id}`, { method: 'DELETE' }),
   }
