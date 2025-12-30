@@ -21,11 +21,17 @@ export const api = {
     getMembers: (groupId: number) => fetch(`${API}/groups?type=members&group_id=${groupId}`).then(r => r.json() as Promise<number[]>),
   },
   messages: {
-    list: (charId?: number, groupId?: number) => fetch(`${API}/messages?${groupId ? `group_id=${groupId}` : `char_id=${charId}`}`).then(r => r.json() as Promise<Message[]>),
+    list: (charId?: number, groupId?: number) => {
+        const url = groupId ? `${API}/messages?group_id=${groupId}` : `${API}/messages?char_id=${charId}`;
+        return fetch(url).then(r => r.json() as Promise<Message[]>);
+    },
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', body: JSON.stringify(m) }).then(r => r.json()),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
-    clear: (charId?: number, groupId?: number) => fetch(`${API}/messages?${groupId ? `group_id=${groupId}` : `char_id=${charId}`}`, { method: 'DELETE' }),
+    clear: (charId?: number, groupId?: number) => {
+        const params = groupId ? `group_id=${groupId}` : `char_id=${charId}`;
+        return fetch(`${API}/messages?${params}`, { method: 'DELETE' });
+    },
     clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' }) 
   },
   lorebook: {
