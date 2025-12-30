@@ -23,22 +23,15 @@ export class LLMClient {
     const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
     const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
     
-    // 【修复 404 的核心逻辑】
-    // 优先级：角色绑定模型 > 全局选择模型 > 模型列表第一个
-    const firstModelInList = settings.model_list ? settings.model_list.split(',')[0].trim() : "";
-    const currentModel = char.model_id || settings.model || firstModelInList;
+    const modelFromList = settings.model_list ? settings.model_list.split(',')[0].trim() : "";
+    const currentModel = char.model_id || settings.model || modelFromList;
 
     if (!currentModel || currentModel === "") {
-        yield "\n[系统提示]: 未配置模型。请前往 [设置] 填写模型列表，并在顶部下拉框选择一个。";
+        yield "\n[系统提示]: 未检测到有效的模型名称。请在页面顶部选择模型，或在系统设置中配置模型列表。";
         return;
     }
 
-    const dynamicClient = new OpenAI({ 
-        baseURL: apiBase, 
-        apiKey: apiKey, 
-        dangerouslyAllowBrowser: true,
-        maxRetries: 0 
-    });
+    const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
 
     let prompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     prompt += this.scanLorebook(userInputs, lorebookEntries);
@@ -46,11 +39,8 @@ export class LLMClient {
     if (groupCtx) {
       const membersText = groupCtx.members.map((m: any) => `[${m.name}]: ${m.summary || '...'}`).join('\n');
       prompt = `【剧场背景】\n${groupCtx.description}\n\n【成员列表】\n${membersText}\n\n` +
-               `【任务】你现在只能扮演[${char.name}]进行回复。严禁输出其他成员的名字标签或替其发言。\n` +
-               `如果你认为发言已结束，请直接停止输出。\n\n【你的当前身份设定】\n${prompt}`;
+               `【任务】你现在只能扮演[${char.name}]进行回复。严禁替其他成员发言。\n\n【你的当前身份设定】\n${prompt}`;
     }
-
-    const finalStopWords = ["\nUser:", "\n用户:", "\n[", "\n#"];
 
     const messages = history.slice(-15).map(m => {
       let content = m.content;
@@ -70,7 +60,7 @@ export class LLMClient {
         messages: [{ role: 'system', content: replaceVariables(prompt, settings, char) }, ...messages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        stop: finalStopWords
+        stop: ["\nUser:", "\n用户:", "\n[", "\n#"]
       }, { signal });
 
       for await (const chunk of stream) {
@@ -78,7 +68,7 @@ export class LLMClient {
         if (text) yield text;
       }
     } catch (e: any) {
-      if (e.name === 'AbortError') yield "\n[回复已中断]";
+      if (e.name === 'AbortError') yield "\n[回复中断]";
       else yield `\n[模型调用失败]: ${e.message}\n(请求模型: ${currentModel})`;
     }
   }

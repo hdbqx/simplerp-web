@@ -43,7 +43,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     if (type === 'all_images') {
         await context.env.DB.prepare("DELETE FROM messages WHERE image IS NOT NULL AND image != ''").run();
     } else if (id && id !== 'undefined' && id !== 'null') {
-        // 关键修复：物理删除单条消息记录
+        // 关键修复：执行物理删除
         await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(parseInt(id)).run();
     } else if (groupId) {
         await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
