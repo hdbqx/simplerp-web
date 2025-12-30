@@ -23,7 +23,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // 控制器引用
   const abortControllerRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +57,6 @@ function App() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length, isTyping]);
 
-  // 中断功能实现
   const stopGeneration = () => {
     if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -69,8 +67,6 @@ function App() {
 
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
-    
-    // 初始化控制器
     const controller = new AbortController();
     abortControllerRef.current = controller;
     
@@ -92,11 +88,10 @@ function App() {
         full += chunk;
         setMessages(prev => { 
             const copy = [...prev]; 
-            if(copy[copy.length-1]) copy[copy.length-1].content = full; 
+            if(copy.length > 0) copy[copy.length-1].content = full;
             return copy; 
         });
       }
-      // 如果没有被手动中断，则存入数据库
       if (!controller.signal.aborted) {
           await api.messages.add({ role: 'assistant', content: full, char_id: char.id, group_id: viewMode === 'group' ? selectedGroupId : undefined, timestamp: tempTs });
       }
@@ -182,10 +177,9 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
-          <div className="flex-1 font-bold truncate px-2 text-base">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
+          <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "选择一个目标"}</div>
           <div className="flex-none gap-2">
             {settings && (
               <select className="select select-bordered select-sm max-w-[6rem] md:max-w-[10rem] text-xs" value={settings.model || ''} onChange={async (e) => { const newM = e.target.value; setSettings({...settings, model: newM}); await api.settings.update({...settings, model: newM}); }}>
@@ -204,7 +198,6 @@ function App() {
           </div>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {messages.map((m, idx) => {
             const isUser = m.role === 'user';
@@ -217,10 +210,10 @@ function App() {
                     <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                         {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                         {!isUser && isLast && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                        <button className="hover:text-error" onClick={async ()=>{if(confirm("删除?")) {await api.messages.delete(m.id!); setMessages(messages.filter(msg=>msg.id!==m.id))}}}><Trash2 size={10}/></button>
+                        <button className="hover:text-error" onClick={async ()=>{if(confirm("删除该条?")) {await api.messages.delete(m.id!); setMessages(messages.filter(msg=>msg.id!==m.id))}}}><Trash2 size={10}/></button>
                     </div>
                 </div>
-                {m.image ? <div className="chat-bubble p-1 bg-base-200 shadow-xl overflow-hidden"><img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/></div> : (
+                {m.image ? <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden"><img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/></div> : (
                   <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                     {editingMsgId === m.id ? (
                         <div className="flex flex-col gap-2 min-w-[200px] text-base-content"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(messages.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
@@ -234,7 +227,6 @@ function App() {
           <div ref={bottomRef} className="h-20" />
         </div>
 
-        {/* Input area */}
         <div className="p-4 bg-base-100 border-t border-base-300">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {viewMode === 'group' && selectedGroupId && (
@@ -248,11 +240,10 @@ function App() {
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
               <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="发送消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
               
-              {/* 中断或发送按钮切换 */}
               {isTyping ? (
-                <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
+                  <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
               ) : (
-                <button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>
+                  <button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>
               )}
             </div>
           </div>
@@ -260,7 +251,7 @@ function App() {
       </div>
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* Modals 逻辑保持一致... */}
+      {/* Modals 逻辑修复和整合 */}
       {showGroupEdit && selectedGroupId && (
           <div className="modal modal-open">
               <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -269,7 +260,7 @@ function App() {
                       <div className="form-control"><label className="label font-bold">剧场名</label><input className="input input-bordered" value={groups.find(g=>g.id===selectedGroupId)?.name} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, name:e.target.value}:g))} /></div>
                       <div className="form-control"><label className="label font-bold">场景设定</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
                       <div className="space-y-4">
-                          <label className="label font-bold text-primary">管理成员</label>
+                          <label className="label font-bold text-primary text-sm">管理成员</label>
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                               {characters.map(c => (
                                   <label key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer ${groupMemberIds.includes(c.id!) ? 'border-primary bg-primary/10' : 'border-base-300'}`}>
@@ -288,7 +279,6 @@ function App() {
           </div>
       )}
 
-      {/* 角色/设置等 Modal 与上个版本一致，建议完整复制上个版本的剩余 Modal 代码 */}
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open">
               <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden text-base-content">
@@ -328,7 +318,7 @@ function App() {
                       {presets.map(p=>(
                           <div key={p.id} className="flex gap-2 items-center bg-base-200 p-2 rounded-lg">
                               <span className="flex-1 font-bold text-xs">{p.name}</span>
-                              <button className="btn btn-xs btn-error btn-ghost" onClick={()=>api.presets.delete(p.id!).then(loadData)}><Trash2 size={12}/></button>
+                              <button className="btn btn-xs btn-error btn-ghost" onClick={()=>api.presets.delete(p.id!).then(() => loadData())}><Trash2 size={12}/></button>
                           </div>
                       ))}
                       <button className="btn btn-xs btn-block" onClick={()=>{const n=prompt("预设名?"); const b=prompt("Base?"); const k=prompt("Key?"); if(n) api.presets.add({name:n, api_base:b||"", api_key:k||""}).then(() => loadData());}}>+ 添加预设</button>
@@ -342,8 +332,8 @@ function App() {
       )}
 
       {showGenModal && (
-          <div className="modal modal-open">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-base-content"><ImageIcon/> 生成画面</h3><textarea className="textarea textarea-bordered w-full h-32 text-base-content" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1 text-base-content" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+          <div className="modal modal-open text-base-content">
+              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 生成画面</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
           </div>
       )}
 
