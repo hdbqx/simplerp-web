@@ -8,8 +8,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare("INSERT INTO api_presets (name, api_base, api_key) VALUES (?, ?, ?)")
-    .bind(body.name, body.api_base, body.api_key).run();
+    .bind(body.name || "新预设", body.api_base || "", body.api_key || "").run();
   return Response.json({ id: meta.last_row_id });
+};
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  const body: any = await context.request.json();
+  await context.env.DB.prepare("UPDATE api_presets SET name = ?, api_base = ?, api_key = ? WHERE id = ?")
+    .bind(body.name, body.api_base, body.api_key, body.id).run();
+  return new Response("Updated");
 };
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
