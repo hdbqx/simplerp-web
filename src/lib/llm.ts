@@ -1,5 +1,3 @@
-// src/lib/llm.ts 完整覆盖
-
 import OpenAI from 'openai';
 import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
 import { replaceVariables } from './variables'; 
@@ -31,46 +29,57 @@ export class LLMClient {
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
 
     const isGroupMode = !!groupCtx;
-    let stopRegex: RegExp | null = null;
+    const STOP_MARKER = "Ω"; // 选一个生僻且短的符号作为物理停止锚点
 
-    if (isGroupMode) {
-      // 多人模式黑名单：用户、作者、系统，以及除了AI自己之外的所有人
-      const forbiddenNames: string[] = ["User", "用户", "作者", "旁白", "系统", "System"]; 
-      const otherMembers = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
-      forbiddenNames.push(...otherMembers);
-
-      const escapedNames = forbiddenNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      // 优化正则：匹配 (换行/空格/句末标点) + (修饰符) + 名字 + (标识符)
-      // 这样即便 AI 不换行直接写 "我不是AI。陈墨:" 也能被拦住
-      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\[|【|#|\\*|\\s)*(${escapedNames})(\\]|】|\\*|:|：|\\s)`, 'i');
-    }
-
+    // --- 1. 视角锁定 & 物理锚定 (Prompt) ---
     let systemPrompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     systemPrompt += this.scanLorebook(userInputs, lorebookEntries);
 
     if (isGroupMode) {
-      systemPrompt = `【群聊剧场强制指令】
-1. 你当前的角色：[${char.name}]
-2. 禁止代写角色：${groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name).join(', ')}
-3. 你的输出必须严格限制在 [${char.name}] 的言行内。
-4. 严禁使用其他角色的名字作为段落开头或结尾。
-5. 每一段描述完成后，必须立即停止。禁止输出 "Next:" 或开启下一位角色的回合。
+      const others = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
+      
+      systemPrompt = `【群聊/剧场模式指令】
+1. 当前场景：${groupCtx.description}
+2. 你的唯一身份：[${char.name}]
+3. 严格禁令：严禁代写、模拟或提及以下角色的对话：${others.join(', ')} 以及 User。
+
+【输出协议】
+- 回复必须且仅包含 [${char.name}] 的言行描述。
+- 回复结束时，必须立即输出一个 "${STOP_MARKER}" 符号作为终止符。
+- 严禁在 "${STOP_MARKER}" 之后输出任何内容。
 
 【设定】
 ${systemPrompt}`;
     }
 
+    // --- 2. 逻辑隔离 (History Formatting) ---
     const messages = history.slice(-15).map(m => {
       let content = m.content;
       if (isGroupMode) {
         const sender = groupCtx.members.find((c:any) => c.id === m.char_id);
         const name = m.role === 'user' ? "User" : (sender?.name || 'AI');
-        content = `${name}: ${m.content}`;
+        // 将剧本格式 "A: ..." 改为日志格式 "(Record: A) -> ..."
+        // 这能打破 AI “写续集”的思维惯性
+        content = `(Past_Log: ${name}) -> ${m.content}`;
       }
       return { role: m.role, content };
     });
 
-    if (userInputs) messages.push({ role: 'user', content: replaceVariables(userInputs, settings, char) });
+    if (userInputs) {
+        const processedInput = replaceVariables(userInputs, settings, char);
+        messages.push({ 
+            role: 'user', 
+            content: isGroupMode ? `(Current_Input: User) -> ${processedInput}` : processedInput 
+        });
+    }
+
+    // --- 3. 动态黑名单构建 (仅群聊有效) ---
+    let stopRegex: RegExp | null = null;
+    if (isGroupMode) {
+      const forbiddenNames = ["User", "用户", "作者", "系统", ...groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name)];
+      const escapedNames = forbiddenNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\[|【|#|\\*|\\s)*(${escapedNames})(\\]|】|\\*|:|：|\\s)`, 'i');
+    }
 
     try {
       const stream = await dynamicClient.chat.completions.create({
@@ -78,8 +87,9 @@ ${systemPrompt}`;
         messages: [{ role: 'system', content: replaceVariables(systemPrompt, settings, char) }, ...messages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        // 火山引擎 4 字符停止词：这里保留结构化停止词
-        stop: isGroupMode ? ["\n[", "\n【", "User:"] : ["\nUser:"] 
+        // --- 4. 物理停止词 (API-side) ---
+        // 只有群聊才会开启 Ω 停止词
+        stop: isGroupMode ? [STOP_MARKER, "User:", "(Past_Log"] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
 
       let accumulated = ""; 
@@ -89,6 +99,7 @@ ${systemPrompt}`;
         if (text) {
           const newAccumulated = accumulated + text;
           
+          // --- 5. 动态巡逻 (Frontend Safe-Guard) ---
           if (isGroupMode && stopRegex && stopRegex.test(newAccumulated)) {
             const match = newAccumulated.match(stopRegex);
             if (match && match.index !== undefined) {
@@ -96,13 +107,14 @@ ${systemPrompt}`;
               const safePart = text.substring(0, matchPosInCurrent);
               if (safePart) yield safePart;
             }
-            console.warn(`[剧场截断] 检测到 AI 试图越权回复: ${match ? match[3] : '未知'}`);
+            console.warn(`[防串流巡逻] 发现违规角色扮演，已执行物理切断。`);
             if (controller) controller.abort(); 
             return; 
           }
 
           accumulated = newAccumulated;
-          yield text;
+          // 过滤掉输出中可能出现的停止符 Ω
+          yield text.replace(STOP_MARKER, "");
         }
       }
     } catch (e: any) {

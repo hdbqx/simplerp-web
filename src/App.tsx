@@ -67,10 +67,10 @@ function App() {
 
   // 仅展示关键函数 triggerAI 的修改部分
 
+// 仅展示 triggerAI 逻辑，确保它能稳定保存 ID
+
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
-    
-    // 创建控制器并存入 ref，供手动停止按钮使用
     const controller = new AbortController();
     abortControllerRef.current = controller;
     
@@ -78,7 +78,6 @@ function App() {
     const tempTs = Date.now() + 1;
     const currentHistory = historyOverride || messages;
     
-    // UI 占位
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(settings);
@@ -93,8 +92,7 @@ function App() {
           description: groups.find(g => g.id === selectedGroupId)?.description || "",
           members: characters.filter(c => groupMemberIds.includes(c.id!))
         } : undefined,
-        presets, 
-        controller // 【修改】：传入控制器
+        presets, controller
       );
 
       for await (const chunk of stream) {
@@ -106,13 +104,10 @@ function App() {
         });
       }
     } catch (e: any) {
-      if (e.name === 'AbortError') {
-        console.log("生成已停止（用户手动或系统截断）");
-      } else {
-        console.error("生成出错:", e);
-      }
+        // 中断报错不打印，维持界面整洁
+        if (e.name !== 'AbortError') console.error(e);
     } finally {
-      // 【关键修复】：无论是因为正常结束、用户点击停止、还是正则截断，只要有内容生成，就保存
+      // 无论是否截断，只要有内容生成，就执行持久化
       if (fullContent.trim().length > 0) {
           const res = await api.messages.add({ 
             role: 'assistant', 
@@ -121,13 +116,10 @@ function App() {
             group_id: viewMode === 'group' ? selectedGroupId : undefined, 
             timestamp: tempTs 
           });
-          // 同步数据库分配的 ID 到 state，确保删除按钮有效
           setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
       } else {
-          // 如果真的没出货，就把那个空的占位删掉
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
       }
-      
       setIsTyping(false);
       abortControllerRef.current = null;
     }
