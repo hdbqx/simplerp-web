@@ -88,7 +88,7 @@ function App() {
         full += chunk;
         setMessages(prev => { 
             const copy = [...prev]; 
-            if(copy.length > 0) copy[copy.length-1] = { ...copy[copy.length-1], content: full };
+            if(copy.length > 0) copy[copy.length-1].content = full;
             return copy; 
         });
       }
@@ -144,11 +144,11 @@ function App() {
   const Sidebar = () => (
     <div className="flex flex-col h-full bg-base-200 w-80 p-4 border-r border-base-content/10 shadow-xl overflow-hidden">
       <div className="flex justify-between items-center mb-6 pl-2">
-        <h2 className="font-black text-primary text-xl">SimpleRP Cloud</h2>
+        <h2 className="font-black text-primary text-xl tracking-tighter">SimpleRP Cloud</h2>
         <button className="md:hidden btn btn-ghost btn-xs" onClick={() => setMobileMenuOpen(false)}><X/></button>
       </div>
       <div className="tabs tabs-boxed mb-6">
-        <button className={`tab flex-1 transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('char')}>角色</button>
+        <button className={`tab flex-1 transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('char')}>单人</button>
         <button className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('group')}>剧场</button>
       </div>
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1">
@@ -163,14 +163,7 @@ function App() {
             <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error" onClick={(e) => { e.stopPropagation(); if(confirm("删除剧场?")) api.groups.delete(g.id!).then(() => loadData()); }} />
           </div>
         ))}
-        <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { 
-            const n = prompt("名称?"); 
-            if(n) { 
-                if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); 
-                else await api.groups.add({name:n, description:""}); 
-                await loadData(); 
-            } 
-        }}><Plus size={16} /> 新建</button>
+        <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if(n) { if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); else await api.groups.add({name:n, description:""}); await loadData(); } }}><Plus size={16} /> 新建</button>
       </div>
       <div className="mt-4 pt-4 border-t border-base-content/10"><button className="btn btn-ghost btn-sm btn-block justify-start" onClick={() => {setShowSettings(true); setMobileMenuOpen(false);}}><SettingsIcon size={16} /> 设置</button></div>
     </div>
@@ -184,7 +177,6 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
@@ -194,7 +186,7 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
-            <button className="btn btn-sm btn-ghost text-error" onClick={() => {if(confirm("清空？")) api.messages.clear(selectedCharId, selectedGroupId).then(()=>setMessages([]))}}><Eraser size={18}/></button>
+            <button className="btn btn-sm btn-ghost text-error" onClick={() => {if(confirm("清空对话？")) api.messages.clear(selectedCharId, selectedGroupId).then(()=>setMessages([]))}}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData();}}><BookOpen size={18}/></button>
@@ -246,7 +238,7 @@ function App() {
             )}
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="发送消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
+              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
               
               {isTyping ? (
                   <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
@@ -259,15 +251,64 @@ function App() {
       </div>
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* Settings Modal - 表格直接编辑版 */}
+      {showGroupEdit && selectedGroupId && (
+          <div className="modal modal-open">
+              <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
+                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center"><h3 className="text-xl flex items-center gap-2"><Users/> 剧场设定</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGroupEdit(false)}><X/></button></div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                      <div className="form-control"><label className="label font-bold">剧场名</label><input className="input input-bordered" value={groups.find(g=>g.id===selectedGroupId)?.name} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, name:e.target.value}:g))} /></div>
+                      <div className="form-control"><label className="label font-bold">场景设定</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
+                      <div className="space-y-4">
+                          <label className="label font-bold text-primary text-sm">勾选成员</label>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                              {characters.map(c => (
+                                  <label key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer ${groupMemberIds.includes(c.id!) ? 'border-primary bg-primary/10' : 'border-base-300'}`}>
+                                      <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={groupMemberIds.includes(c.id!)} onChange={e => {
+                                          const next = e.target.checked ? [...groupMemberIds, c.id!] : groupMemberIds.filter(id => id !== c.id);
+                                          setGroupMemberIds(next);
+                                      }} />
+                                      <span className="text-sm font-medium truncate">{c.name}</span>
+                                  </label>
+                              ))}
+                          </div>
+                      </div>
+                  </div>
+                  <div className="p-6 border-t bg-base-200 flex justify-end gap-2"><button className="btn btn-primary btn-block md:w-auto" onClick={async ()=>{const g=groups.find(grp=>grp.id===selectedGroupId); if(g){await api.groups.update(selectedGroupId, {...g, memberIds: groupMemberIds}); setShowGroupEdit(false); alert("保存成功")}}}>保存设定</button></div>
+              </div>
+          </div>
+      )}
+
+      {showCharEdit && selectedCharId && (
+          <div className="modal modal-open">
+              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden text-base-content">
+                  <div className="p-6 border-b flex justify-between bg-base-200 items-center font-bold">角色驱动档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="form-control"><label className="label font-bold text-xs">专用模型</label>
+                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.model_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, model_id:e.target.value}:c))}>
+                                <option value="">跟随全局</option>{modelOptions.map(m=><option key={m} value={m}>{m}</option>)}
+                            </select>
+                        </div>
+                        <div className="form-control"><label className="label font-bold text-xs">API预设</label>
+                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.api_preset_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, api_preset_id:parseInt(e.target.value)}:c))}>
+                                <option value="">跟随全局设置</option>{presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                        </div>
+                      </div>
+                      <div className="form-control"><label className="label font-bold text-sm">角色名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
+                      <div className="form-control"><label className="label font-bold text-sm">角色设定</label><textarea className="textarea textarea-bordered h-48 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
+                      <div className="form-control"><label className="label font-bold text-sm">长期记忆</label><textarea className="textarea textarea-bordered h-24 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+                  </div>
+                  <div className="p-4 border-t bg-base-200 flex justify-end"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.characters.update(selectedCharId, characters.find(c=>c.id===selectedCharId)!); setShowCharEdit(false); loadData();}}>保存</button></div>
+              </div>
+          </div>
+      )}
+
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b bg-base-200 font-bold flex justify-between items-center text-xl">
-                      系统配置
-                      <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X/></button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+              <div className="modal-box max-w-4xl h-[80vh] flex flex-col p-0 overflow-hidden text-base-content">
+                  <div className="p-6 border-b bg-base-200 font-bold flex justify-between items-center text-xl">系统配置<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X/></button></div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
                       <section>
                           <h4 className="text-sm font-black mb-3 text-primary uppercase">全局 API</h4>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -304,71 +345,19 @@ function App() {
 
                       <section className="bg-error/10 p-4 rounded-xl border border-error/20">
                           <h4 className="text-sm font-black mb-3 text-error uppercase">危险区域</h4>
-                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("确定清理所有图片消息？")) api.messages.clearAllImages().then(()=>alert("清理完成"))}}><HardDrive size={16}/> 清理生成图片</button>
+                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("清理所有图片？")) api.messages.clearAllImages().then(()=>alert("清理完成"))}}><HardDrive size={16}/> 清理生成图片</button>
                       </section>
                   </div>
-                  <div className="p-4 border-t bg-base-200"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.settings.update(settings); setShowSettings(false); loadData();}}>保存并关闭</button></div>
-              </div>
-          </div>
-      )}
-
-      {/* 角色/剧场等 Modal 逻辑保持一致... */}
-      {showGroupEdit && selectedGroupId && (
-          <div className="modal modal-open">
-              <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center"><h3 className="text-xl flex items-center gap-2"><Users/> 剧场设定</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGroupEdit(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                      <div className="form-control"><label className="label font-bold">剧场名</label><input className="input input-bordered" value={groups.find(g=>g.id===selectedGroupId)?.name} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, name:e.target.value}:g))} /></div>
-                      <div className="form-control"><label className="label font-bold">场景设定</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
-                      <div className="space-y-4">
-                          <label className="label font-bold text-primary text-sm">勾选成员</label>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              {characters.map(c => (
-                                  <label key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer ${groupMemberIds.includes(c.id!) ? 'border-primary bg-primary/10' : 'border-base-300'}`}>
-                                      <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={groupMemberIds.includes(c.id!)} onChange={e => {
-                                          const next = e.target.checked ? [...groupMemberIds, c.id!] : groupMemberIds.filter(id => id !== c.id);
-                                          setGroupMemberIds(next);
-                                      }} />
-                                      <span className="text-sm font-medium truncate">{c.name}</span>
-                                  </label>
-                              ))}
-                          </div>
-                      </div>
+                  <div className="p-4 border-t bg-base-200 flex gap-2">
+                      <button className="btn btn-primary flex-1" onClick={async ()=>{await api.settings.update(settings); setShowSettings(false); loadData();}}>保存并关闭</button>
                   </div>
-                  <div className="p-6 border-t bg-base-200 flex justify-end gap-2"><button className="btn btn-primary btn-block md:w-auto" onClick={async ()=>{const g=groups.find(grp=>grp.id===selectedGroupId); if(g){await api.groups.update(selectedGroupId, {...g, memberIds: groupMemberIds}); setShowGroupEdit(false); alert("保存成功")}}}>保存设定</button></div>
-              </div>
-          </div>
-      )}
-
-      {showCharEdit && selectedCharId && (
-          <div className="modal modal-open">
-              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b flex justify-between bg-base-200 items-center font-bold">角色驱动档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="form-control"><label className="label font-bold text-xs">专用模型</label>
-                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.model_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, model_id:e.target.value}:c))}>
-                                <option value="">跟随全局</option>{modelOptions.map(m=><option key={m} value={m}>{m}</option>)}
-                            </select>
-                        </div>
-                        <div className="form-control"><label className="label font-bold text-xs">API预设</label>
-                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.api_preset_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, api_preset_id:parseInt(e.target.value)}:c))}>
-                                <option value="">跟随全局设置</option>{presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                        </div>
-                      </div>
-                      <div className="form-control"><label className="label font-bold text-sm">角色名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-sm">角色设定</label><textarea className="textarea textarea-bordered h-48 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-sm">长期记忆</label><textarea className="textarea textarea-bordered h-24 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
-                  </div>
-                  <div className="p-4 border-t bg-base-200 flex justify-end"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.characters.update(selectedCharId, characters.find(c=>c.id===selectedCharId)!); setShowCharEdit(false); loadData();}}>保存</button></div>
               </div>
           </div>
       )}
 
       {showGenModal && (
-          <div className="modal modal-open">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-base-content"><ImageIcon/> 生成画面</h3><textarea className="textarea textarea-bordered w-full h-32 text-base-content" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1 text-base-content" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+          <div className="modal modal-open text-base-content">
+              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 描述画面</h3><textarea className="textarea textarea-bordered w-full h-32 text-base-content" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成</button><button className="btn flex-1 text-base-content" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
           </div>
       )}
 

@@ -24,6 +24,8 @@ export class LLMClient {
     const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
     const currentModel = char.model_id || settings.model || settings.model_list?.split(',')[0].trim();
 
+    if (!currentModel) { yield "\n[系统错误: 未找到可用模型]"; return; }
+
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
 
     let prompt = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
@@ -32,17 +34,17 @@ export class LLMClient {
     if (groupCtx) {
       const membersText = groupCtx.members.map((m: any) => `[${m.name}]: ${m.summary || '...'}`).join('\n');
       prompt = `【剧场背景】\n${groupCtx.description}\n\n【成员列表】\n${membersText}\n\n` +
-               `【核心指令】你现在只能、且仅能扮演[${char.name}]进行回复。禁止代替其他角色发言。` +
-               `严禁输出如 "User:"、"[其他角色名]:" 等标签。如果你认为自己的发言已结束，请立刻停止。`;
+               `【任务】你只能扮演[${char.name}]进行回复。严禁输出其他成员的名字或替其发言。\n` +
+               `如果你认为对话已结束，请直接停止输出。\n\n【你的当前身份设定】\n${prompt}`;
     }
 
-    // 优化后的 4 个停止词，阻断 AI 试图伪造下一行对话
     const finalStopWords = ["\nUser", "\n用户", "\n[", "\n#"];
 
-    const messages = history.slice(-15).map(m => {
+    const messages = history.slice(-20).map(m => {
       let content = m.content;
       if (groupCtx) {
-        const name = m.role === 'user' ? 'User' : (groupCtx.members.find((c:any) => c.id === m.char_id)?.name || 'AI');
+        const sender = groupCtx.members.find((c:any) => c.id === m.char_id);
+        const name = m.role === 'user' ? 'User' : (sender?.name || 'AI');
         content = `${name}: ${m.content}`;
       }
       return { role: m.role, content };

@@ -25,6 +25,8 @@ export const api = {
   presets: {
     list: () => fetch(`${API}/presets`).then(r => r.json() as Promise<ApiPreset[]>),
     add: (p: ApiPreset) => fetch(`${API}/presets`, { method: 'POST', headers, body: JSON.stringify(p) }).then(r => r.json()),
+    // 【核心修复】：增加 update 方法定义
+    update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
   messages: {
