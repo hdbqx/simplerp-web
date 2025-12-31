@@ -1184,7 +1184,25 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, BookOpen, Book, HardDrive, Users, RefreshCw, Square, Save } from 'lucide-react';
+import { 
+  Send, 
+  Image as ImageIcon, 
+  Settings as SettingsIcon, 
+  Menu, 
+  Pencil, 
+  Plus, 
+  Trash2, 
+  X, 
+  BookOpen, 
+  Book, 
+  HardDrive, 
+  Users, 
+  RefreshCw, 
+  Square, 
+  Save,
+  Eraser,
+  Sparkles
+} from 'lucide-react';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group'>('char');
@@ -1296,13 +1314,14 @@ function App() {
   };
 
   /**
-   * MajicMix Realistic v7 高清生图逻辑
+   * MajicMix Realistic v7 高清生图动作
    */
   const handleGenImageAction = async () => {
     if (!settings?.sd_url) return alert("请设置 SD URL");
     
+    // 获取 Prompt 源
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
-    if (!rawPrompt) return;
+    if (!rawPrompt) return alert("没有可供生成的场景描述");
 
     setShowGenModal(false);
     setIsTyping(true);
@@ -1310,15 +1329,15 @@ function App() {
     try {
       const llm = new LLMClient(settings);
       
-      // 1. LLM 智能转换自然语言为 SD Tags
+      // 1. 调用 LLM 进行提示词工程化转换 (自然语言 -> SD Tags)
       const generatedTags = await llm.generateImageTags(rawPrompt, settings);
 
-      // 2. 百度翻译兜底
+      // 2. 百度翻译兜底（如果 LLM 返回了中文）
       const finalTags = settings.baidu_appid 
         ? await translateToEnglish(generatedTags, settings.baidu_appid, settings.baidu_secret!) 
         : generatedTags;
 
-      // 3. 构造请求 Payload (适配 MajicMix v7 最佳实践)
+      // 3. 构建 MajicMix v7 优化 Payload
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
@@ -1327,7 +1346,7 @@ function App() {
         width: 512,
         height: 768,
         sampler_name: "Euler a",
-        restore_faces: false, // 听劝，不开脸部修复
+        restore_faces: false, 
 
         // --- 高清修复 (Hires. fix) ---
         enable_hr: true,
@@ -1336,7 +1355,7 @@ function App() {
         hr_second_pass_steps: 15,
         denoising_strength: 0.35,
 
-        // --- 强制后端配置 ---
+        // --- 强制后端模型配置 ---
         override_settings: {
           "sd_model_checkpoint": "majicmixRealistic_v7.safetensors",
           "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors"
@@ -1349,7 +1368,7 @@ function App() {
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("SD 后端请求失败");
+      if (!res.ok) throw new Error(`SD Server Error: ${res.status}`);
       const data = await res.json();
       
       const msgData: Message = { 
@@ -1443,6 +1462,7 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
+        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
@@ -1453,9 +1473,44 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
+            
+            {/* 全局清空对话按钮 */}
+            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
+                if(confirm("确定清空当前对话？这将不可逆地删除所有历史记录。")) {
+                    const cid = viewMode === 'char' ? selectedCharId : undefined;
+                    const gid = viewMode === 'group' ? selectedGroupId : undefined;
+                    api.messages.clear(cid, gid).then(() => {
+                        setMessages([]);
+                        alert("对话已清空");
+                    });
+                }
+            }}><Eraser size={18}/></button>
+
             {viewMode === 'char' && selectedCharId && (
               <>
-                <button className="btn btn-sm btn-ghost text-info" title="总结长期记忆" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("记忆已存档");}}><BookOpen size={18}/></button>
+                {/* 长期记忆归档按钮 (增量式) */}
+                <button 
+                    className="btn btn-sm btn-ghost text-info" 
+                    title="总结长期记忆" 
+                    onClick={async ()=>{
+                        try {
+                            setIsTyping(true);
+                            const char = characters.find(c => c.id === selectedCharId);
+                            const llm = new LLMClient(settings!);
+                            // 调用修正后的 summarize 逻辑
+                            const newSummary = await llm.summarize(messages, settings!, char?.summary || "");
+                            await api.characters.update(selectedCharId, { summary: newSummary });
+                            await loadData(); // 重新加载以更新本地显示
+                            alert("长期记忆已更新整合。");
+                        } catch (e: any) {
+                            alert("总结失败: " + e.message);
+                        } finally {
+                            setIsTyping(false);
+                        }
+                    }}
+                >
+                    <BookOpen size={18}/>
+                </button>
                 <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
                 <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
@@ -1464,6 +1519,7 @@ function App() {
           </div>
         </div>
 
+        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {messages.map((m, idx) => {
             const isUser = m.role === 'user';
@@ -1496,6 +1552,7 @@ function App() {
           <div ref={bottomRef} className="h-20" />
         </div>
 
+        {/* Input Area */}
         <div className="p-4 bg-base-100 border-t border-base-300">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {viewMode === 'group' && selectedGroupId && (
@@ -1637,10 +1694,26 @@ function App() {
           </div>
       )}
 
-      {/* 高清生图弹窗 */}
+      {/* 生图弹窗 */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 场景生图 (MajicMix v7)</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的场景，支持自然语言..." /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>高清生成 (Hires. fix)</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+              <div className="modal-box">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                    <ImageIcon className="text-accent"/> MajicMix v7 高清生图
+                </h3>
+                <textarea 
+                    className="textarea textarea-bordered w-full h-32 focus:outline-none" 
+                    value={genPrompt} 
+                    onChange={e=>setGenPrompt(e.target.value)} 
+                    placeholder="描述你想生成的场景..."
+                />
+                <div className="modal-action">
+                    <button className="btn btn-primary flex-1 gap-2" onClick={handleGenImageAction}>
+                        <Sparkles size={16}/> 高清生成 (Hires. fix)
+                    </button>
+                    <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
+                </div>
+              </div>
           </div>
       )}
 
@@ -1849,6 +1922,8 @@ export const api = {
 ## File: src\lib\llm.ts
 
 ```ts
+// src/lib/llm.ts 完整修复版
+
 import OpenAI from 'openai';
 import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
 import { replaceVariables } from './variables'; 
@@ -1864,115 +1939,58 @@ export class LLMClient {
     });
   }
 
-  /**
-   * MajicMix v7 专用：提示词预处理器
-   * 将感性的聊天内容转化为 SD 能够识别的硬核 Tags
-   */
   async generateImageTags(description: string, settings: Settings): Promise<string> {
     const model = settings.model || (settings.model_list?.split(',')[0].trim());
     if (!model) return description;
-
-    // 针对写实模型 v7 的 Prompt 指令
-    const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. 
-    Convert descriptions into a comma-separated list of English keywords. 
-    Focus on: facial features, hair style, specific clothing texture, body pose, lighting (cinematic, rim lighting), and environment.
-    IMPORTANT: Output ONLY keywords, no sentences, no explanations.`;
-
+    const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. Convert descriptions into comma-separated English keywords. Focus on: facial features, hair style, clothing texture, body pose, lighting. Output ONLY keywords.`;
     try {
       const res = await this.client.chat.completions.create({
         model: model,
-        messages: [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: `Convert this scene to SD tags: ${description}` }
-        ],
-        temperature: 0.3, // 低随机性确保标签精准
+        messages: [{ role: 'system', content: systemInstruction }, { role: 'user', content: `Convert to tags: ${description}` }],
+        temperature: 0.3,
       });
       return res.choices[0]?.message?.content || description;
-    } catch (e) {
-      console.error("LLM Tag Conversion Error:", e);
-      return description; // 失败则降级使用原文
-    }
+    } catch (e) { return description; }
   }
 
-  /**
-   * 世界书扫描逻辑
-   */
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
     if (!entries || entries.length === 0) return "";
-
     const contextText = (currentInput + " " + history.slice(-3).map(m => m.content).join(" ")).toLowerCase();
-    
     const hits = entries.filter((e: LorebookEntry) => {
         if (!e.isActive || !e.keywords) return false;
-        const kwList = e.keywords.split(/[,，]/);
-        return kwList.some((k: string) => {
+        return e.keywords.split(/[,，]/).some((k: string) => {
             const trimmedK = k.trim().toLowerCase();
             return trimmedK.length > 0 && contextText.includes(trimmedK);
         });
     });
-
     if (hits.length === 0) return "";
-
     return `\n\n### [世界书设定注入]\n${hits.map((h: LorebookEntry) => `内容: ${h.content}`).join('\n---\n')}\n`;
   }
 
-  /**
-   * 聊天流处理（支持单人/剧场）
-   */
-  async *chatStream(
-    char: Character, history: Message[], userInputs: string, settings: Settings, 
-    lorebookEntries: LorebookEntry[] = [], groupCtx?: any, presets: ApiPreset[] = [],
-    controller?: AbortController 
-  ) {
+  async *chatStream(char: Character, history: Message[], userInputs: string, settings: Settings, lorebookEntries: LorebookEntry[] = [], groupCtx?: any, presets: ApiPreset[] = [], controller?: AbortController) {
     const preset = presets.find((p: ApiPreset) => p.id === char.api_preset_id);
     const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
     const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
     const currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
-
     if (!currentModel) { yield "\n[系统提示]: 未配置模型。"; return; }
-
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true, maxRetries: 0 });
-
     const isGroupMode = !!groupCtx;
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = isGroupMode ? (settings.user_name || "User") : "User";
-
-    // 1. 构造 System Prompt
     let systemPromptRaw = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
     systemPromptRaw += this.scanLorebook(userInputs, history, lorebookEntries);
-
-    if (isGroupMode) {
-      systemPromptRaw = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
-    }
-
+    if (isGroupMode) systemPromptRaw = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
     const systemPrompt = replaceVariables(systemPromptRaw, settings, char);
-
-    // 2. 构造消息列表
     const chatMessages: any[] = [];
     history.slice(-15).forEach((m: Message) => {
       if (isGroupMode) {
-        const senderName = m.role === 'user' ? playerDisplayName : (presets.find(p=>false)?.name || 'AI'); // 简化逻辑
-        chatMessages.push({ role: m.role, content: `(Log: ${senderName}) -> ${m.content}` });
+        const name = m.role === 'user' ? playerDisplayName : (char.name || 'AI');
+        chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
       } else {
         chatMessages.push({ role: m.role, content: m.content });
       }
     });
-
-    if (userInputs) {
-        const pInput = replaceVariables(userInputs, settings, char);
-        chatMessages.push({ 
-            role: 'user', 
-            content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${pInput}` : pInput
-        });
-    }
-
-    // 3. 动态拦截
-    let stopRegex: RegExp | null = null;
-    if (isGroupMode) {
-      const escaped = [playerDisplayName, "User"].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\(Log:|\\(Input:|\\[|#)*(${escaped})(:|：|\\s|\\n)`, 'i');
-    }
-
+    if (userInputs) chatMessages.push({ role: 'user', content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${replaceVariables(userInputs, settings, char)}` : replaceVariables(userInputs, settings, char)});
     try {
       const stream = await dynamicClient.chat.completions.create({
         model: currentModel, 
@@ -1981,34 +1999,50 @@ export class LLMClient {
         temperature: settings.temperature || 0.8,
         stop: isGroupMode ? [STOP_MARKER] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
-
-      let accumulated = ""; 
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || '';
-        if (text) {
-          const newAccumulated = accumulated + text;
-          if (isGroupMode && stopRegex && stopRegex.test(newAccumulated)) {
-            if (controller) controller.abort(); 
-            return; 
-          }
-          accumulated = newAccumulated;
-          yield text.replace(STOP_MARKER, "");
-        }
+        if (text) yield text.replace(STOP_MARKER, "");
       }
-    } catch (e: any) {
-      if (e.name === 'AbortError') return;
-      yield `\n[模型调用失败]: ${e.message}`;
-    }
+    } catch (e: any) { if (e.name !== 'AbortError') yield `\n[模型调用失败]: ${e.message}`; }
   }
 
-  async summarize(history: Message[], settings: Settings): Promise<string> {
+  /**
+   * 修复后的记忆总结逻辑
+   * @param history 消息历史
+   * @param settings 设置
+   * @param oldSummary 现有的摘要（用于整合）
+   */
+  async summarize(history: Message[], settings: Settings, oldSummary: string = ""): Promise<string> {
     const summaryModel = settings.model || (settings.model_list?.split(',')[0].trim());
     if (!summaryModel) throw new Error("未选择总结模型");
+    
+    // 过滤掉图片消息和空消息，只保留文本事实
+    const facts = history
+        .filter(m => m.content && m.content.trim().length > 0)
+        .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
+        .slice(-40) // 增加到 40 条上下文
+        .join('\n');
+
+    if (!facts) return oldSummary;
+
+    const prompt = `你是一个记忆管家。请根据【新增对话】更新【已有摘要】。
+    要求：
+    1. 保持摘要精简，保留关键剧情、角色关系变化、已发生的重要事实。
+    2. 不要遗漏【已有摘要】中的重要信息，将其与新事实进行整合。
+    3. 仅输出更新后的摘要文本。
+
+    【已有摘要】：${oldSummary || "暂无"}
+    【新增对话】：
+    ${facts}
+
+    更新后的摘要：`;
+
     const res = await this.client.chat.completions.create({
       model: summaryModel,
-      messages: [{ role: 'system', content: "请精简总结上述对话事实。" }, { role: 'user', content: history.map((m: Message) => m.content).slice(-30).join('\n') }]
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3
     });
-    return res.choices[0]?.message?.content || "";
+    return res.choices[0]?.message?.content || oldSummary;
   }
 }
 ```

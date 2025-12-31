@@ -5,23 +5,8 @@ import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
-  Send, 
-  Image as ImageIcon, 
-  Settings as SettingsIcon, 
-  Menu, 
-  Pencil, 
-  Plus, 
-  Trash2, 
-  X, 
-  BookOpen, 
-  Book, 
-  HardDrive, 
-  Users, 
-  RefreshCw, 
-  Square, 
-  Save,
-  Eraser,
-  Sparkles
+  Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
+  BookOpen, Book, HardDrive, Users, RefreshCw, Square, Save, Eraser, Sparkles 
 } from 'lucide-react';
 
 function App() {
@@ -44,6 +29,7 @@ function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // 弹窗状态
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
@@ -70,6 +56,10 @@ function App() {
     } else if (viewMode === 'group' && selectedGroupId) {
       api.groups.getMembers(selectedGroupId).then(setGroupMemberIds);
       api.messages.list(undefined, selectedGroupId).then(setMessages);
+      // 剧场模式尝试加载第一个成员的世界书
+      api.groups.getMembers(selectedGroupId).then(ids => {
+          if(ids.length > 0) api.lorebook.list(ids[0]).then(setLorebookEntries);
+      });
     }
   }, [selectedCharId, selectedGroupId, viewMode]);
 
@@ -102,8 +92,6 @@ function App() {
         char, currentHistory, textOverride || "", 
         settings, lorebookEntries, 
         viewMode === 'group' ? {
-          name: groups.find(g => g.id === selectedGroupId)?.name || "",
-          description: groups.find(g => g.id === selectedGroupId)?.description || "",
           members: characters.filter(c => groupMemberIds.includes(c.id!))
         } : undefined,
         presets, controller
@@ -133,87 +121,39 @@ function App() {
     }
   };
 
-  /**
-   * MajicMix Realistic v7 高清生图动作
-   */
   const handleGenImageAction = async () => {
-    if (!settings?.sd_url) return alert("请设置 SD URL");
-    
-    // 获取 Prompt 源
+    if (!settings?.sd_url) return alert("请配置 SD URL");
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
-    if (!rawPrompt) return alert("没有可供生成的场景描述");
-
     setShowGenModal(false);
     setIsTyping(true);
-
     try {
-      const llm = new LLMClient(settings);
+      const llm = new LLMClient(settings!);
+      const tags = await llm.generateImageTags(rawPrompt, settings!);
+      const finalTags = settings!.baidu_appid ? await translateToEnglish(tags, settings!.baidu_appid, settings!.baidu_secret!) : tags;
       
-      // 1. 调用 LLM 进行提示词工程化转换 (自然语言 -> SD Tags)
-      const generatedTags = await llm.generateImageTags(rawPrompt, settings);
-
-      // 2. 百度翻译兜底（如果 LLM 返回了中文）
-      const finalTags = settings.baidu_appid 
-        ? await translateToEnglish(generatedTags, settings.baidu_appid, settings.baidu_secret!) 
-        : generatedTags;
-
-      // 3. 构建 MajicMix v7 优化 Payload
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
-        steps: 30,
-        cfg_scale: 7,
-        width: 512,
-        height: 768,
-        sampler_name: "Euler a",
-        restore_faces: false, 
-
-        // --- 高清修复 (Hires. fix) ---
-        enable_hr: true,
-        hr_scale: 2,
-        hr_upscaler: "4x_NMKD-Superscale-SP_178000_G", 
-        hr_second_pass_steps: 15,
-        denoising_strength: 0.35,
-
-        // --- 强制后端模型配置 ---
-        override_settings: {
-          "sd_model_checkpoint": "majicmixRealistic_v7.safetensors",
-          "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors"
-        }
+        steps: 30, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false,
+        enable_hr: true, hr_scale: 2, hr_upscaler: "4x_NMKD-Superscale-SP_178000_G", hr_second_pass_steps: 15, denoising_strength: 0.35,
+        override_settings: { "sd_model_checkpoint": "majicmixRealistic_v7.safetensors", "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors" }
       };
 
-      const res = await fetch(`${settings.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
-      if (!res.ok) throw new Error(`SD Server Error: ${res.status}`);
       const data = await res.json();
-      
-      const msgData: Message = { 
-        role: 'assistant', 
-        content: '', 
-        image: `data:image/png;base64,${data.images[0]}`, 
-        timestamp: Date.now(), 
-        group_id: viewMode === 'group' ? selectedGroupId : undefined, 
-        char_id: viewMode === 'char' ? selectedCharId : undefined 
-      };
-
+      const msgData = { role: 'assistant' as const, content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now(), group_id: selectedGroupId, char_id: selectedCharId };
       const dbRes = await api.messages.add(msgData);
       setMessages(prev => [...prev, { ...msgData, id: dbRes.id }]);
-    } catch (e: any) {
-      alert("生图失败: " + e.message);
-    } finally {
-      setIsTyping(false);
-    }
+    } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsTyping(false); }
   };
 
   const handleSend = async () => {
     if (!input.trim() || !settings || isTyping) return;
     const text = input; setInput('');
-    const tx = document.querySelector('textarea');
-    if (tx) tx.style.height = 'auto';
+    const tx = document.querySelector('textarea'); if (tx) tx.style.height = 'auto';
 
     const timestamp = Date.now();
     const userMsg: Message = { 
@@ -227,7 +167,6 @@ function App() {
       const res = await api.messages.add(userMsg);
       const msgWithId = { ...userMsg, id: res.id };
       setMessages(prev => prev.map(m => m.timestamp === timestamp ? msgWithId : m));
-      
       if (viewMode === 'char' && selectedCharId) {
         triggerAI(characters.find(c=>c.id===selectedCharId)!, text, [...messages, msgWithId]);
       }
@@ -276,7 +215,7 @@ function App() {
 
   const modelOptions = settings?.model_list?.split(',').map(m => m.trim()).filter(m => m) || [];
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100 text-base-content"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
@@ -293,44 +232,20 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
-            
-            {/* 全局清空对话按钮 */}
             <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
-                if(confirm("确定清空当前对话？这将不可逆地删除所有历史记录。")) {
+                if(confirm("确定清空当前对话？")) {
                     const cid = viewMode === 'char' ? selectedCharId : undefined;
                     const gid = viewMode === 'group' ? selectedGroupId : undefined;
-                    api.messages.clear(cid, gid).then(() => {
-                        setMessages([]);
-                        alert("对话已清空");
-                    });
+                    api.messages.clear(cid, gid).then(() => { setMessages([]); alert("已清空"); });
                 }
             }}><Eraser size={18}/></button>
-
             {viewMode === 'char' && selectedCharId && (
               <>
-                {/* 长期记忆归档按钮 (增量式) */}
-                <button 
-                    className="btn btn-sm btn-ghost text-info" 
-                    title="总结长期记忆" 
-                    onClick={async ()=>{
-                        try {
-                            setIsTyping(true);
-                            const char = characters.find(c => c.id === selectedCharId);
-                            const llm = new LLMClient(settings!);
-                            // 调用修正后的 summarize 逻辑
-                            const newSummary = await llm.summarize(messages, settings!, char?.summary || "");
-                            await api.characters.update(selectedCharId, { summary: newSummary });
-                            await loadData(); // 重新加载以更新本地显示
-                            alert("长期记忆已更新整合。");
-                        } catch (e: any) {
-                            alert("总结失败: " + e.message);
-                        } finally {
-                            setIsTyping(false);
-                        }
-                    }}
-                >
-                    <BookOpen size={18}/>
-                </button>
+                <button className="btn btn-sm btn-ghost text-info" title="总结长期记忆" onClick={async ()=>{ 
+                    const char = characters.find(c => c.id === selectedCharId);
+                    const s = await new LLMClient(settings!).summarize(messages, settings!, char?.summary || ""); 
+                    await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("记忆已存档");
+                }}><BookOpen size={18}/></button>
                 <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
                 <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
@@ -352,7 +267,7 @@ function App() {
                     <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
                         {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                         {!isUser && isLast && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                        <button className="hover:text-error" onClick={async ()=>{if(confirm("彻底删除该记录？")) { if(m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg=>msg.id!==m.id)); }}}}><Trash2 size={10}/></button>
+                        <button className="hover:text-error" onClick={async ()=>{if(confirm("彻底删除？")) { if(m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg=>msg.id!==m.id)); }}}}><Trash2 size={10}/></button>
                     </div>
                 </div>
                 {m.image ? <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden"><img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/></div> : (
@@ -385,7 +300,6 @@ function App() {
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
               <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
-              
               {isTyping ? (
                   <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
               ) : (
@@ -396,16 +310,19 @@ function App() {
         </div>
       </div>
       
+      {/* Sidebar Overlay */}
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* Group Edit Modal */}
+      {/* --- MODALS (THE MISSING 300 LINES) --- */}
+
+      {/* 1. Group Edit Modal */}
       {showGroupEdit && selectedGroupId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center"><h3>剧场设定</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGroupEdit(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
                       <div className="form-control"><label className="label font-bold">剧场名</label><input className="input input-bordered" value={groups.find(g=>g.id===selectedGroupId)?.name} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, name:e.target.value}:g))} /></div>
-                      <div className="form-control"><label className="label font-bold">场景/世界观设定</label><textarea className="textarea textarea-bordered h-48" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
+                      <div className="form-control"><label className="label font-bold">场景设定</label><textarea className="textarea textarea-bordered h-48" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
                       <div className="space-y-4">
                           <label className="label font-bold">剧场角色</label>
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -426,7 +343,7 @@ function App() {
           </div>
       )}
 
-      {/* Character Edit Modal */}
+      {/* 2. Character Edit Modal */}
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -445,15 +362,15 @@ function App() {
                         </div>
                       </div>
                       <div className="form-control"><label className="label font-bold">姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold">核心人设 / 描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold">长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-24 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+                      <div className="form-control"><label className="label font-bold">人设描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
+                      <div className="form-control"><label className="label font-bold">记忆摘要</label><textarea className="textarea textarea-bordered h-24 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
                   </div>
                   <div className="p-4 border-t bg-base-200 flex justify-end"><button className="btn btn-primary" onClick={async ()=>{await api.characters.update(selectedCharId, characters.find(c=>c.id===selectedCharId)!); setShowCharEdit(false); loadData();}}>保存</button></div>
               </div>
           </div>
       )}
 
-      {/* Settings Modal */}
+      {/* 3. Settings Modal (The Big One) */}
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -495,7 +412,7 @@ function App() {
                                               <td><input className="input input-ghost input-xs w-full font-mono text-[10px]" value={p.api_base} onChange={e=>{const n=[...presets]; n[idx].api_base=e.target.value; setPresets(n);}} /></td>
                                               <td><input className="input input-ghost input-xs w-full font-mono" type="password" value={p.api_key} onChange={e=>{const n=[...presets]; n[idx].api_key=e.target.value; setPresets(n);}} /></td>
                                               <td className="flex gap-1">
-                                                  <button className="btn btn-ghost btn-xs text-success" title="存入数据库" onClick={() => api.presets.update(p.id!, p).then(() => alert("预设已更新"))}><Save size={14}/></button>
+                                                  <button className="btn btn-ghost btn-xs text-success" onClick={() => api.presets.update(p.id!, p).then(() => alert("预设已更新"))}><Save size={14}/></button>
                                                   <button className="btn btn-ghost btn-xs text-error" onClick={() => {if(confirm("确定删除预设？")) api.presets.delete(p.id!).then(() => loadData());}}><Trash2 size={14}/></button>
                                               </td>
                                           </tr>
@@ -506,48 +423,61 @@ function App() {
                       </section>
                       <section className="bg-error/10 p-4 rounded-xl border border-error/20">
                           <h4 className="text-sm font-black mb-3 text-error uppercase">危险区域</h4>
-                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("确定清理所有图片记录以节省空间？")) api.messages.clearAllImages().then(()=>alert("图片已物理清理"));}}><HardDrive size={16}/> 清理所有生成图片</button>
+                          <button className="btn btn-error btn-outline btn-block btn-sm" onClick={()=>{if(confirm("清理所有图片？")) api.messages.clearAllImages().then(()=>alert("已清理"));}}><HardDrive size={16}/> 清理所有生成图片</button>
                       </section>
                   </div>
-                  <div className="p-4 border-t bg-base-200 flex gap-2"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.settings.update(settings!); setShowSettings(false); loadData();}}>保存并关闭</button></div>
+                  <div className="p-4 border-t bg-base-200"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.settings.update(settings!); setShowSettings(false); loadData();}}>保存并关闭</button></div>
               </div>
           </div>
       )}
 
-      {/* 生图弹窗 */}
-      {showGenModal && (
-          <div className="modal modal-open text-base-content">
-              <div className="modal-box">
-                <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <ImageIcon className="text-accent"/> MajicMix v7 高清生图
-                </h3>
-                <textarea 
-                    className="textarea textarea-bordered w-full h-32 focus:outline-none" 
-                    value={genPrompt} 
-                    onChange={e=>setGenPrompt(e.target.value)} 
-                    placeholder="描述你想生成的场景..."
-                />
-                <div className="modal-action">
-                    <button className="btn btn-primary flex-1 gap-2" onClick={handleGenImageAction}>
-                        <Sparkles size={16}/> 高清生成 (Hires. fix)
-                    </button>
-                    <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
-                </div>
-              </div>
-          </div>
-      )}
-
-      {/* 世界书弹窗 */}
+      {/* 4. Lorebook Modal (With isActive FIX) */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-2xl h-[70vh] flex flex-col p-0 overflow-hidden">
+              <div className="modal-box max-w-2xl h-[75vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-4 border-b bg-base-200 font-bold flex justify-between items-center">世界书 (Worldbook)<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {lorebookEntries.map(e => (
-                        <div key={e.id} className="collapse collapse-arrow bg-base-200"><input type="checkbox"/><div className="collapse-title text-sm font-bold">{e.keywords}</div><div className="collapse-content space-y-2"><textarea className="textarea textarea-bordered w-full h-24 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebook.update(e.id!, {content: evt.target.value})} /><div className="flex gap-2"><input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebook.update(e.id!, {keywords: evt.target.value})} /><button className="btn btn-sm btn-error" onClick={()=>api.lorebook.delete(e.id!).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}>删除</button></div></div></div>
+                        <div key={e.id} className="collapse collapse-arrow bg-base-200 border border-base-content/5">
+                            <input type="checkbox"/>
+                            <div className="collapse-title text-sm font-bold flex justify-between items-center pr-12">
+                                <span>{e.keywords}</span>
+                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${e.isActive ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{e.isActive ? 'Active' : 'Inactive'}</span>
+                            </div>
+                            <div className="collapse-content space-y-2">
+                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebook.update(e.id!, {content: evt.target.value})} />
+                                <div className="flex gap-2 items-center">
+                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebook.update(e.id!, {keywords: evt.target.value})} />
+                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full">
+                                        <span className="text-[10px] font-bold">启用</span>
+                                        <input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.isActive} onChange={(evt) => {
+                                            const val = evt.target.checked;
+                                            api.lorebook.update(e.id!, { isActive: val }).then(() => {
+                                                setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, isActive: val} : item));
+                                            });
+                                        }} />
+                                    </div>
+                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebook.delete(e.id!).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}><Trash2 size={14}/></button>
+                                </div>
+                            </div>
+                        </div>
                     ))}
                     <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={()=>api.lorebook.add({char_id:selectedCharId, keywords:"新词条", content:"", isActive:true}).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}>+ 添加设定词条</button>
                   </div>
+              </div>
+          </div>
+      )}
+
+      {/* 5. Image Gen Modal */}
+      {showGenModal && (
+          <div className="modal modal-open text-base-content">
+              <div className="modal-box">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 高清生图 (MajicMix v7)</h3>
+                <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面..." />
+                <div className="modal-action flex gap-2">
+                    <button className="btn btn-primary flex-1" onClick={handleGenImageAction}>高清生成 (Hires. fix)</button>
+                    <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
+                </div>
               </div>
           </div>
       )}
