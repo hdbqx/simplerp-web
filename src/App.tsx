@@ -4,7 +4,25 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, BookOpen, Book, HardDrive, Users, RefreshCw, Square, Save } from 'lucide-react';
+import { 
+  Send, 
+  Image as ImageIcon, 
+  Settings as SettingsIcon, 
+  Menu, 
+  Pencil, 
+  Plus, 
+  Trash2, 
+  X, 
+  BookOpen, 
+  Book, 
+  HardDrive, 
+  Users, 
+  RefreshCw, 
+  Square, 
+  Save,
+  Eraser,
+  Sparkles
+} from 'lucide-react';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group'>('char');
@@ -116,13 +134,14 @@ function App() {
   };
 
   /**
-   * MajicMix Realistic v7 高清生图逻辑
+   * MajicMix Realistic v7 高清生图动作
    */
   const handleGenImageAction = async () => {
     if (!settings?.sd_url) return alert("请设置 SD URL");
     
+    // 获取 Prompt 源
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
-    if (!rawPrompt) return;
+    if (!rawPrompt) return alert("没有可供生成的场景描述");
 
     setShowGenModal(false);
     setIsTyping(true);
@@ -130,15 +149,15 @@ function App() {
     try {
       const llm = new LLMClient(settings);
       
-      // 1. LLM 智能转换自然语言为 SD Tags
+      // 1. 调用 LLM 进行提示词工程化转换 (自然语言 -> SD Tags)
       const generatedTags = await llm.generateImageTags(rawPrompt, settings);
 
-      // 2. 百度翻译兜底
+      // 2. 百度翻译兜底（如果 LLM 返回了中文）
       const finalTags = settings.baidu_appid 
         ? await translateToEnglish(generatedTags, settings.baidu_appid, settings.baidu_secret!) 
         : generatedTags;
 
-      // 3. 构造请求 Payload (适配 MajicMix v7 最佳实践)
+      // 3. 构建 MajicMix v7 优化 Payload
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
@@ -147,7 +166,7 @@ function App() {
         width: 512,
         height: 768,
         sampler_name: "Euler a",
-        restore_faces: false, // 听劝，不开脸部修复
+        restore_faces: false, 
 
         // --- 高清修复 (Hires. fix) ---
         enable_hr: true,
@@ -156,7 +175,7 @@ function App() {
         hr_second_pass_steps: 15,
         denoising_strength: 0.35,
 
-        // --- 强制后端配置 ---
+        // --- 强制后端模型配置 ---
         override_settings: {
           "sd_model_checkpoint": "majicmixRealistic_v7.safetensors",
           "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors"
@@ -169,7 +188,7 @@ function App() {
         body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("SD 后端请求失败");
+      if (!res.ok) throw new Error(`SD Server Error: ${res.status}`);
       const data = await res.json();
       
       const msgData: Message = { 
@@ -263,6 +282,7 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
+        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
@@ -273,9 +293,44 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
+            
+            {/* 全局清空对话按钮 */}
+            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
+                if(confirm("确定清空当前对话？这将不可逆地删除所有历史记录。")) {
+                    const cid = viewMode === 'char' ? selectedCharId : undefined;
+                    const gid = viewMode === 'group' ? selectedGroupId : undefined;
+                    api.messages.clear(cid, gid).then(() => {
+                        setMessages([]);
+                        alert("对话已清空");
+                    });
+                }
+            }}><Eraser size={18}/></button>
+
             {viewMode === 'char' && selectedCharId && (
               <>
-                <button className="btn btn-sm btn-ghost text-info" title="总结长期记忆" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("记忆已存档");}}><BookOpen size={18}/></button>
+                {/* 长期记忆归档按钮 (增量式) */}
+                <button 
+                    className="btn btn-sm btn-ghost text-info" 
+                    title="总结长期记忆" 
+                    onClick={async ()=>{
+                        try {
+                            setIsTyping(true);
+                            const char = characters.find(c => c.id === selectedCharId);
+                            const llm = new LLMClient(settings!);
+                            // 调用修正后的 summarize 逻辑
+                            const newSummary = await llm.summarize(messages, settings!, char?.summary || "");
+                            await api.characters.update(selectedCharId, { summary: newSummary });
+                            await loadData(); // 重新加载以更新本地显示
+                            alert("长期记忆已更新整合。");
+                        } catch (e: any) {
+                            alert("总结失败: " + e.message);
+                        } finally {
+                            setIsTyping(false);
+                        }
+                    }}
+                >
+                    <BookOpen size={18}/>
+                </button>
                 <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
                 <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
@@ -284,6 +339,7 @@ function App() {
           </div>
         </div>
 
+        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {messages.map((m, idx) => {
             const isUser = m.role === 'user';
@@ -316,6 +372,7 @@ function App() {
           <div ref={bottomRef} className="h-20" />
         </div>
 
+        {/* Input Area */}
         <div className="p-4 bg-base-100 border-t border-base-300">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {viewMode === 'group' && selectedGroupId && (
@@ -457,10 +514,26 @@ function App() {
           </div>
       )}
 
-      {/* 高清生图弹窗 */}
+      {/* 生图弹窗 */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 场景生图 (MajicMix v7)</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的场景，支持自然语言..." /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>高清生成 (Hires. fix)</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+              <div className="modal-box">
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                    <ImageIcon className="text-accent"/> MajicMix v7 高清生图
+                </h3>
+                <textarea 
+                    className="textarea textarea-bordered w-full h-32 focus:outline-none" 
+                    value={genPrompt} 
+                    onChange={e=>setGenPrompt(e.target.value)} 
+                    placeholder="描述你想生成的场景..."
+                />
+                <div className="modal-action">
+                    <button className="btn btn-primary flex-1 gap-2" onClick={handleGenImageAction}>
+                        <Sparkles size={16}/> 高清生成 (Hires. fix)
+                    </button>
+                    <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
+                </div>
+              </div>
           </div>
       )}
 

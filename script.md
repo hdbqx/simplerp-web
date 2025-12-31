@@ -1184,7 +1184,7 @@ import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, Sparkles, BookOpen, Eraser, Save, Book, HardDrive, Users, RefreshCw, Square } from 'lucide-react';
+import { Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, BookOpen, Book, HardDrive, Users, RefreshCw, Square, Save } from 'lucide-react';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group'>('char');
@@ -1254,7 +1254,6 @@ function App() {
     const tempTs = Date.now() + 1;
     const currentHistory = historyOverride || messages;
     
-    // UI 占位：初始状态无内容
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(settings);
@@ -1279,7 +1278,6 @@ function App() {
     } catch (e: any) {
         if (e.name !== 'AbortError') console.error("生成失败:", e);
     } finally {
-      // 核心修复：物理截断后只要有内容，就保存并同步 ID
       if (fullContent.trim().length > 0) {
           try {
             const res = await api.messages.add({ 
@@ -1288,11 +1286,8 @@ function App() {
                 timestamp: tempTs 
             });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
-          } catch (dbErr) {
-            console.error("对话持久化失败:", dbErr);
-          }
+          } catch (dbErr) { console.error(dbErr); }
       } else {
-          // 如果完全没出货，移除占位
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
       }
       setIsTyping(false);
@@ -1300,11 +1295,84 @@ function App() {
     }
   };
 
+  /**
+   * MajicMix Realistic v7 高清生图逻辑
+   */
+  const handleGenImageAction = async () => {
+    if (!settings?.sd_url) return alert("请设置 SD URL");
+    
+    const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
+    if (!rawPrompt) return;
+
+    setShowGenModal(false);
+    setIsTyping(true);
+
+    try {
+      const llm = new LLMClient(settings);
+      
+      // 1. LLM 智能转换自然语言为 SD Tags
+      const generatedTags = await llm.generateImageTags(rawPrompt, settings);
+
+      // 2. 百度翻译兜底
+      const finalTags = settings.baidu_appid 
+        ? await translateToEnglish(generatedTags, settings.baidu_appid, settings.baidu_secret!) 
+        : generatedTags;
+
+      // 3. 构造请求 Payload (适配 MajicMix v7 最佳实践)
+      const payload = {
+        prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
+        negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
+        steps: 30,
+        cfg_scale: 7,
+        width: 512,
+        height: 768,
+        sampler_name: "Euler a",
+        restore_faces: false, // 听劝，不开脸部修复
+
+        // --- 高清修复 (Hires. fix) ---
+        enable_hr: true,
+        hr_scale: 2,
+        hr_upscaler: "4x_NMKD-Superscale-SP_178000_G", 
+        hr_second_pass_steps: 15,
+        denoising_strength: 0.35,
+
+        // --- 强制后端配置 ---
+        override_settings: {
+          "sd_model_checkpoint": "majicmixRealistic_v7.safetensors",
+          "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors"
+        }
+      };
+
+      const res = await fetch(`${settings.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error("SD 后端请求失败");
+      const data = await res.json();
+      
+      const msgData: Message = { 
+        role: 'assistant', 
+        content: '', 
+        image: `data:image/png;base64,${data.images[0]}`, 
+        timestamp: Date.now(), 
+        group_id: viewMode === 'group' ? selectedGroupId : undefined, 
+        char_id: viewMode === 'char' ? selectedCharId : undefined 
+      };
+
+      const dbRes = await api.messages.add(msgData);
+      setMessages(prev => [...prev, { ...msgData, id: dbRes.id }]);
+    } catch (e: any) {
+      alert("生图失败: " + e.message);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || !settings || isTyping) return;
     const text = input; setInput('');
-    
-    // UI 优化：重置 textarea 高度
     const tx = document.querySelector('textarea');
     if (tx) tx.style.height = 'auto';
 
@@ -1315,11 +1383,8 @@ function App() {
       group_id: viewMode === 'group' ? selectedGroupId : undefined
     };
 
-    // 先进 UI
     setMessages(prev => [...prev, userMsg]);
-
     try {
-      // 存入数据库并获取 ID 同步到 state
       const res = await api.messages.add(userMsg);
       const msgWithId = { ...userMsg, id: res.id };
       setMessages(prev => prev.map(m => m.timestamp === timestamp ? msgWithId : m));
@@ -1327,45 +1392,19 @@ function App() {
       if (viewMode === 'char' && selectedCharId) {
         triggerAI(characters.find(c=>c.id===selectedCharId)!, text, [...messages, msgWithId]);
       }
-    } catch (e) { console.error("发送失败:", e); }
+    } catch (e) { console.error(e); }
   };
 
   const handleRegenerate = async () => {
     if (messages.length === 0 || isTyping) return;
     const lastMsg = messages[messages.length - 1];
     if (lastMsg.role !== 'assistant') return;
-    
     const newHistory = messages.slice(0, -1);
     setMessages(newHistory);
-    
     if (lastMsg.id) await api.messages.delete(lastMsg.id);
-    
     const char = characters.find(c => c.id === lastMsg.char_id);
     const lastUserMsg = [...newHistory].reverse().find(m => m.role === 'user');
     if (char) triggerAI(char, lastUserMsg?.content || "", newHistory);
-  };
-
-  const handleGenImageAction = async () => {
-    if (!settings?.sd_url) return alert("请设置 SD URL");
-    const p = genPrompt; setShowGenModal(false);
-    try {
-        const finalP = settings.baidu_appid ? await translateToEnglish(p, settings.baidu_appid, settings.baidu_secret!) : p;
-        const res = await fetch(`${settings.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: `(masterpiece), anime style, ${finalP}`, steps: 20, width: 512, height: 768 })
-        });
-        const data = await res.json();
-        const msgData = { 
-            role: 'assistant' as const, 
-            content: '', 
-            image: `data:image/png;base64,${data.images[0]}`, 
-            timestamp: Date.now(), 
-            group_id: selectedGroupId, 
-            char_id: selectedCharId 
-        };
-        const dbRes = await api.messages.add(msgData);
-        setMessages(prev => [...prev, { ...msgData, id: dbRes.id }]);
-    } catch (e: any) { alert("绘图失败: " + e.message); }
   };
 
   const Sidebar = () => (
@@ -1398,13 +1437,12 @@ function App() {
 
   const modelOptions = settings?.model_list?.split(',').map(m => m.trim()).filter(m => m) || [];
 
-  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100 text-base-content"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
+  if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
@@ -1415,16 +1453,6 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
-            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
-                if(confirm("确定清空当前对话？")) {
-                    const cid = viewMode === 'char' ? selectedCharId : undefined;
-                    const gid = viewMode === 'group' ? selectedGroupId : undefined;
-                    api.messages.clear(cid, gid).then(() => {
-                        setMessages([]);
-                        alert("已清空");
-                    });
-                }
-            }}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结长期记忆" onClick={async ()=>{const s=await new LLMClient(settings!).summarize(messages, settings!); await api.characters.update(selectedCharId, {summary:s}); loadData(); alert("记忆已存档");}}><BookOpen size={18}/></button>
@@ -1436,7 +1464,6 @@ function App() {
           </div>
         </div>
 
-        {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {messages.map((m, idx) => {
             const isUser = m.role === 'user';
@@ -1469,7 +1496,6 @@ function App() {
           <div ref={bottomRef} className="h-20" />
         </div>
 
-        {/* Input Area */}
         <div className="p-4 bg-base-100 border-t border-base-300">
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {viewMode === 'group' && selectedGroupId && (
@@ -1493,7 +1519,6 @@ function App() {
         </div>
       </div>
       
-      {/* Sidebar Overlay */}
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
       {/* Group Edit Modal */}
@@ -1612,14 +1637,14 @@ function App() {
           </div>
       )}
 
-      {/* Image Generation Prompt Modal */}
+      {/* 高清生图弹窗 */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 场景生图</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>生成 (SD)</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
+              <div className="modal-box"><h3 className="font-bold text-lg mb-4 flex items-center gap-2"><ImageIcon/> 场景生图 (MajicMix v7)</h3><textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的场景，支持自然语言..." /><div className="modal-action"><button className="btn btn-primary flex-1" onClick={handleGenImageAction}>高清生成 (Hires. fix)</button><button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button></div></div>
           </div>
       )}
 
-      {/* Lorebook Modal */}
+      {/* 世界书弹窗 */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[70vh] flex flex-col p-0 overflow-hidden">
@@ -1832,39 +1857,68 @@ export class LLMClient {
   private client: OpenAI;
 
   constructor(settings: Settings) {
-    this.client = new OpenAI({ baseURL: settings.api_base, apiKey: settings.api_key, dangerouslyAllowBrowser: true });
+    this.client = new OpenAI({ 
+      baseURL: settings.api_base, 
+      apiKey: settings.api_key, 
+      dangerouslyAllowBrowser: true 
+    });
   }
 
   /**
-   * 优化后的世界书扫描逻辑
-   * 1. 增加大小写不敏感支持
-   * 2. 增加多关键词容错
-   * 3. 增强触发稳定性
+   * MajicMix v7 专用：提示词预处理器
+   * 将感性的聊天内容转化为 SD 能够识别的硬核 Tags
+   */
+  async generateImageTags(description: string, settings: Settings): Promise<string> {
+    const model = settings.model || (settings.model_list?.split(',')[0].trim());
+    if (!model) return description;
+
+    // 针对写实模型 v7 的 Prompt 指令
+    const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. 
+    Convert descriptions into a comma-separated list of English keywords. 
+    Focus on: facial features, hair style, specific clothing texture, body pose, lighting (cinematic, rim lighting), and environment.
+    IMPORTANT: Output ONLY keywords, no sentences, no explanations.`;
+
+    try {
+      const res = await this.client.chat.completions.create({
+        model: model,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: `Convert this scene to SD tags: ${description}` }
+        ],
+        temperature: 0.3, // 低随机性确保标签精准
+      });
+      return res.choices[0]?.message?.content || description;
+    } catch (e) {
+      console.error("LLM Tag Conversion Error:", e);
+      return description; // 失败则降级使用原文
+    }
+  }
+
+  /**
+   * 世界书扫描逻辑
    */
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
     if (!entries || entries.length === 0) return "";
 
-    // 扫描范围：当前输入 + 最近 3 条历史记录（确保上下文连贯触发）
     const contextText = (currentInput + " " + history.slice(-3).map(m => m.content).join(" ")).toLowerCase();
     
     const hits = entries.filter((e: LorebookEntry) => {
         if (!e.isActive || !e.keywords) return false;
-        
-        // 支持中英文逗号分隔关键词
         const kwList = e.keywords.split(/[,，]/);
         return kwList.some((k: string) => {
             const trimmedK = k.trim().toLowerCase();
-            // 过滤空关键词，防止全量触发
             return trimmedK.length > 0 && contextText.includes(trimmedK);
         });
     });
 
     if (hits.length === 0) return "";
 
-    // 格式化注入内容
-    return `\n\n### [世界书/背景设定注入]\n${hits.map((h: LorebookEntry) => `内容: ${h.content}`).join('\n---\n')}\n`;
+    return `\n\n### [世界书设定注入]\n${hits.map((h: LorebookEntry) => `内容: ${h.content}`).join('\n---\n')}\n`;
   }
 
+  /**
+   * 聊天流处理（支持单人/剧场）
+   */
   async *chatStream(
     char: Character, history: Message[], userInputs: string, settings: Settings, 
     lorebookEntries: LorebookEntry[] = [], groupCtx?: any, presets: ApiPreset[] = [],
@@ -1883,34 +1937,27 @@ export class LLMClient {
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = isGroupMode ? (settings.user_name || "User") : "User";
 
-    // --- 1. 构造 System Prompt ---
+    // 1. 构造 System Prompt
     let systemPromptRaw = char.description + (char.summary ? `\n\n[记忆摘要]: ${char.summary}` : "");
-    
-    // 【核心修复】：传入历史记录进行多轮扫描，提高世界书触发率
     systemPromptRaw += this.scanLorebook(userInputs, history, lorebookEntries);
 
     if (isGroupMode) {
-      const others = groupCtx.members.filter((m: any) => m.name !== char.name).map((m: any) => m.name);
-      systemPromptRaw = `【群聊剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
+      systemPromptRaw = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]，严禁替他人发言。必须以 "${STOP_MARKER}" 结束回复。\n${systemPromptRaw}`;
     }
 
     const systemPrompt = replaceVariables(systemPromptRaw, settings, char);
 
-    // --- 2. 构造消息流 ---
+    // 2. 构造消息列表
     const chatMessages: any[] = [];
-
-    // 添加历史记录
     history.slice(-15).forEach((m: Message) => {
       if (isGroupMode) {
-        const sender = groupCtx.members.find((c: any) => c.id === m.char_id);
-        const name = m.role === 'user' ? playerDisplayName : (sender?.name || 'AI');
-        chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
+        const senderName = m.role === 'user' ? playerDisplayName : (presets.find(p=>false)?.name || 'AI'); // 简化逻辑
+        chatMessages.push({ role: m.role, content: `(Log: ${senderName}) -> ${m.content}` });
       } else {
         chatMessages.push({ role: m.role, content: m.content });
       }
     });
 
-    // 添加当前输入
     if (userInputs) {
         const pInput = replaceVariables(userInputs, settings, char);
         chatMessages.push({ 
@@ -1919,20 +1966,11 @@ export class LLMClient {
         });
     }
 
-    // 添加引导指令
-    if (isGroupMode) {
-      chatMessages.push({ 
-        role: 'system', 
-        content: `请开始以 [${char.name}] 的身份回复，不要输出标签。`
-      });
-    }
-
-    // --- 3. 动态拦截正则 ---
+    // 3. 动态拦截
     let stopRegex: RegExp | null = null;
     if (isGroupMode) {
-      const fNames = [playerDisplayName, "User", "用户", "作者", "系统", ...groupCtx.members.filter((m:any)=>m.name!==char.name).map((m:any)=>m.name)];
-      const escaped = fNames.map((n: string) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\(Log:|\\(Input:|\\[|【|#|\\*|\\s)*(${escaped})(\\)|\\]|】|\\*|:|：|\\s|\\n)`, 'i');
+      const escaped = [playerDisplayName, "User"].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      stopRegex = new RegExp(`(\\n|\\s|[。！？])+(\\(Log:|\\(Input:|\\[|#)*(${escaped})(:|：|\\s|\\n)`, 'i');
     }
 
     try {
@@ -1941,7 +1979,7 @@ export class LLMClient {
         messages: [{ role: 'system', content: systemPrompt }, ...chatMessages],
         stream: true, 
         temperature: settings.temperature || 0.8,
-        stop: isGroupMode ? [STOP_MARKER, playerDisplayName + ":"] : ["User:", "\nUser:"] 
+        stop: isGroupMode ? [STOP_MARKER] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
 
       let accumulated = ""; 
@@ -1950,12 +1988,6 @@ export class LLMClient {
         if (text) {
           const newAccumulated = accumulated + text;
           if (isGroupMode && stopRegex && stopRegex.test(newAccumulated)) {
-            const match = newAccumulated.match(stopRegex);
-            if (match && match.index !== undefined) {
-              const pos = match.index - accumulated.length;
-              const safe = text.substring(0, pos);
-              if (safe) yield safe;
-            }
             if (controller) controller.abort(); 
             return; 
           }
