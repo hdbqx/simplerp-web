@@ -14,15 +14,12 @@ export class LLMClient {
   }
 
   /**
-   * 将描述转化为 MajicMix v7 偏好的英文 Tags
+   * 将场景转化为 SD 标签
    */
   async generateImageTags(description: string, settings: Settings): Promise<string> {
     const model = settings.model || (settings.model_list?.split(',')[0].trim());
     if (!model) return description;
-    const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. 
-    Convert descriptions into concise comma-separated English keywords. 
-    Focus on: facial features, clothing texture, pose, lighting, and environment. 
-    Output ONLY keywords, no sentences.`;
+    const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. Convert descriptions into concise comma-separated English keywords. Output ONLY keywords.`;
     try {
       const res = await this.client.chat.completions.create({
         model: model,
@@ -34,23 +31,21 @@ export class LLMClient {
   }
 
   /**
-   * 世界书扫描逻辑：深度 10 条消息，支持通配符 *
+   * 世界书注入逻辑：确保在末尾以增强执行性
    */
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
     if (!entries || entries.length === 0) return "";
     const contextText = (currentInput + " " + history.slice(-10).map(m => m.content).join(" ")).toLowerCase();
-    
     const hits = entries.filter((e: LorebookEntry) => {
         if (!e.isActive || !e.keywords) return false;
-        if (e.keywords.trim() === "*") return true; // 全局强制触发
+        if (e.keywords.trim() === "*") return true; 
         return e.keywords.split(/[,，]/).some((k: string) => {
             const trimmedK = k.trim().toLowerCase();
             return trimmedK.length > 0 && contextText.includes(trimmedK);
         });
     });
-
     if (hits.length === 0) return "";
-    return `\n\n### [WORLD SETTING / RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
+    return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
   }
 
   async *chatStream(
@@ -62,7 +57,6 @@ export class LLMClient {
     const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
     const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
     const currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
-
     if (!currentModel) { yield "\n[错误]: 未配置模型。"; return; }
 
     const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
@@ -70,12 +64,11 @@ export class LLMClient {
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = settings.user_name || "User";
 
-    // 构造 System Prompt：核心人设 + 记忆摘要 + 世界书(末尾)
-    let basePrompt = char.description + (char.summary ? `\n\n[Long-term Memory]: ${char.summary}` : "");
+    let basePrompt = char.description + (char.summary ? `\n\n[Long-term Memory Archive]:\n${char.summary}` : "");
     const lorebookInjection = this.scanLorebook(userInputs, history, lorebookEntries);
 
     if (isGroupMode) {
-      basePrompt = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]。严禁替他人发言。必须以 "${STOP_MARKER}" 结束。\n${basePrompt}`;
+      basePrompt = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]。必须以 "${STOP_MARKER}" 结束回复。\n${basePrompt}`;
     }
 
     const fullSystemContent = replaceVariables(basePrompt + lorebookInjection, settings, char);
@@ -105,31 +98,42 @@ export class LLMClient {
         temperature: settings.temperature || 0.8,
         stop: isGroupMode ? [STOP_MARKER] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
-
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || '';
         if (text) yield text.replace(STOP_MARKER, "");
       }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`;
-    }
+    } catch (e: any) { if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`; }
   }
 
-  async summarize(history: Message[], settings: Settings, oldSummary: string = ""): Promise<string> {
+  /**
+   * 修复后的增量总结方法：仅提取新事实，不重写旧内容
+   */
+  async summarizeRecent(history: Message[], settings: Settings): Promise<string> {
     const summaryModel = settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!summaryModel) throw new Error("No model");
-    const facts = history.filter(m => m.content && m.content.trim()).map(m => `${m.role}: ${m.content}`).slice(-40).join('\n');
-    if (!facts) return oldSummary;
+    if (!summaryModel) throw new Error("未配置总结模型");
+    const facts = history
+        .filter(m => m.content && m.content.trim() && !m.image)
+        .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
+        .slice(-40) 
+        .join('\n');
+    if (!facts) return "";
     
-    const prompt = `根据【新增对话】整合进【已有记忆】中。保持精简，重点记录关系变化、重要XP及关键剧情。
-    现有摘要：${oldSummary || "无"}
-    新增内容：\n${facts}\n请输出整合后的新摘要：`;
+    const prompt = `你是一个严谨的剧情记录员。请从以下【最近对话】中提取并概括出“新发生的关键剧情进展”。
+    要求：
+    1. 重点提取：新增的女性仆从/魂师（姓名、外貌特征、服饰、身份）、魂力等级变化、获得的新资源/物品、新的XP开发及调教进度。
+    2. 使用简短的条目格式。
+    3. 只输出新发生的进展，不要输出任何已有的历史背景。
+    
+    【最近对话】：
+    ${facts}
+    
+    新进展总结：`;
 
     const res = await this.client.chat.completions.create({
       model: summaryModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });
-    return res.choices[0]?.message?.content || oldSummary;
+    return res.choices[0]?.message?.content || "";
   }
 }
