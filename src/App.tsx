@@ -88,7 +88,8 @@ function App() {
     
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user'); // 过滤掉纯生图暂存
+    // 过滤掉本地暂存的图片消息，防止发送给 AI 导致 context 混乱
+    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
@@ -131,11 +132,6 @@ function App() {
     }
   };
 
-  /**
-   * 改进后的生图逻辑：
-   * 1. 移除 Hires. fix (高分辨率修复) 提升速度。
-   * 2. 默认不保存到数据库，仅作为本地消息显示。
-   */
   const handleGenImageAction = async () => {
     if (!settings?.sd_url) return alert("请在设置中配置 SD URL");
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
@@ -151,13 +147,13 @@ function App() {
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
-        steps: 20, // 降低步数提高速度
+        steps: 20, 
         cfg_scale: 7, 
         sampler_name: "Euler a", 
         width: 512, 
         height: 768, 
         restore_faces: false,
-        enable_hr: false, // 【改进】关闭高分辨率修复以获得极速体验
+        enable_hr: false, // 移除高分辨率修复
       };
 
       const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
@@ -168,7 +164,7 @@ function App() {
       const data = await res.json();
       const base64Img = `data:image/png;base64,${data.images[0]}`;
 
-      // 【改进】不调用 api.messages.add，仅更新本地状态
+      // 本地暂存显示，不入库
       const ephemeralMsg: Message = { 
           role: 'assistant', content: '', 
           image: base64Img, 
@@ -301,14 +297,27 @@ function App() {
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
                     {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                     {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                    <button className="hover:text-error" onClick={async ()=>{if(confirm("彻底删除该记录？")) { if(m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg=>msg.id!==m.id)); } else { setMessages(prev => prev.filter(msg=>msg.timestamp!==m.timestamp)); }}}><Trash2 size={10}/></button>
+                    
+                    {/* 修正后的删除逻辑 */}
+                    <button className="hover:text-error" onClick={async () => {
+                      if (confirm("彻底删除该记录？")) {
+                        if (m.id) {
+                          await api.messages.delete(m.id);
+                          setMessages(prev => prev.filter(msg => msg.id !== m.id));
+                        } else {
+                          setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp));
+                        }
+                      }
+                    }}>
+                      <Trash2 size={10}/>
+                    </button>
                 </div>
               </div>
 
               {m.image ? (
                 <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
                   <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                  {/* 【改进】暂存图片增加保存按钮 */}
+                  {/* 暂存图片保存按钮 */}
                   {!m.id && (
                     <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
                         <button 
@@ -516,10 +525,10 @@ function App() {
       {showGenModal && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box">
-                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图 (No Hires. fix)</h3>
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图 (无 Hires. fix)</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
                 <div className="modal-action flex gap-2">
-                    <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成 (极速版)</button>
+                    <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
                     <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
                 </div>
               </div>
