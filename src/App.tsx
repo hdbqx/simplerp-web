@@ -88,7 +88,7 @@ function App() {
     
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    // 过滤掉本地暂存的图片消息，防止发送给 AI 导致 context 混乱
+    // 过滤掉本地暂存的图片消息，防止发送给 AI 导致 Token 溢出或 Context 混乱
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
@@ -153,7 +153,7 @@ function App() {
         width: 512, 
         height: 768, 
         restore_faces: false,
-        enable_hr: false, // 移除高分辨率修复
+        enable_hr: false, // 移除高分辨率修复，追求极速
       };
 
       const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
@@ -164,7 +164,7 @@ function App() {
       const data = await res.json();
       const base64Img = `data:image/png;base64,${data.images[0]}`;
 
-      // 本地暂存显示，不入库
+      // 仅暂存，不写入数据库
       const ephemeralMsg: Message = { 
           role: 'assistant', content: '', 
           image: base64Img, 
@@ -260,11 +260,16 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
-            <button className="btn btn-sm btn-ghost text-error" title="清理库中所有历史图片" onClick={async () => {
-                if(confirm("确定清理数据库中所有历史图片？这能释放 D1 空间，不影响本地显示的暂存图片。")) {
-                    await api.messages.clearAllImages(); alert("清理完成");
+            
+            {/* 还原后的清空按钮：只清理聊天文字记录 */}
+            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
+                if(confirm("确定清空当前会话的聊天记录？这将不可逆。")) {
+                    const cid = viewMode === 'char' ? selectedCharId : undefined;
+                    const gid = viewMode === 'group' ? selectedGroupId : undefined;
+                    api.messages.clear(cid, gid).then(() => { setMessages([]); alert("已清空"); });
                 }
             }}><Eraser size={18}/></button>
+
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
@@ -298,9 +303,9 @@ function App() {
                     {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                     {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
                     
-                    {/* 修正后的删除逻辑 */}
+                    {/* 删除单条消息按钮 */}
                     <button className="hover:text-error" onClick={async () => {
-                      if (confirm("彻底删除该记录？")) {
+                      if (confirm("删除该条记录？")) {
                         if (m.id) {
                           await api.messages.delete(m.id);
                           setMessages(prev => prev.filter(msg => msg.id !== m.id));
@@ -317,7 +322,7 @@ function App() {
               {m.image ? (
                 <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
                   <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                  {/* 暂存图片保存按钮 */}
+                  {/* 未入库图片的保存按钮 */}
                   {!m.id && (
                     <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
                         <button 
@@ -327,6 +332,7 @@ function App() {
                                 try {
                                     const res = await api.messages.add(m);
                                     setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg));
+                                    alert("已保存");
                                 } catch (err) { alert("保存失败"); }
                             }}
                         >
@@ -421,6 +427,24 @@ function App() {
                                       ))}
                                   </tbody>
                               </table>
+                          </div>
+                      </section>
+                      {/* 【新位置】图片清理按钮放置于此 */}
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-error uppercase">数据管理与空间维护</h4>
+                          <div className="p-4 border border-error/20 rounded-xl bg-error/5 flex justify-between items-center gap-4">
+                              <div className="flex-1">
+                                  <p className="text-xs font-bold text-error">清理数据库图片</p>
+                                  <p className="text-[10px] opacity-60 mt-1">永久删除 D1 数据库中存储的所有图片消息。这可以显著释放数据库空间。不影响当前页面已加载的暂存图片。</p>
+                              </div>
+                              <button className="btn btn-error btn-sm shadow-md" onClick={async () => {
+                                  if(confirm("确定彻底删除数据库中存储的所有历史图片消息？此操作不可逆。")) {
+                                      await api.messages.clearAllImages();
+                                      alert("清理成功，数据库空间已释放。");
+                                  }
+                              }}>
+                                  <Eraser size={14} className="mr-1"/> 清理图片
+                              </button>
                           </div>
                       </section>
                   </div>
@@ -525,7 +549,7 @@ function App() {
       {showGenModal && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box">
-                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图 (无 Hires. fix)</h3>
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
