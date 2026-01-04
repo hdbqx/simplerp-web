@@ -1186,7 +1186,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, HardDrive, Users, RefreshCw, Square, Save, Eraser, Sparkles 
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles 
 } from 'lucide-react';
 
 function App() {
@@ -1245,7 +1245,6 @@ function App() {
       api.groups.getMembers(selectedGroupId).then(ids => {
           setGroupMemberIds(ids);
           api.messages.list(undefined, selectedGroupId).then(setMessages);
-          // 剧场模式默认加载第一个成员的世界书
           if(ids.length > 0) api.lorebook.list(ids[0]).then(setLorebookEntries);
       });
     }
@@ -1269,7 +1268,8 @@ function App() {
     
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    const currentHistory = historyOverride || messages;
+    // 过滤掉本地暂存的图片消息，防止发送给 AI 导致 Token 溢出或 Context 混乱
+    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
@@ -1327,12 +1327,13 @@ function App() {
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
-        steps: 30, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false,
-        enable_hr: true, hr_scale: 2, hr_upscaler: "4x_NMKD-Superscale-SP_178000_G", hr_second_pass_steps: 15, denoising_strength: 0.35,
-        override_settings: { 
-            "sd_model_checkpoint": "majicmixRealistic_v7.safetensors", 
-            "sd_vae": "vae-ft-mse-840000-ema-pruned.safetensors" 
-        }
+        steps: 20, 
+        cfg_scale: 7, 
+        sampler_name: "Euler a", 
+        width: 512, 
+        height: 768, 
+        restore_faces: false,
+        enable_hr: false, // 移除高分辨率修复，追求极速
       };
 
       const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
@@ -1341,12 +1342,18 @@ function App() {
       });
       if (!res.ok) throw new Error("SD 后端未响应");
       const data = await res.json();
-      const dbRes = await api.messages.add({ 
+      const base64Img = `data:image/png;base64,${data.images[0]}`;
+
+      // 仅暂存，不写入数据库
+      const ephemeralMsg: Message = { 
           role: 'assistant', content: '', 
-          image: `data:image/png;base64,${data.images[0]}`, 
-          timestamp: Date.now(), group_id: selectedGroupId, char_id: selectedCharId 
-      });
-      setMessages(prev => [...prev, { role: 'assistant', content: '', image: `data:image/png;base64,${data.images[0]}`, timestamp: Date.now(), id: dbRes.id }]);
+          image: base64Img, 
+          timestamp: Date.now(), 
+          group_id: selectedGroupId, 
+          char_id: selectedCharId 
+      };
+      setMessages(prev => [...prev, ephemeralMsg]);
+
     } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsTyping(false); }
   };
 
@@ -1433,13 +1440,16 @@ function App() {
                 {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             )}
+            
+            {/* 还原后的清空按钮：只清理聊天文字记录 */}
             <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
-                if(confirm("确定清空当前对话？这将不可逆。")) {
+                if(confirm("确定清空当前会话的聊天记录？这将不可逆。")) {
                     const cid = viewMode === 'char' ? selectedCharId : undefined;
                     const gid = viewMode === 'group' ? selectedGroupId : undefined;
                     api.messages.clear(cid, gid).then(() => { setMessages([]); alert("已清空"); });
                 }
             }}><Eraser size={18}/></button>
+
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
@@ -1466,16 +1476,52 @@ function App() {
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
           {messages.map((m, idx) => (
-            <div key={`${m.id}-${idx}`} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'} group animate-message`}>
+            <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'} group animate-message`}>
               <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
                 {m.role === 'user' ? '我' : (characters.find(c=>c.id===m.char_id)?.name || 'AI')}
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
                     {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                     {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                    <button className="hover:text-error" onClick={async ()=>{if(confirm("彻底删除该记录？")) { if(m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg=>msg.id!==m.id)); }}}}><Trash2 size={10}/></button>
+                    
+                    {/* 删除单条消息按钮 */}
+                    <button className="hover:text-error" onClick={async () => {
+                      if (confirm("删除该条记录？")) {
+                        if (m.id) {
+                          await api.messages.delete(m.id);
+                          setMessages(prev => prev.filter(msg => msg.id !== m.id));
+                        } else {
+                          setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp));
+                        }
+                      }
+                    }}>
+                      <Trash2 size={10}/>
+                    </button>
                 </div>
               </div>
-              {m.image ? <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden"><img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/></div> : (
+
+              {m.image ? (
+                <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
+                  <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
+                  {/* 未入库图片的保存按钮 */}
+                  {!m.id && (
+                    <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                        <button 
+                            className="btn btn-circle btn-xs btn-primary shadow-lg" 
+                            title="保存到数据库"
+                            onClick={async () => {
+                                try {
+                                    const res = await api.messages.add(m);
+                                    setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg));
+                                    alert("已保存");
+                                } catch (err) { alert("保存失败"); }
+                            }}
+                        >
+                            <Save size={12}/>
+                        </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <div className={`chat-bubble shadow-lg border ${m.role === 'user' ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                   {editingMsgId === m.id ? (
                       <div className="flex flex-col gap-2 min-w-[200px]">
@@ -1563,6 +1609,24 @@ function App() {
                               </table>
                           </div>
                       </section>
+                      {/* 【新位置】图片清理按钮放置于此 */}
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-error uppercase">数据管理与空间维护</h4>
+                          <div className="p-4 border border-error/20 rounded-xl bg-error/5 flex justify-between items-center gap-4">
+                              <div className="flex-1">
+                                  <p className="text-xs font-bold text-error">清理数据库图片</p>
+                                  <p className="text-[10px] opacity-60 mt-1">永久删除 D1 数据库中存储的所有图片消息。这可以显著释放数据库空间。不影响当前页面已加载的暂存图片。</p>
+                              </div>
+                              <button className="btn btn-error btn-sm shadow-md" onClick={async () => {
+                                  if(confirm("确定彻底删除数据库中存储的所有历史图片消息？此操作不可逆。")) {
+                                      await api.messages.clearAllImages();
+                                      alert("清理成功，数据库空间已释放。");
+                                  }
+                              }}>
+                                  <Eraser size={14} className="mr-1"/> 清理图片
+                              </button>
+                          </div>
+                      </section>
                   </div>
                   <div className="p-4 border-t bg-base-200"><button className="btn btn-primary btn-block" onClick={async ()=>{await api.settings.update(settings!); setShowSettings(false); loadData();}}>保存配置</button></div>
               </div>
@@ -1624,7 +1688,7 @@ function App() {
           </div>
       )}
 
-      {/* 4. 世界书编辑器 (含 isActive 修复) */}
+      {/* 4. 世界书编辑器 */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[75vh] flex flex-col p-0 overflow-hidden">
@@ -1665,10 +1729,10 @@ function App() {
       {showGenModal && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box">
-                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 高清生图 (MajicMix v7)</h3>
+                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
                 <div className="modal-action flex gap-2">
-                    <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成 (Hires. fix)</button>
+                    <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
                     <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>
                 </div>
               </div>
