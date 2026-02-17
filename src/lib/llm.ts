@@ -1,28 +1,39 @@
 import OpenAI from 'openai';
-import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
+import type { Character, Settings, Message, LorebookEntry } from './db';
 import { replaceVariables } from './variables'; 
 
 export class LLMClient {
   private client: OpenAI;
 
-  constructor(settings: Settings) {
+  // 1. 构造函数改为直接接收 Base 和 Key
+  constructor(apiBase: string, apiKey: string) {
     this.client = new OpenAI({ 
-      baseURL: settings.api_base, 
-      apiKey: settings.api_key, 
+      baseURL: apiBase, 
+      apiKey: apiKey, 
       dangerouslyAllowBrowser: true 
     });
+  }
+
+  // 2. 新增：获取模型列表
+  async fetchModels(): Promise<string[]> {
+    try {
+      const list = await this.client.models.list();
+      return list.data.map((m: any) => m.id).sort();
+    } catch (e: any) {
+      console.error("Fetch Models Error:", e);
+      return [];
+    }
   }
 
   /**
    * 将场景转化为 SD 标签
    */
-  async generateImageTags(description: string, settings: Settings): Promise<string> {
-    const model = settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!model) return description;
+  async generateImageTags(description: string, modelName: string): Promise<string> {
+    if (!modelName) return description;
     const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. Convert descriptions into concise comma-separated English keywords. Output ONLY keywords.`;
     try {
       const res = await this.client.chat.completions.create({
-        model: model,
+        model: modelName,
         messages: [{ role: 'system', content: systemInstruction }, { role: 'user', content: `Convert this to tags: ${description}` }],
         temperature: 0.3,
       });
@@ -31,7 +42,7 @@ export class LLMClient {
   }
 
   /**
-   * 世界书注入逻辑：确保在末尾以增强执行性
+   * 世界书注入逻辑
    */
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
     if (!entries || entries.length === 0) return "";
@@ -48,18 +59,19 @@ export class LLMClient {
     return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
   }
 
+  // 3. 对话流：逻辑简化，移除配置查找，直接使用 activeModel
   async *chatStream(
-    char: Character, history: Message[], userInputs: string, settings: Settings, 
-    lorebookEntries: LorebookEntry[] = [], groupCtx?: any, presets: ApiPreset[] = [],
+    char: Character, 
+    history: Message[], 
+    userInputs: string, 
+    settings: Settings, // 仅用于获取 user_name
+    modelName: string,  // 明确传入的模型
+    lorebookEntries: LorebookEntry[] = [], 
+    groupCtx?: any, 
     controller?: AbortController 
   ) {
-    const preset = presets.find((p: ApiPreset) => p.id === char.api_preset_id);
-    const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
-    const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
-    const currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!currentModel) { yield "\n[错误]: 未配置模型。"; return; }
+    if (!modelName) { yield "\n[错误]: 未选择模型，请在顶部导航栏选择。"; return; }
 
-    const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
     const isGroupMode = !!groupCtx;
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = settings.user_name || "User";
@@ -91,13 +103,14 @@ export class LLMClient {
     }
 
     try {
-      const stream = await dynamicClient.chat.completions.create({
-        model: currentModel, 
+      const stream = await this.client.chat.completions.create({
+        model: modelName, 
         messages: [{ role: 'system', content: fullSystemContent }, ...chatMessages],
         stream: true, 
         temperature: settings.temperature || 0.8,
         stop: isGroupMode ? [STOP_MARKER] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
+      
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || '';
         if (text) yield text.replace(STOP_MARKER, "");
@@ -105,12 +118,8 @@ export class LLMClient {
     } catch (e: any) { if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`; }
   }
 
-  /**
-   * 修复后的增量总结方法：仅提取新事实，不重写旧内容
-   */
-  async summarizeRecent(history: Message[], settings: Settings): Promise<string> {
-    const summaryModel = settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!summaryModel) throw new Error("未配置总结模型");
+  async summarizeRecent(history: Message[], modelName: string): Promise<string> {
+    if (!modelName) throw new Error("未配置总结模型");
     const facts = history
         .filter(m => m.content && m.content.trim() && !m.image)
         .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
@@ -130,7 +139,7 @@ export class LLMClient {
     新进展总结：`;
 
     const res = await this.client.chat.completions.create({
-      model: summaryModel,
+      model: modelName,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });
