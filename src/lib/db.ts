@@ -1,6 +1,6 @@
 // src/lib/db.ts
 
-// 1. 角色接口（旧的 api_base_override 等字段已废弃，接口中保留但标记为可选/不使用）
+// 1. 角色接口
 export interface Character { 
     id?: number; 
     name: string; 
@@ -8,7 +8,7 @@ export interface Character {
     first_message: string; 
     summary?: string; 
     created_at?: number;
-    // 以下字段在 UI 中不再暴露，仅作为兼容保留
+    // 兼容字段
     model_id?: string; 
     api_base_override?: string; 
     api_key_override?: string; 
@@ -28,7 +28,7 @@ export interface Message {
 export interface Group { id?: number; name: string; description: string; memberIds?: number[]; }
 export interface ApiPreset { id?: number; name: string; api_base: string; api_key: string; }
 
-// 2. 设置接口重构：移除全局 api_base/key，新增状态字段
+// 2. 设置接口
 export interface Settings { 
     id?: number; 
     // 基础配置
@@ -38,7 +38,10 @@ export interface Settings {
     baidu_secret?: string; 
     temperature?: number; 
     
-    // 新增：前端状态持久化字段
+    // 【恢复】手动配置的模型列表字符串 (逗号分隔)
+    model_list?: string;
+
+    // 前端状态持久化字段
     active_preset_id?: number; 
     active_model_id?: string;
 }
@@ -53,7 +56,7 @@ export const api = {
     list: () => fetch(`${API}/characters`).then(r => r.json() as Promise<Character[]>),
     add: (c: Character) => fetch(`${API}/characters`, { method: 'POST', headers, body: JSON.stringify(c) }).then(r=>r.json() as Promise<{id: number}>),
     
-    // 【新增】复制接口
+    // 复制接口
     duplicate: (sourceId: number, newName: string) => 
         fetch(`${API}/characters?action=duplicate`, { 
             method: 'POST', 

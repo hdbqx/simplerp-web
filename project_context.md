@@ -523,18 +523,57 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 ## File: functions\api\characters.ts
 
 ```ts
+// functions/api/characters.ts
+
 interface Env { DB: D1Database; }
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { results } = await context.env.DB.prepare("SELECT * FROM characters ORDER BY id ASC").all();
   return Response.json(results);
 };
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
+  const url = new URL(context.request.url);
+  const action = url.searchParams.get('action');
+
+  // 【新增】复制功能：Deep Copy Character & Lorebook
+  if (action === 'duplicate') {
+      try {
+          const body: any = await context.request.json();
+          const { source_id, new_name } = body;
+          
+          if (!source_id || !new_name) return new Response("Missing params", { status: 400 });
+
+          // 1. 复制角色本体 (复制 名字、描述、开场白、Summary)，生成新的 created_at
+          const { meta } = await context.env.DB.prepare(
+              `INSERT INTO characters (name, description, first_message, summary, created_at) 
+               SELECT ?, description, first_message, summary, ? 
+               FROM characters WHERE id = ?`
+          ).bind(new_name, Date.now(), source_id).run();
+
+          const newCharId = meta.last_row_id;
+
+          // 2. 复制关联的世界书
+          await context.env.DB.prepare(
+              `INSERT INTO lorebook (char_id, keywords, content, is_active) 
+               SELECT ?, keywords, content, is_active 
+               FROM lorebook WHERE char_id = ?`
+          ).bind(newCharId, source_id).run();
+
+          return Response.json({ id: newCharId, message: "Duplicated successfully" });
+      } catch (e: any) {
+          return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+      }
+  }
+
+  // 普通新建逻辑
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare(
     "INSERT INTO characters (name, description, first_message, summary, created_at) VALUES (?, ?, ?, ?, ?)"
   ).bind(body.name, body.description, body.first_message, body.summary, Date.now()).run();
   return Response.json({ id: meta.last_row_id });
 };
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const id = url.searchParams.get('id');
@@ -545,7 +584,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     }
     return new Response("Deleted");
 };
-// Update logic
+
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   const body: any = await context.request.json();
   const { id, ...updates } = body;
@@ -867,7 +906,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles 
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy 
 } from 'lucide-react';
 
 function App() {
@@ -876,6 +915,13 @@ function App() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
+  
+  // --- 新增：API 全局状态 ---
+  const [activePresetId, setActivePresetId] = useState<number | undefined>();
+  const [activeModel, setActiveModel] = useState<string>("");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedGroupId, setSelectedGroupId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
@@ -911,10 +957,53 @@ function App() {
             api.presets.list()
         ]);
         setCharacters(c); setGroups(g); setSettings(s); setPresets(p);
+        
+        // 恢复上次选择的 Preset 和 Model
+        if (s.active_preset_id && p.some(pre => pre.id === s.active_preset_id)) {
+            setActivePresetId(s.active_preset_id);
+            // 尝试加载模型列表
+            const currentPreset = p.find(pre => pre.id === s.active_preset_id);
+            if(currentPreset) {
+                await refreshModels(currentPreset.api_base, currentPreset.api_key, s.active_model_id);
+            }
+        }
     } catch(e) { console.error(e); } finally { setIsLoading(false); }
   };
 
   useEffect(() => { loadData(); }, []);
+
+  // --- API 状态管理逻辑 ---
+  const refreshModels = async (base: string, key: string, keepModelId?: string) => {
+      setIsFetchingModels(true);
+      const llm = new LLMClient(base, key);
+      const models = await llm.fetchModels();
+      setAvailableModels(models);
+      setIsFetchingModels(false);
+      
+      if (keepModelId && models.includes(keepModelId)) {
+          setActiveModel(keepModelId);
+      } else if (models.length > 0) {
+          setActiveModel(models[0]);
+          if(settings) api.settings.update({ ...settings, active_model_id: models[0] });
+      } else {
+          // 如果获取失败或者列表为空，允许用户手动输入的兜底（UI上通常显示空，这里可以保留旧值）
+          if(keepModelId) setActiveModel(keepModelId);
+      }
+  };
+
+  const handlePresetChange = async (presetIdStr: string) => {
+      const pid = parseInt(presetIdStr);
+      setActivePresetId(pid);
+      if(settings) await api.settings.update({ ...settings, active_preset_id: pid });
+      
+      const p = presets.find(pre => pre.id === pid);
+      if (p) await refreshModels(p.api_base, p.api_key);
+  };
+
+  const handleModelChange = async (modelId: string) => {
+      setActiveModel(modelId);
+      if(settings) await api.settings.update({ ...settings, active_model_id: modelId });
+  };
 
   // --- 切换角色/剧场时的监听 ---
   useEffect(() => {
@@ -944,29 +1033,35 @@ function App() {
 
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
+    if (!activePresetId || !activeModel) { return alert("请先在顶部导航栏选择 API 预设和模型！"); }
+    
+    const currentPreset = presets.find(p => p.id === activePresetId);
+    if (!currentPreset) { return alert("无效的 API 预设"); }
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
     
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    // 过滤掉本地暂存的图片消息，防止发送给 AI 导致 Token 溢出或 Context 混乱
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
-    const llm = new LLMClient(settings);
+    // 使用当前选中的配置实例化
+    const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
     let fullContent = "";
 
     try {
       const stream = llm.chatStream(
         char, currentHistory, textOverride || "", 
-        settings, lorebookEntries, 
+        settings, activeModel, // 传入当前 activeModel
+        lorebookEntries, 
         viewMode === 'group' ? {
           name: groups.find(g => g.id === selectedGroupId)?.name || "",
           description: groups.find(g => g.id === selectedGroupId)?.description || "",
           members: characters.filter(c => groupMemberIds.includes(c.id!))
         } : undefined,
-        presets, controller
+        controller
       );
 
       for await (const chunk of stream) {
@@ -995,26 +1090,23 @@ function App() {
 
   const handleGenImageAction = async () => {
     if (!settings?.sd_url) return alert("请在设置中配置 SD URL");
+    if (!activePresetId || !activeModel) return alert("请先选择 API 模型用于生成 Prompt");
+
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
     if (!rawPrompt) return;
 
     setShowGenModal(false);
     setIsTyping(true);
     try {
-      const llm = new LLMClient(settings!);
-      const tags = await llm.generateImageTags(rawPrompt, settings!);
+      const currentPreset = presets.find(p => p.id === activePresetId)!;
+      const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
+      const tags = await llm.generateImageTags(rawPrompt, activeModel);
       const finalTags = settings!.baidu_appid ? await translateToEnglish(tags, settings!.baidu_appid, settings!.baidu_secret!) : tags;
       
       const payload = {
         prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
-        steps: 20, 
-        cfg_scale: 7, 
-        sampler_name: "Euler a", 
-        width: 512, 
-        height: 768, 
-        restore_faces: false,
-        enable_hr: false, // 移除高分辨率修复，追求极速
+        steps: 20, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false, enable_hr: false,
       };
 
       const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
@@ -1025,13 +1117,9 @@ function App() {
       const data = await res.json();
       const base64Img = `data:image/png;base64,${data.images[0]}`;
 
-      // 仅暂存，不写入数据库
       const ephemeralMsg: Message = { 
-          role: 'assistant', content: '', 
-          image: base64Img, 
-          timestamp: Date.now(), 
-          group_id: selectedGroupId, 
-          char_id: selectedCharId 
+          role: 'assistant', content: '', image: base64Img, timestamp: Date.now(), 
+          group_id: selectedGroupId, char_id: selectedCharId 
       };
       setMessages(prev => [...prev, ephemeralMsg]);
 
@@ -1087,8 +1175,20 @@ function App() {
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
-            <span className="font-bold truncate">{c.name}</span>
-            <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity" onClick={(e) => { e.stopPropagation(); if(confirm(`删除角色 ${c.name}？`)) api.characters.delete(c.id!).then(() => loadData()); }} />
+            <span className="font-bold truncate max-w-[140px]">{c.name}</span>
+            <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity items-center">
+                {/* 复制按钮 */}
+                <button className="hover:text-info p-1" title="创建副本" onClick={async (e) => {
+                    e.stopPropagation();
+                    const newName = prompt("新角色名称:", `${c.name} (Copy)`);
+                    if(newName) { await api.characters.duplicate(c.id!, newName); loadData(); }
+                }}><Copy size={14}/></button>
+                {/* 删除按钮 */}
+                <button className="hover:text-error p-1" title="删除" onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if(confirm(`删除角色 ${c.name}？`)) api.characters.delete(c.id!).then(() => loadData()); 
+                }}><Trash2 size={14} /></button>
+            </div>
           </div>
         )) : groups.map(g => (
           <div key={g.id} onClick={() => { setSelectedGroupId(g.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedGroupId === g.id ? 'bg-secondary text-secondary-content shadow-lg' : 'hover:bg-base-300'}`}>
@@ -1102,8 +1202,6 @@ function App() {
     </div>
   );
 
-  const modelOptions = settings?.model_list?.split(',').map(m => m.trim()).filter(m => m) || [];
-
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
@@ -1111,34 +1209,37 @@ function App() {
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
         {/* Navbar */}
-        <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20">
+        <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20 min-h-[3.5rem]">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
-          <div className="flex-1 font-bold truncate px-2">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "请选择"}</div>
-          <div className="flex-none gap-2">
-            {settings && (
-              <select className="select select-bordered select-sm max-w-[6rem] md:max-w-[10rem] text-xs" value={settings.model || ''} onChange={async (e) => { const newM = e.target.value; setSettings({...settings, model: newM}); await api.settings.update({...settings, model: newM}); }}>
-                <option value="">未选模型</option>
-                {modelOptions.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            )}
-            
-            {/* 还原后的清空按钮：只清理聊天文字记录 */}
-            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
-                if(confirm("确定清空当前会话的聊天记录？这将不可逆。")) {
-                    const cid = viewMode === 'char' ? selectedCharId : undefined;
-                    const gid = viewMode === 'group' ? selectedGroupId : undefined;
-                    api.messages.clear(cid, gid).then(() => { setMessages([]); alert("已清空"); });
-                }
-            }}><Eraser size={18}/></button>
+          <div className="flex-1 font-bold truncate px-2 hidden md:block">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "SimpleRP"}</div>
+          
+          {/* API Selector (Top Bar) */}
+          <div className="flex-none flex items-center gap-2 mr-2">
+            <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
+                <option value="" disabled>选择源...</option>
+                {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <div className="join">
+                <select className="select select-bordered select-sm join-item max-w-[10rem] text-xs" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
+                    {availableModels.length === 0 && <option value="">无模型/刷新</option>}
+                    {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <button className={`btn btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型列表" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
+            </div>
+          </div>
 
+          <div className="flex-none gap-2">
+            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
+                    if (!activePresetId || !activeModel) return alert("请先选择模型");
                     try {
                         setIsTyping(true);
                         const char = characters.find(c => c.id === selectedCharId);
-                        const llm = new LLMClient(settings!);
-                        const fragment = await llm.summarizeRecent(messages, settings!);
+                        const currentPreset = presets.find(p => p.id === activePresetId)!;
+                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
+                        const fragment = await llm.summarizeRecent(messages, activeModel);
                         if(!fragment) return alert("没有检测到新剧情。");
                         const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
                         const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
@@ -1163,52 +1264,18 @@ function App() {
                 <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
                     {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
                     {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                    
-                    {/* 删除单条消息按钮 */}
-                    <button className="hover:text-error" onClick={async () => {
-                      if (confirm("删除该条记录？")) {
-                        if (m.id) {
-                          await api.messages.delete(m.id);
-                          setMessages(prev => prev.filter(msg => msg.id !== m.id));
-                        } else {
-                          setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp));
-                        }
-                      }
-                    }}>
-                      <Trash2 size={10}/>
-                    </button>
+                    <button className="hover:text-error" onClick={async () => { if (confirm("删除该条记录？")) { if (m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg => msg.id !== m.id)); } else { setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp)); } } }}><Trash2 size={10}/></button>
                 </div>
               </div>
-
               {m.image ? (
                 <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
                   <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                  {/* 未入库图片的保存按钮 */}
-                  {!m.id && (
-                    <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
-                        <button 
-                            className="btn btn-circle btn-xs btn-primary shadow-lg" 
-                            title="保存到数据库"
-                            onClick={async () => {
-                                try {
-                                    const res = await api.messages.add(m);
-                                    setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg));
-                                    alert("已保存");
-                                } catch (err) { alert("保存失败"); }
-                            }}
-                        >
-                            <Save size={12}/>
-                        </button>
-                    </div>
-                  )}
+                  {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
                 </div>
               ) : (
                 <div className={`chat-bubble shadow-lg border ${m.role === 'user' ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                   {editingMsgId === m.id ? (
-                      <div className="flex flex-col gap-2 min-w-[200px]">
-                          <textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/>
-                          <div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div>
-                      </div>
+                      <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
                   ) : <div className="prose prose-sm break-words"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
                 </div>
               )}
@@ -1223,19 +1290,13 @@ function App() {
           <div className="max-w-4xl mx-auto flex flex-col gap-2">
             {viewMode === 'group' && selectedGroupId && (
               <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (
-                  <button key={m.id} onClick={() => triggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">@{m.name}</button>
-                ))}
+                {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (<button key={m.id} onClick={() => triggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">@{m.name}</button>))}
               </div>
             )}
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
               <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
               <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
-              {isTyping ? (
-                  <button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>
-              ) : (
-                  <button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>
-              )}
+              {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
             </div>
           </div>
         </div>
@@ -1243,9 +1304,7 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* --- 全量弹窗模块 --- */}
-
-      {/* 1. 设置面板 */}
+      {/* 1. 设置面板 (已简化) */}
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -1259,16 +1318,8 @@ function App() {
                           </div>
                       </section>
                       <section>
-                          <h4 className="text-sm font-black mb-3 text-primary uppercase">全局 API</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <input className="input input-bordered" placeholder="API BASE" value={settings.api_base} onChange={e=>setSettings({...settings, api_base:e.target.value})} />
-                            <input className="input input-bordered" placeholder="API KEY" type="password" value={settings.api_key} onChange={e=>setSettings({...settings, api_key:e.target.value})} />
-                          </div>
-                          <textarea className="textarea textarea-bordered w-full text-xs h-20 mt-4" placeholder="模型列表 (用逗号隔开)" value={settings.model_list} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
-                      </section>
-                      <section>
                           <div className="flex justify-between items-end mb-3">
-                              <h4 className="text-sm font-black text-primary uppercase">API 预设库</h4>
+                              <h4 className="text-sm font-black text-primary uppercase">API 预设库 (用于顶部导航栏切换)</h4>
                               <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "新预设", api_base: "", api_key: ""}).then(() => loadData())}>+ 新增</button>
                           </div>
                           <div className="overflow-x-auto border border-base-300 rounded-xl">
@@ -1290,22 +1341,11 @@ function App() {
                               </table>
                           </div>
                       </section>
-                      {/* 【新位置】图片清理按钮放置于此 */}
                       <section>
-                          <h4 className="text-sm font-black mb-3 text-error uppercase">数据管理与空间维护</h4>
+                          <h4 className="text-sm font-black mb-3 text-error uppercase">数据管理</h4>
                           <div className="p-4 border border-error/20 rounded-xl bg-error/5 flex justify-between items-center gap-4">
-                              <div className="flex-1">
-                                  <p className="text-xs font-bold text-error">清理数据库图片</p>
-                                  <p className="text-[10px] opacity-60 mt-1">永久删除 D1 数据库中存储的所有图片消息。这可以显著释放数据库空间。不影响当前页面已加载的暂存图片。</p>
-                              </div>
-                              <button className="btn btn-error btn-sm shadow-md" onClick={async () => {
-                                  if(confirm("确定彻底删除数据库中存储的所有历史图片消息？此操作不可逆。")) {
-                                      await api.messages.clearAllImages();
-                                      alert("清理成功，数据库空间已释放。");
-                                  }
-                              }}>
-                                  <Eraser size={14} className="mr-1"/> 清理图片
-                              </button>
+                              <div className="flex-1"><p className="text-xs font-bold text-error">清理数据库图片</p><p className="text-[10px] opacity-60 mt-1">永久删除 D1 数据库中存储的所有图片消息。</p></div>
+                              <button className="btn btn-error btn-sm shadow-md" onClick={async () => { if(confirm("确定清理图片？")) { await api.messages.clearAllImages(); alert("清理成功"); } }}><Eraser size={14} className="mr-1"/> 清理图片</button>
                           </div>
                       </section>
                   </div>
@@ -1314,24 +1354,12 @@ function App() {
           </div>
       )}
 
-      {/* 2. 角色编辑器 */}
+      {/* 2. 角色编辑器 (已移除 API 覆盖) */}
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">角色档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="form-control"><label className="label font-bold text-xs">专用模型</label>
-                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.model_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, model_id:e.target.value}:c))}>
-                                <option value="">全局默认</option>{modelOptions.map(m=><option key={m} value={m}>{m}</option>)}
-                            </select>
-                        </div>
-                        <div className="form-control"><label className="label font-bold text-xs">API 预设</label>
-                            <select className="select select-bordered select-sm" value={characters.find(c=>c.id===selectedCharId)?.api_preset_id || ""} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, api_preset_id:parseInt(e.target.value)}:c))}>
-                                <option value="">全局设置</option>{presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                        </div>
-                      </div>
                       <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
                       <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
                       <div className="form-control"><label className="label font-bold text-xs text-primary">长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
@@ -1341,7 +1369,7 @@ function App() {
           </div>
       )}
 
-      {/* 3. 剧场编辑器 */}
+      {/* 3. 剧场编辑器 (保持不变) */}
       {showGroupEdit && selectedGroupId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -1354,10 +1382,7 @@ function App() {
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                               {characters.map(c => (
                                   <label key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${groupMemberIds.includes(c.id!) ? 'border-primary bg-primary/10' : 'border-base-300'}`}>
-                                      <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={groupMemberIds.includes(c.id!)} onChange={e => {
-                                          const next = e.target.checked ? [...groupMemberIds, c.id!] : groupMemberIds.filter(id => id !== c.id);
-                                          setGroupMemberIds(next);
-                                      }} />
+                                      <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={groupMemberIds.includes(c.id!)} onChange={e => { const next = e.target.checked ? [...groupMemberIds, c.id!] : groupMemberIds.filter(id => id !== c.id); setGroupMemberIds(next); }} />
                                       <span className="text-sm truncate font-bold">{c.name}</span>
                                   </label>
                               ))}
@@ -1369,7 +1394,7 @@ function App() {
           </div>
       )}
 
-      {/* 4. 世界书编辑器 */}
+      {/* 4. 世界书编辑器 (保持不变) */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[75vh] flex flex-col p-0 overflow-hidden">
@@ -1386,15 +1411,7 @@ function App() {
                                 <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebook.update(e.id!, {content: evt.target.value})} />
                                 <div className="flex gap-2 items-center">
                                     <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebook.update(e.id!, {keywords: evt.target.value})} />
-                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full">
-                                        <span className="text-[10px] font-bold">启用</span>
-                                        <input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.isActive} onChange={(evt) => {
-                                            const val = evt.target.checked;
-                                            api.lorebook.update(e.id!, { isActive: val }).then(() => {
-                                                setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, isActive: val} : item));
-                                            });
-                                        }} />
-                                    </div>
+                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.isActive} onChange={(evt) => {const val = evt.target.checked; api.lorebook.update(e.id!, { isActive: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, isActive: val} : item));});}} /></div>
                                     <button className="btn btn-sm btn-error" onClick={()=>api.lorebook.delete(e.id!).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}><Trash2 size={14}/></button>
                                 </div>
                             </div>
@@ -1533,24 +1550,49 @@ createRoot(document.getElementById('root')!).render(
 ```ts
 // src/lib/db.ts
 
-export interface Character { id?: number; name: string; description: string; first_message: string; summary?: string; model_id?: string; api_base_override?: string; api_key_override?: string; api_preset_id?: number; }
+// 1. 角色接口（旧的 api_base_override 等字段已废弃，接口中保留但标记为可选/不使用）
+export interface Character { 
+    id?: number; 
+    name: string; 
+    description: string; 
+    first_message: string; 
+    summary?: string; 
+    created_at?: number;
+    // 以下字段在 UI 中不再暴露，仅作为兼容保留
+    model_id?: string; 
+    api_base_override?: string; 
+    api_key_override?: string; 
+    api_preset_id?: number; 
+}
+
 export interface Message { 
     id?: number; 
     char_id?: number; 
     group_id?: number; 
-    role: 'user' | 'assistant' | 'system'; // 允许 system 角色
+    role: 'user' | 'assistant' | 'system'; 
     content: string; 
     image?: string; 
     timestamp: number; 
 }
+
 export interface Group { id?: number; name: string; description: string; memberIds?: number[]; }
 export interface ApiPreset { id?: number; name: string; api_base: string; api_key: string; }
+
+// 2. 设置接口重构：移除全局 api_base/key，新增状态字段
 export interface Settings { 
-    id?: number; api_base?: string; api_key?: string; model?: string; 
-    model_list?: string; sd_url?: string; baidu_appid?: string; 
-    baidu_secret?: string; temperature?: number; 
+    id?: number; 
+    // 基础配置
     user_name?: string; 
+    sd_url?: string; 
+    baidu_appid?: string; 
+    baidu_secret?: string; 
+    temperature?: number; 
+    
+    // 新增：前端状态持久化字段
+    active_preset_id?: number; 
+    active_model_id?: string;
 }
+
 export interface LorebookEntry { id?: number; char_id: number; keywords: string; content: string; isActive: boolean; }
 
 const API = '/api';
@@ -1560,6 +1602,15 @@ export const api = {
   characters: {
     list: () => fetch(`${API}/characters`).then(r => r.json() as Promise<Character[]>),
     add: (c: Character) => fetch(`${API}/characters`, { method: 'POST', headers, body: JSON.stringify(c) }).then(r=>r.json() as Promise<{id: number}>),
+    
+    // 【新增】复制接口
+    duplicate: (sourceId: number, newName: string) => 
+        fetch(`${API}/characters?action=duplicate`, { 
+            method: 'POST', 
+            headers, 
+            body: JSON.stringify({ source_id: sourceId, new_name: newName }) 
+        }).then(r => r.json() as Promise<{id: number}>),
+
     update: (id: number, c: Partial<Character>) => fetch(`${API}/characters`, { method: 'PUT', headers, body: JSON.stringify({ id, ...c }) }),
     delete: (id: number) => fetch(`${API}/characters?id=${id}`, { method: 'DELETE' }),
   },
@@ -1611,30 +1662,41 @@ export const api = {
 
 ```ts
 import OpenAI from 'openai';
-import type { Character, Settings, Message, LorebookEntry, ApiPreset } from './db';
+import type { Character, Settings, Message, LorebookEntry } from './db';
 import { replaceVariables } from './variables'; 
 
 export class LLMClient {
   private client: OpenAI;
 
-  constructor(settings: Settings) {
+  // 1. 构造函数改为直接接收 Base 和 Key
+  constructor(apiBase: string, apiKey: string) {
     this.client = new OpenAI({ 
-      baseURL: settings.api_base, 
-      apiKey: settings.api_key, 
+      baseURL: apiBase, 
+      apiKey: apiKey, 
       dangerouslyAllowBrowser: true 
     });
+  }
+
+  // 2. 新增：获取模型列表
+  async fetchModels(): Promise<string[]> {
+    try {
+      const list = await this.client.models.list();
+      return list.data.map((m: any) => m.id).sort();
+    } catch (e: any) {
+      console.error("Fetch Models Error:", e);
+      return [];
+    }
   }
 
   /**
    * 将场景转化为 SD 标签
    */
-  async generateImageTags(description: string, settings: Settings): Promise<string> {
-    const model = settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!model) return description;
+  async generateImageTags(description: string, modelName: string): Promise<string> {
+    if (!modelName) return description;
     const systemInstruction = `You are a specialized Stable Diffusion Prompt Engineer. Convert descriptions into concise comma-separated English keywords. Output ONLY keywords.`;
     try {
       const res = await this.client.chat.completions.create({
-        model: model,
+        model: modelName,
         messages: [{ role: 'system', content: systemInstruction }, { role: 'user', content: `Convert this to tags: ${description}` }],
         temperature: 0.3,
       });
@@ -1643,7 +1705,7 @@ export class LLMClient {
   }
 
   /**
-   * 世界书注入逻辑：确保在末尾以增强执行性
+   * 世界书注入逻辑
    */
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
     if (!entries || entries.length === 0) return "";
@@ -1660,18 +1722,19 @@ export class LLMClient {
     return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
   }
 
+  // 3. 对话流：逻辑简化，移除配置查找，直接使用 activeModel
   async *chatStream(
-    char: Character, history: Message[], userInputs: string, settings: Settings, 
-    lorebookEntries: LorebookEntry[] = [], groupCtx?: any, presets: ApiPreset[] = [],
+    char: Character, 
+    history: Message[], 
+    userInputs: string, 
+    settings: Settings, // 仅用于获取 user_name
+    modelName: string,  // 明确传入的模型
+    lorebookEntries: LorebookEntry[] = [], 
+    groupCtx?: any, 
     controller?: AbortController 
   ) {
-    const preset = presets.find((p: ApiPreset) => p.id === char.api_preset_id);
-    const apiBase = char.api_base_override || preset?.api_base || settings.api_base;
-    const apiKey = char.api_key_override || preset?.api_key || settings.api_key;
-    const currentModel = char.model_id || settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!currentModel) { yield "\n[错误]: 未配置模型。"; return; }
+    if (!modelName) { yield "\n[错误]: 未选择模型，请在顶部导航栏选择。"; return; }
 
-    const dynamicClient = new OpenAI({ baseURL: apiBase, apiKey: apiKey, dangerouslyAllowBrowser: true });
     const isGroupMode = !!groupCtx;
     const STOP_MARKER = "Ω"; 
     const playerDisplayName = settings.user_name || "User";
@@ -1703,13 +1766,14 @@ export class LLMClient {
     }
 
     try {
-      const stream = await dynamicClient.chat.completions.create({
-        model: currentModel, 
+      const stream = await this.client.chat.completions.create({
+        model: modelName, 
         messages: [{ role: 'system', content: fullSystemContent }, ...chatMessages],
         stream: true, 
         temperature: settings.temperature || 0.8,
         stop: isGroupMode ? [STOP_MARKER] : ["User:", "\nUser:"] 
       }, { signal: controller?.signal });
+      
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content || '';
         if (text) yield text.replace(STOP_MARKER, "");
@@ -1717,12 +1781,8 @@ export class LLMClient {
     } catch (e: any) { if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`; }
   }
 
-  /**
-   * 修复后的增量总结方法：仅提取新事实，不重写旧内容
-   */
-  async summarizeRecent(history: Message[], settings: Settings): Promise<string> {
-    const summaryModel = settings.model || (settings.model_list?.split(',')[0].trim());
-    if (!summaryModel) throw new Error("未配置总结模型");
+  async summarizeRecent(history: Message[], modelName: string): Promise<string> {
+    if (!modelName) throw new Error("未配置总结模型");
     const facts = history
         .filter(m => m.content && m.content.trim() && !m.image)
         .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
@@ -1742,7 +1802,7 @@ export class LLMClient {
     新进展总结：`;
 
     const res = await this.client.chat.completions.create({
-      model: summaryModel,
+      model: modelName,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });

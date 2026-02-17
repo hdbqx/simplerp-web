@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
@@ -16,12 +16,13 @@ function App() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
   
-  // --- 新增：API 全局状态 ---
+  // --- API 全局状态 ---
   const [activePresetId, setActivePresetId] = useState<number | undefined>();
   const [activeModel, setActiveModel] = useState<string>("");
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]); // 仅存储自动获取的
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
+  // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedGroupId, setSelectedGroupId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
@@ -47,6 +48,12 @@ function App() {
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
+  // --- 计算属性：手动配置的模型列表 ---
+  const manualModels = useMemo(() => {
+    if (!settings?.model_list) return [];
+    return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
+  }, [settings?.model_list]);
+
   // --- 初始化数据 ---
   const loadData = async () => {
     try {
@@ -64,7 +71,8 @@ function App() {
             // 尝试加载模型列表
             const currentPreset = p.find(pre => pre.id === s.active_preset_id);
             if(currentPreset) {
-                await refreshModels(currentPreset.api_base, currentPreset.api_key, s.active_model_id);
+                // 这里传入 s.model_list 以便 refreshModels 知道有手动模型作为兜底
+                await refreshModels(currentPreset.api_base, currentPreset.api_key, s.active_model_id, s.model_list);
             }
         }
     } catch(e) { console.error(e); } finally { setIsLoading(false); }
@@ -73,22 +81,35 @@ function App() {
   useEffect(() => { loadData(); }, []);
 
   // --- API 状态管理逻辑 ---
-  const refreshModels = async (base: string, key: string, keepModelId?: string) => {
+  const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string) => {
       setIsFetchingModels(true);
       const llm = new LLMClient(base, key);
-      const models = await llm.fetchModels();
-      setAvailableModels(models);
+      const fetchedModels = await llm.fetchModels();
+      setAvailableModels(fetchedModels);
       setIsFetchingModels(false);
       
-      if (keepModelId && models.includes(keepModelId)) {
+      // 解析手动模型列表 (参数传入或使用当前状态)
+      const currentManualList = manualListStr !== undefined ? manualListStr : (settings?.model_list || "");
+      const manualArr = currentManualList.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
+      
+      // 决定选中哪个模型
+      // 1. 如果之前选中的模型在 自动列表 或 手动列表 中，保持选中
+      if (keepModelId && (fetchedModels.includes(keepModelId) || manualArr.includes(keepModelId))) {
           setActiveModel(keepModelId);
-      } else if (models.length > 0) {
-          setActiveModel(models[0]);
-          if(settings) api.settings.update({ ...settings, active_model_id: models[0] });
-      } else {
-          // 如果获取失败或者列表为空，允许用户手动输入的兜底（UI上通常显示空，这里可以保留旧值）
-          if(keepModelId) setActiveModel(keepModelId);
+      } 
+      // 2. 否则优先选自动列表的第一个
+      else if (fetchedModels.length > 0) {
+          const first = fetchedModels[0];
+          setActiveModel(first);
+          if(settings) api.settings.update({ ...settings, active_model_id: first });
+      } 
+      // 3. 都没有，选手动列表第一个作为兜底
+      else if (manualArr.length > 0) {
+          const first = manualArr[0];
+          setActiveModel(first);
+          if(settings) api.settings.update({ ...settings, active_model_id: first });
       }
+      // 4. 如果都为空，UI 会显示 placeholder
   };
 
   const handlePresetChange = async (presetIdStr: string) => {
@@ -147,14 +168,13 @@ function App() {
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
-    // 使用当前选中的配置实例化
     const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
     let fullContent = "";
 
     try {
       const stream = llm.chatStream(
         char, currentHistory, textOverride || "", 
-        settings, activeModel, // 传入当前 activeModel
+        settings, activeModel, 
         lorebookEntries, 
         viewMode === 'group' ? {
           name: groups.find(g => g.id === selectedGroupId)?.name || "",
@@ -277,13 +297,11 @@ function App() {
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
             <span className="font-bold truncate max-w-[140px]">{c.name}</span>
             <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity items-center">
-                {/* 复制按钮 */}
                 <button className="hover:text-info p-1" title="创建副本" onClick={async (e) => {
                     e.stopPropagation();
                     const newName = prompt("新角色名称:", `${c.name} (Copy)`);
                     if(newName) { await api.characters.duplicate(c.id!, newName); loadData(); }
                 }}><Copy size={14}/></button>
-                {/* 删除按钮 */}
                 <button className="hover:text-error p-1" title="删除" onClick={(e) => { 
                     e.stopPropagation(); 
                     if(confirm(`删除角色 ${c.name}？`)) api.characters.delete(c.id!).then(() => loadData()); 
@@ -313,7 +331,7 @@ function App() {
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2 hidden md:block">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "SimpleRP"}</div>
           
-          {/* API Selector (Top Bar) */}
+          {/* API Selector (Top Bar) - 已优化，支持分组显示 */}
           <div className="flex-none flex items-center gap-2 mr-2">
             <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
@@ -321,8 +339,20 @@ function App() {
             </select>
             <div className="join">
                 <select className="select select-bordered select-sm join-item max-w-[10rem] text-xs" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
-                    {availableModels.length === 0 && <option value="">无模型/刷新</option>}
-                    {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                    {/* 分组显示：区分手动配置与自动获取 */}
+                    {manualModels.length === 0 && availableModels.length === 0 && <option value="">无可用模型</option>}
+                    
+                    {manualModels.length > 0 && (
+                        <optgroup label="手动配置 (Settings)">
+                            {manualModels.map(m => <option key={`man-${m}`} value={m}>{m}</option>)}
+                        </optgroup>
+                    )}
+                    
+                    {availableModels.length > 0 && (
+                        <optgroup label="自动获取 (API)">
+                             {availableModels.map(m => <option key={`auto-${m}`} value={m}>{m}</option>)}
+                        </optgroup>
+                    )}
                 </select>
                 <button className={`btn btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型列表" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
             </div>
@@ -404,7 +434,7 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* 1. 设置面板 (已简化) */}
+      {/* 1. 设置面板 (恢复手动模型列表输入) */}
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -422,7 +452,7 @@ function App() {
                               <h4 className="text-sm font-black text-primary uppercase">API 预设库 (用于顶部导航栏切换)</h4>
                               <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "新预设", api_base: "", api_key: ""}).then(() => loadData())}>+ 新增</button>
                           </div>
-                          <div className="overflow-x-auto border border-base-300 rounded-xl">
+                          <div className="overflow-x-auto border border-base-300 rounded-xl mb-4">
                               <table className="table table-compact w-full text-xs">
                                   <thead><tr className="bg-base-200"><th>名称</th><th>Base URL</th><th>Key</th><th className="w-20">操作</th></tr></thead>
                                   <tbody>
@@ -439,6 +469,11 @@ function App() {
                                       ))}
                                   </tbody>
                               </table>
+                          </div>
+                          {/* 【恢复】手动模型列表输入框 */}
+                          <div className="form-control">
+                                <label className="label font-bold text-xs">备用模型列表 (手动输入，逗号分隔)</label>
+                                <textarea className="textarea textarea-bordered w-full text-xs h-20" placeholder="当 API 不支持自动获取模型列表时使用，例如：gpt-4o, claude-3-5-sonnet, deepseek-chat" value={settings.model_list || ""} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
                           </div>
                       </section>
                       <section>
