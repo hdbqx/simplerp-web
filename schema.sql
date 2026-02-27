@@ -1,4 +1,4 @@
--- 1. 角色表（增加独立驱动字段）
+﻿-- 1. 角色表（增加独立驱动字段）
 CREATE TABLE IF NOT EXISTS characters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS api_presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     api_base TEXT,
-    api_key TEXT
+    api_key TEXT,
+    api_mode TEXT DEFAULT 'chat_completions'
 );
 
 -- 初始化默认数据

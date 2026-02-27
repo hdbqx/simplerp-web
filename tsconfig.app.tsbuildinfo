@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/lib/db.ts","./src/lib/llm.ts","./src/lib/translate.ts","./src/lib/variables.ts"],"errors":true,"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/lib/db.ts","./src/lib/llm.ts","./src/lib/translate.ts","./src/lib/variables.ts"],"version":"5.9.3"}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset } from './lib/db';
+import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
@@ -54,6 +54,9 @@ function App() {
     return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
   }, [settings?.model_list]);
 
+  const getPresetMode = (preset?: ApiPreset): ApiMode =>
+    preset?.api_mode === 'responses' ? 'responses' : 'chat_completions';
+
   // --- 初始化数据 ---
   const loadData = async () => {
     try {
@@ -72,7 +75,7 @@ function App() {
             const currentPreset = p.find(pre => pre.id === s.active_preset_id);
             if(currentPreset) {
                 // 这里传入 s.model_list 以便 refreshModels 知道有手动模型作为兜底
-                await refreshModels(currentPreset.api_base, currentPreset.api_key, s.active_model_id, s.model_list);
+                await refreshModels(currentPreset.api_base, currentPreset.api_key, s.active_model_id, s.model_list, getPresetMode(currentPreset));
             }
         }
     } catch(e) { console.error(e); } finally { setIsLoading(false); }
@@ -81,9 +84,9 @@ function App() {
   useEffect(() => { loadData(); }, []);
 
   // --- API 状态管理逻辑 ---
-  const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string) => {
+  const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
       setIsFetchingModels(true);
-      const llm = new LLMClient(base, key);
+      const llm = new LLMClient(base, key, mode);
       const fetchedModels = await llm.fetchModels();
       setAvailableModels(fetchedModels);
       setIsFetchingModels(false);
@@ -118,7 +121,7 @@ function App() {
       if(settings) await api.settings.update({ ...settings, active_preset_id: pid });
       
       const p = presets.find(pre => pre.id === pid);
-      if (p) await refreshModels(p.api_base, p.api_key);
+      if (p) await refreshModels(p.api_base, p.api_key, undefined, undefined, getPresetMode(p));
   };
 
   const handleModelChange = async (modelId: string) => {
@@ -168,7 +171,7 @@ function App() {
     
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
-    const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
+    const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
     let fullContent = "";
 
     try {
@@ -219,7 +222,7 @@ function App() {
     setIsTyping(true);
     try {
       const currentPreset = presets.find(p => p.id === activePresetId)!;
-      const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
+      const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
       const tags = await llm.generateImageTags(rawPrompt, activeModel);
       const finalTags = settings!.baidu_appid ? await translateToEnglish(tags, settings!.baidu_appid, settings!.baidu_secret!) : tags;
       
@@ -327,18 +330,18 @@ function App() {
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
         {/* Navbar */}
-        <div className="navbar bg-base-100 border-b border-base-300 px-2 md:px-4 sticky top-0 z-20 min-h-[3.5rem] overflow-x-auto gap-1">
-          <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost btn-sm" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
+        <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20 min-h-[3.5rem]">
+          <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2 hidden md:block">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "SimpleRP"}</div>
           
           {/* API Selector (Top Bar) - 已优化，支持分组显示 */}
-          <div className="flex-none flex items-center gap-1 md:gap-2 mr-1 md:mr-2 min-w-max">
-            <select className="select select-bordered select-xs md:select-sm w-24 md:max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
+          <div className="flex-none flex items-center gap-2 mr-2">
+            <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
                 {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <div className="join">
-                <select className="select select-bordered select-xs md:select-sm join-item w-28 md:max-w-[10rem] text-xs" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
+                <select className="select select-bordered select-sm join-item max-w-[10rem] text-xs" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
                     {/* 分组显示：区分手动配置与自动获取 */}
                     {manualModels.length === 0 && availableModels.length === 0 && <option value="">无可用模型</option>}
                     
@@ -354,21 +357,21 @@ function App() {
                         </optgroup>
                     )}
                 </select>
-                <button className={`btn btn-xs md:btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型列表" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
+                <button className={`btn btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型列表" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel, undefined, getPresetMode(p)); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
             </div>
           </div>
 
-          <div className="flex-none gap-1 md:gap-2 min-w-max">
-            <button className="btn btn-xs md:btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
+          <div className="flex-none gap-2">
+            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
-                <button className="btn btn-xs md:btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
+                <button className="btn btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
                     if (!activePresetId || !activeModel) return alert("请先选择模型");
                     try {
                         setIsTyping(true);
                         const char = characters.find(c => c.id === selectedCharId);
                         const currentPreset = presets.find(p => p.id === activePresetId)!;
-                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key);
+                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
                         const fragment = await llm.summarizeRecent(messages, activeModel);
                         if(!fragment) return alert("没有检测到新剧情。");
                         const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
@@ -377,11 +380,11 @@ function App() {
                         await loadData(); alert("新进展已追加。");
                     } catch (e: any) { alert(e.message); } finally { setIsTyping(false); }
                 }}><BookOpen size={18}/></button>
-                <button className="btn btn-xs md:btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
-                <button className="btn btn-xs md:btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
+                <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
+                <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
             )}
-            {viewMode === 'group' && selectedGroupId && <button className="btn btn-xs md:btn-sm btn-secondary" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>}
+            {viewMode === 'group' && selectedGroupId && <button className="btn btn-sm btn-secondary" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>}
           </div>
         </div>
 
@@ -450,19 +453,20 @@ function App() {
                       <section>
                           <div className="flex justify-between items-end mb-3">
                               <h4 className="text-sm font-black text-primary uppercase">API 预设库 (用于顶部导航栏切换)</h4>
-                              <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "新预设", api_base: "", api_key: ""}).then(() => loadData())}>+ 新增</button>
+                              <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "New Preset", api_base: "", api_key: "", api_mode: 'chat_completions'}).then(() => loadData())}>+ 新增</button>
                           </div>
                           <div className="overflow-x-auto border border-base-300 rounded-xl mb-4">
                               <table className="table table-compact w-full text-xs">
-                                  <thead><tr className="bg-base-200"><th>名称</th><th>Base URL</th><th>Key</th><th className="w-20">操作</th></tr></thead>
+                                  <thead><tr className="bg-base-200"><th>名称</th><th>Base URL</th><th>Key</th><th>Mode</th><th className="w-20">操作</th></tr></thead>
                                   <tbody>
                                       {presets.map((p, idx) => (
                                           <tr key={p.id}>
                                               <td><input className="input input-ghost input-xs w-full font-bold" value={p.name} onChange={e=>{const n=[...presets]; n[idx].name=e.target.value; setPresets(n);}} /></td>
                                               <td><input className="input input-ghost input-xs w-full" value={p.api_base} onChange={e=>{const n=[...presets]; n[idx].api_base=e.target.value; setPresets(n);}} /></td>
                                               <td><input className="input input-ghost input-xs w-full" type="password" value={p.api_key} onChange={e=>{const n=[...presets]; n[idx].api_key=e.target.value; setPresets(n);}} /></td>
+                                              <td><select className="select select-bordered select-xs w-full" value={p.api_mode || 'chat_completions'} onChange={e=>{const n=[...presets]; n[idx].api_mode=e.target.value as ApiMode; setPresets(n);}}><option value="chat_completions">chat.completions</option><option value="responses">responses</option></select></td>
                                               <td className="flex gap-1">
-                                                  <button className="btn btn-ghost btn-xs text-success" onClick={() => api.presets.update(p.id!, p).then(() => alert("已更新"))}><Save size={14}/></button>
+                                                  <button className="btn btn-ghost btn-xs text-success" onClick={() => api.presets.update(p.id!, { ...p, api_mode: p.api_mode || 'chat_completions' }).then(() => alert("已更新"))}><Save size={14}/></button>
                                                   <button className="btn btn-ghost btn-xs text-error" onClick={() => {if(confirm("删除？")) api.presets.delete(p.id!).then(() => loadData());}}><Trash2 size={14}/></button>
                                               </td>
                                           </tr>
