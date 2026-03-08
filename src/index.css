@@ -42,6 +42,8 @@ html, body, #root {
 .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { @apply bg-base-content/20 rounded-full; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .overflow-y-auto { -webkit-overflow-scrolling: touch; }
 
 /* =========================================

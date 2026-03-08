@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode } from './lib/db';
 import { LLMClient } from './lib/llm';
-import { translateToEnglish } from './lib/translate';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
@@ -224,10 +223,9 @@ function App() {
       const currentPreset = presets.find(p => p.id === activePresetId)!;
       const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
       const tags = await llm.generateImageTags(rawPrompt, activeModel);
-      const finalTags = settings!.baidu_appid ? await translateToEnglish(tags, settings!.baidu_appid, settings!.baidu_secret!) : tags;
       
       const payload = {
-        prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${finalTags}`,
+        prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`,
         negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
         steps: 20, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false, enable_hr: false,
       };

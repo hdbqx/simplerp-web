@@ -44,8 +44,6 @@ export interface Settings {
   id?: number;
   user_name?: string;
   sd_url?: string;
-  baidu_appid?: string;
-  baidu_secret?: string;
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
