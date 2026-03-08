@@ -232,9 +232,13 @@ function App() {
         steps: 20, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false, enable_hr: false,
       };
 
-      const res = await fetch(`${settings!.sd_url.replace(/\/$/, '')}/sdapi/v1/txt2img`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const res = await fetch('/api/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sd_url: settings!.sd_url,
+          payload
+        })
       });
       if (!res.ok) throw new Error("SD 后端未响应");
       const data = await res.json();
@@ -335,7 +339,7 @@ function App() {
           <div className="flex-1 font-bold truncate px-2 hidden md:block">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "SimpleRP"}</div>
           
           {/* API Selector (Top Bar) - 已优化，支持分组显示 */}
-          <div className="flex-none flex items-center gap-2 mr-2">
+          <div className="flex-none flex items-center gap-2 mr-2 max-w-[72vw] md:max-w-none overflow-x-auto no-scrollbar">
             <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
                 {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -361,7 +365,7 @@ function App() {
             </div>
           </div>
 
-          <div className="flex-none gap-2">
+          <div className="hidden md:flex flex-none gap-2">
             <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
             {viewMode === 'char' && selectedCharId && (
               <>
@@ -385,6 +389,37 @@ function App() {
               </>
             )}
             {viewMode === 'group' && selectedGroupId && <button className="btn btn-sm btn-secondary" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>}
+          </div>
+        </div>
+
+        <div className="md:hidden px-2 py-2 border-b border-base-300 bg-base-100">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <button className="btn btn-xs btn-ghost text-error whitespace-nowrap" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={14}/> 清空</button>
+            {viewMode === 'char' && selectedCharId && (
+              <>
+                <button
+                  className="btn btn-xs btn-ghost text-info whitespace-nowrap"
+                  onClick={async ()=>{ 
+                    if (!activePresetId || !activeModel) return alert("请先选择模型");
+                    try {
+                        setIsTyping(true);
+                        const char = characters.find(c => c.id === selectedCharId);
+                        const currentPreset = presets.find(p => p.id === activePresetId)!;
+                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
+                        const fragment = await llm.summarizeRecent(messages, activeModel);
+                        if(!fragment) return alert("没有检测到新剧情。");
+                        const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
+                        const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
+                        await api.characters.update(selectedCharId, { summary: updatedSummary });
+                        await loadData(); alert("新进展已追加。");
+                    } catch (e: any) { alert(e.message); } finally { setIsTyping(false); }
+                }}
+                ><BookOpen size={14}/> 总结</button>
+                <button className="btn btn-xs btn-ghost text-warning whitespace-nowrap" onClick={()=>setShowLorebook(true)}><Book size={14}/> 世界书</button>
+                <button className="btn btn-xs btn-primary whitespace-nowrap" onClick={()=>setShowCharEdit(true)}><Pencil size={14}/> 人设</button>
+              </>
+            )}
+            {viewMode === 'group' && selectedGroupId && <button className="btn btn-xs btn-secondary whitespace-nowrap" onClick={()=>setShowGroupEdit(true)}><Users size={14}/> 剧场</button>}
           </div>
         </div>
 

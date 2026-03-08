@@ -1,90 +1,59 @@
-﻿import OpenAI from 'openai';
-import type { Character, Settings, Message, LorebookEntry, ApiMode } from './db';
+﻿import type { Character, Settings, Message, LorebookEntry, ApiMode } from './db';
 import { replaceVariables } from './variables';
 
 export class LLMClient {
-  private client: OpenAI;
+  private apiBase: string;
+  private apiKey: string;
   private mode: ApiMode;
 
   constructor(apiBase: string, apiKey: string, mode: ApiMode = 'chat_completions') {
-    this.client = new OpenAI({
-      baseURL: apiBase,
-      apiKey,
-      dangerouslyAllowBrowser: true,
-    });
+    this.apiBase = apiBase;
+    this.apiKey = apiKey;
     this.mode = mode;
   }
 
   async fetchModels(): Promise<string[]> {
     try {
-      const list = await this.client.models.list();
-      return list.data.map((m: any) => m.id).sort();
+      const res = await fetch('/api/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'models',
+          apiBase: this.apiBase,
+          apiKey: this.apiKey,
+        }),
+      });
+      if (!res.ok) return [];
+      const data: any = await res.json();
+      return Array.isArray(data?.models) ? data.models : [];
     } catch (e: any) {
       console.error('Fetch Models Error:', e);
       return [];
     }
   }
 
-  private extractResponsesText(res: any): string {
-    if (!res) return '';
-    if (typeof res.output_text === 'string' && res.output_text.trim()) return res.output_text;
-
-    const output = Array.isArray(res.output) ? res.output : [];
-    const texts: string[] = [];
-    for (const item of output) {
-      const content = Array.isArray(item?.content) ? item.content : [];
-      for (const c of content) {
-        if (typeof c?.text === 'string') texts.push(c.text);
-        else if (typeof c?.output_text === 'string') texts.push(c.output_text);
-      }
-    }
-    return texts.join('');
-  }
-
-  private extractResponsesDelta(event: any): string {
-    if (!event) return '';
-
-    if (typeof event.delta === 'string') return event.delta;
-    if (typeof event.output_text === 'string') return event.output_text;
-    if (typeof event.text === 'string') return event.text;
-
-    const delta = event.delta;
-    if (delta && typeof delta === 'object') {
-      if (typeof delta.text === 'string') return delta.text;
-      if (typeof delta.output_text === 'string') return delta.output_text;
-      if (Array.isArray(delta.content)) {
-        const parts = delta.content
-          .map((c: any) => (typeof c?.text === 'string' ? c.text : typeof c?.output_text === 'string' ? c.output_text : ''))
-          .filter(Boolean);
-        if (parts.length) return parts.join('');
-      }
-    }
-
-    return '';
-  }
-
   private async createTextCompletion(model: string, systemPrompt: string, userPrompt: string, temperature: number): Promise<string> {
-    if (this.mode === 'responses') {
-      const res: any = await (this.client as any).responses.create({
+    const res = await fetch('/api/llm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'complete',
+        apiBase: this.apiBase,
+        apiKey: this.apiKey,
+        mode: this.mode,
         model,
-        input: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+        systemPrompt,
+        userPrompt,
         temperature,
-      });
-      return this.extractResponsesText(res) || userPrompt;
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(await res.text());
     }
 
-    const res = await this.client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature,
-    });
-    return res.choices[0]?.message?.content || userPrompt;
+    const data: any = await res.json();
+    return data?.content || userPrompt;
   }
 
   async generateImageTags(description: string, modelName: string): Promise<string> {
@@ -160,49 +129,28 @@ export class LLMClient {
     }
 
     try {
-      if (this.mode === 'responses') {
-        const input = [
-          { role: 'system', content: fullSystemContent },
-          ...chatMessages,
-        ];
-
-        const stream: any = await (this.client as any).responses.create({
+      const res = await fetch('/api/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller?.signal,
+        body: JSON.stringify({
+          action: 'chat',
+          apiBase: this.apiBase,
+          apiKey: this.apiKey,
+          mode: this.mode,
           model: modelName,
-          input,
+          systemContent: fullSystemContent,
+          chatMessages,
           temperature: settings.temperature || 0.8,
           stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],
-          stream: true,
-        }, { signal: controller?.signal });
+        }),
+      });
 
-        let yieldedDelta = false;
-        for await (const event of stream) {
-          const delta = this.extractResponsesDelta(event).replaceAll(stopMarker, '');
-          if (delta) {
-            yieldedDelta = true;
-            yield delta;
-            continue;
-          }
+      if (!res.ok) throw new Error(await res.text());
 
-          if (!yieldedDelta && event?.type === 'response.completed') {
-            const full = this.extractResponsesText(event.response).replaceAll(stopMarker, '');
-            if (full) yield full;
-          }
-        }
-        return;
-      }
-
-      const stream = await this.client.chat.completions.create({
-        model: modelName,
-        messages: [{ role: 'system', content: fullSystemContent }, ...chatMessages],
-        stream: true,
-        temperature: settings.temperature || 0.8,
-        stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],
-      }, { signal: controller?.signal });
-
-      for await (const chunk of stream) {
-        const text = chunk.choices[0]?.delta?.content || '';
-        if (text) yield text.replace(stopMarker, '');
-      }
+      const data: any = await res.json();
+      const content = (data?.content || '').replaceAll(stopMarker, '');
+      if (content) yield content;
     } catch (e: any) {
       if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`;
     }
