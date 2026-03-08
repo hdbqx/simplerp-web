@@ -34,12 +34,17 @@ function extractResponsesText(res: any): string {
 
 async function callProvider(base: string, key: string, path: string, payload?: unknown, method = 'POST') {
   const url = `${normalizeBase(base)}${path}`;
+  const trimmedKey = (key || '').trim();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (trimmedKey) {
+    headers.Authorization = `Bearer ${trimmedKey}`;
+  }
+
   const res = await fetch(url, {
     method,
-    headers: {
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: payload ? JSON.stringify(payload) : undefined,
   });
 

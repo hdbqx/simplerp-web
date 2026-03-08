@@ -1,0 +1,12 @@
+{
+  "name": "tunnel-manager-gui",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^36.3.2"
+  }
+}

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tunnel 管理器</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <h1>Tunnel 管理器</h1>
+        <p class="sub">统一管理 Cloudflared 与本机穿透应用</p>
+      </div>
+      <div class="top-actions">
+        <button id="btnLoadConfig" class="btn ghost">加载配置</button>
+        <button id="btnOpenFolder" class="btn ghost">打开目录</button>
+      </div>
+    </header>
+
+    <div class="main-grid">
+      <section class="left-pane">
+        <section class="card">
+          <div class="row between">
+            <div class="row col">
+              <span class="label">配置文件</span>
+              <code id="configPath"></code>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="row between">
+            <div class="row">
+              <h2>Cloudflared</h2>
+              <span id="cloudStatus" class="status stopped">已停止</span>
+            </div>
+            <div class="row">
+              <button id="btnCloudStart" class="btn primary">启动</button>
+              <button id="btnCloudStop" class="btn">停止</button>
+              <button id="btnCloudRestart" class="btn">重启</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="row between wrap">
+            <h2>应用列表</h2>
+            <div class="row">
+              <button id="btnStartSelected" class="btn primary">启动选中</button>
+              <button id="btnStopSelected" class="btn">停止选中</button>
+              <button id="btnStartAll" class="btn">全部启动</button>
+              <button id="btnStopAll" class="btn">全部停止</button>
+            </div>
+          </div>
+          <div id="apps"></div>
+        </section>
+      </section>
+
+      <section class="card logs right-pane">
+        <div class="row between">
+          <h2>运行日志</h2>
+          <div class="row">
+            <div id="logFilters" class="row"></div>
+            <button id="btnClearLogs" class="btn ghost">清空日志</button>
+          </div>
+        </div>
+        <pre id="logBox"></pre>
+      </section>
+    </div>
+  </div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>
