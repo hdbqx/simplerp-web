@@ -61,8 +61,8 @@ export const onRequestPost: PagesFunction = async (context) => {
     const action = body.action || 'chat';
     const mode = body.mode === 'responses' ? 'responses' : 'chat_completions';
 
-    if (!body.apiBase || !body.apiKey) {
-      return new Response('Missing apiBase/apiKey', { status: 400 });
+    if (!body.apiBase) {
+      return new Response('Missing apiBase', { status: 400 });
     }
 
     if (action === 'models') {

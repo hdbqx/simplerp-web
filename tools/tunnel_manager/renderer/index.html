@@ -22,16 +22,14 @@
     <div class="main-grid">
       <section class="left-pane">
         <section class="card">
-          <div class="row between">
-            <div class="row col">
-              <span class="label">配置文件</span>
-              <code id="configPath"></code>
-            </div>
+          <div class="row col">
+            <span class="label">配置文件</span>
+            <code id="configPath"></code>
           </div>
         </section>
 
         <section class="card">
-          <div class="row between">
+          <div class="row between wrap">
             <div class="row">
               <h2>Cloudflared</h2>
               <span id="cloudStatus" class="status stopped">已停止</span>
@@ -59,7 +57,7 @@
       </section>
 
       <section class="card logs right-pane">
-        <div class="row between">
+        <div class="row between wrap">
           <h2>运行日志</h2>
           <div class="row">
             <div id="logFilters" class="row"></div>

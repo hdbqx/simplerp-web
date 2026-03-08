@@ -25,16 +25,16 @@ body {
 }
 
 .app {
-  width: min(1180px, 96vw);
-  margin: 18px auto;
+  width: min(1420px, 98vw);
+  margin: 10px auto;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .main-grid {
   display: grid;
-  grid-template-columns: 430px 1fr;
-  gap: 12px;
+  grid-template-columns: 460px 1fr;
+  gap: 10px;
   align-items: start;
 }
 
@@ -51,11 +51,12 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 6px 4px;
 }
 
 h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 24px;
   letter-spacing: 0.2px;
 }
 
@@ -65,7 +66,7 @@ h2 {
 }
 
 .sub {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--muted);
 }
 
@@ -79,7 +80,7 @@ h2 {
   backdrop-filter: blur(6px);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 14px;
+  padding: 12px;
   box-shadow: 0 6px 16px rgba(77, 102, 165, 0.08);
 }
 
@@ -112,7 +113,7 @@ code {
   padding: 4px 8px;
   border-radius: 8px;
   color: #335099;
-  max-width: 390px;
+  max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -169,7 +170,7 @@ code {
   margin-top: 10px;
   display: grid;
   gap: 8px;
-  max-height: 380px;
+  max-height: 450px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -200,7 +201,7 @@ code {
 }
 
 .logs {
-  min-height: 280px;
+  min-height: 520px;
 }
 
 #logBox {
@@ -209,11 +210,13 @@ code {
   border: 1px solid #d8e2f8;
   background: #111a2e;
   color: #def1ff;
-  height: 540px;
+  height: 640px;
   overflow: auto;
-  padding: 12px;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chip {

@@ -14,6 +14,7 @@
       "name": "Ollama",
       "enabled": true,
       "requires_cloudflared": true,
+      "check_port": 11434,
       "command": "ollama serve",
       "cwd": "C:\\"
     },
@@ -30,8 +31,8 @@
       "name": "cpa",
       "enabled": true,
       "requires_cloudflared": true,
-      "command": "start.bat",
-      "cwd": "C:\Users\24782\Downloads\CLIProxyAPI_6.8.30_windows_amd64"
+      "command": "cli-proxy-api",
+      "cwd": "C:\\Users\\24782\\Downloads\\CLIProxyAPI_6.8.30_windows_amd64"
     }
   ]
 }
