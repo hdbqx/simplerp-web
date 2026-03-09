@@ -3,6 +3,7 @@ interface LlmRequestBody {
   apiBase: string;
   apiKey: string;
   mode?: 'chat_completions' | 'responses';
+  stream?: boolean;
   model?: string;
   systemPrompt?: string;
   userPrompt?: string;
@@ -107,6 +108,7 @@ export const onRequestPost: PagesFunction = async (context) => {
 
     if (action === 'chat') {
       const temperature = body.temperature ?? 0.8;
+      const stream = body.stream === true;
       if (mode === 'responses') {
         const res = await callProvider(body.apiBase, body.apiKey, '/responses', {
           model: body.model,
@@ -116,7 +118,18 @@ export const onRequestPost: PagesFunction = async (context) => {
           ],
           temperature,
           stop: body.stop,
+          stream,
         });
+        if (stream) {
+          return new Response(res.body, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache',
+              Connection: 'keep-alive',
+            },
+          });
+        }
         const data = await res.json();
         return Response.json({ content: extractResponsesText(data) || '' });
       }
@@ -126,7 +139,18 @@ export const onRequestPost: PagesFunction = async (context) => {
         messages: [{ role: 'system', content: body.systemContent || '' }, ...(body.chatMessages || [])],
         temperature,
         stop: body.stop,
+        stream,
       });
+      if (stream) {
+        return new Response(res.body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          },
+        });
+      }
       const data: any = await res.json();
       return Response.json({ content: data?.choices?.[0]?.message?.content || '' });
     }

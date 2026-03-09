@@ -81,6 +81,63 @@ export class LLMClient {
     return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
   }
 
+  private extractStreamText(payload: any): string {
+    if (!payload) return '';
+
+    const delta = payload?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return delta;
+
+    const message = payload?.choices?.[0]?.message?.content;
+    if (typeof message === 'string') return message;
+
+    if (payload?.type === 'response.output_text.delta' && typeof payload?.delta === 'string') {
+      return payload.delta;
+    }
+
+    if (payload?.delta && typeof payload.delta?.text === 'string') {
+      return payload.delta.text;
+    }
+
+    return '';
+  }
+
+  private async *readSseStream(res: Response): AsyncGenerator<string> {
+    const reader = res.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/g);
+      buffer = events.pop() || '';
+
+      for (const event of events) {
+        const dataLines = event
+          .split(/\r?\n/g)
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trim());
+
+        if (dataLines.length === 0) continue;
+
+        const rawData = dataLines.join('\n');
+        if (rawData === '[DONE]') return;
+
+        try {
+          const payload = JSON.parse(rawData);
+          const text = this.extractStreamText(payload);
+          if (text) yield text;
+        } catch {
+          // Ignore non-JSON heartbeat lines.
+        }
+      }
+    }
+  }
+
   async *chatStream(
     char: Character,
     history: Message[],
@@ -143,10 +200,19 @@ export class LLMClient {
           chatMessages,
           temperature: settings.temperature || 0.8,
           stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],
+          stream: true,
         }),
       });
 
       if (!res.ok) throw new Error(await res.text());
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream') && res.body) {
+        for await (const chunk of this.readSseStream(res)) {
+          if (chunk) yield chunk.replaceAll(stopMarker, '');
+        }
+        return;
+      }
 
       const data: any = await res.json();
       const content = (data?.content || '').replaceAll(stopMarker, '');
