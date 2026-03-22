@@ -211,7 +211,8 @@ function App() {
   };
 
   const handleGenImageAction = async () => {
-    if (!settings?.sd_url) return alert("请在设置中配置 SD URL");
+    const imageBackend = (settings?.image_backend || 'sdwebui') as 'sdwebui' | 'openai';
+    if (imageBackend === 'sdwebui' && !settings?.sd_url) return alert("请在设置中配置 SD URL");
     if (!activePresetId || !activeModel) return alert("请先选择 API 模型用于生成 Prompt");
 
     const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
@@ -233,17 +234,28 @@ function App() {
       const res = await fetch('/api/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sd_url: settings!.sd_url,
-          payload
-        })
+        body: JSON.stringify(
+          imageBackend === 'sdwebui'
+            ? { sd_url: settings!.sd_url, payload }
+            : {
+                backend: 'openai',
+                apiBase: currentPreset.api_base,
+                apiKey: currentPreset.api_key,
+                model: settings!.image_model_id || activeModel,
+                payload,
+              }
+        ),
       });
-      if (!res.ok) throw new Error("SD 后端未响应");
+      if (!res.ok) throw new Error(imageBackend === 'sdwebui' ? "SD 后端未响应" : "OpenAI 生图后端未响应");
       const data = await res.json();
-      const base64Img = `data:image/png;base64,${data.images[0]}`;
+      const imgSrc =
+        (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') ||
+        (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
+
+      if (!imgSrc) throw new Error("后端未返回图片");
 
       const ephemeralMsg: Message = { 
-          role: 'assistant', content: '', image: base64Img, timestamp: Date.now(), 
+          role: 'assistant', content: '', image: imgSrc, timestamp: Date.now(), 
           group_id: selectedGroupId, char_id: selectedCharId 
       };
       setMessages(prev => [...prev, ephemeralMsg]);
@@ -480,7 +492,18 @@ function App() {
                           <h4 className="text-sm font-black mb-3 text-primary uppercase">基础与沉浸</h4>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="form-control"><label className="label text-xs font-bold">玩家姓名</label><input className="input input-bordered" placeholder="如：陈墨" value={settings.user_name || ''} onChange={e=>setSettings({...settings, user_name:e.target.value})} /></div>
-                            <div className="form-control"><label className="label text-xs font-bold">SD 地址 (API)</label><input className="input input-bordered" placeholder="http://127.0.0.1:7860" value={settings.sd_url || ''} onChange={e=>setSettings({...settings, sd_url:e.target.value})} /></div>
+                            <div className="form-control">
+                              <label className="label text-xs font-bold">生图后端</label>
+                              <select className="select select-bordered" value={settings.image_backend || 'sdwebui'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
+                                <option value="sdwebui">SD WebUI (txt2img)</option>
+                                <option value="openai">OpenAI 兼容 (/images/generations)</option>
+                              </select>
+                            </div>
+                            { (settings.image_backend || 'sdwebui') === 'sdwebui' ? (
+                              <div className="form-control"><label className="label text-xs font-bold">SD 地址 (API)</label><input className="input input-bordered" placeholder="http://127.0.0.1:7860" value={settings.sd_url || ''} onChange={e=>setSettings({...settings, sd_url:e.target.value})} /></div>
+                            ) : (
+                              <div className="form-control"><label className="label text-xs font-bold">OpenAI 生图模型 (可选)</label><input className="input input-bordered" placeholder="留空则使用顶部已选模型；如：gpt-image-1 / sdxl / flux-dev" value={settings.image_model_id || ''} onChange={e=>setSettings({...settings, image_model_id:e.target.value})} /></div>
+                            )}
                           </div>
                       </section>
                       <section>
