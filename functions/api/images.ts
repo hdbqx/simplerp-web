@@ -54,6 +54,21 @@ async function callOpenAICompatibleImages(apiBase: string, apiKey: string | unde
     requestPayload.size = sizeFromWH;
   }
 
+  // Some OpenAI-compatible image models enforce a minimum pixel count (e.g. >= 921600).
+  // If the request size is too small and the client passed `width/height`, upscale to a safe preset size.
+  if (typeof requestPayload.size === 'string') {
+    const m = requestPayload.size.match(/^(\d+)x(\d+)$/);
+    if (m) {
+      const w = parseInt(m[1], 10);
+      const h = parseInt(m[2], 10);
+      const pixels = w * h;
+      if (Number.isFinite(pixels) && pixels > 0 && pixels < 921600) {
+        const portrait = h > w;
+        requestPayload.size = portrait ? '1024x1536' : '1536x1024';
+      }
+    }
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers,

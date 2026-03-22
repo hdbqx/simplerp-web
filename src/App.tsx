@@ -20,6 +20,8 @@ function App() {
   const [activeModel, setActiveModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<string[]>([]); // 仅存储自动获取的
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [presetModelsMap, setPresetModelsMap] = useState<Record<number, string[]>>({});
+  const [presetModelsLoading, setPresetModelsLoading] = useState<Record<number, boolean>>({});
 
   // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
@@ -44,6 +46,7 @@ function App() {
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
+  const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
@@ -55,6 +58,24 @@ function App() {
 
   const getPresetMode = (preset?: ApiPreset): ApiMode =>
     preset?.api_mode === 'responses' ? 'responses' : 'chat_completions';
+
+  const fetchPresetModels = async (presetId?: number, force = false) => {
+    if (!presetId) return;
+    if (presetModelsLoading[presetId]) return;
+    if (!force && presetModelsMap[presetId]?.length) return;
+
+    const preset = presets.find(p => p.id === presetId);
+    if (!preset) return;
+
+    setPresetModelsLoading(prev => ({ ...prev, [presetId]: true }));
+    try {
+      const llm = new LLMClient(preset.api_base, preset.api_key, getPresetMode(preset));
+      const models = await llm.fetchModels();
+      setPresetModelsMap(prev => ({ ...prev, [presetId]: models }));
+    } finally {
+      setPresetModelsLoading(prev => ({ ...prev, [presetId]: false }));
+    }
+  };
 
   // --- 初始化数据 ---
   const loadData = async () => {
@@ -81,6 +102,15 @@ function App() {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    fetchPresetModels(activePresetId);
+    fetchPresetModels(settings?.image_preset_id);
+    fetchPresetModels(settings?.summary_preset_id);
+    fetchPresetModels(settings?.sd_prompt_preset_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings]);
 
   // --- API 状态管理逻辑 ---
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
@@ -222,14 +252,36 @@ function App() {
     setIsTyping(true);
     try {
       const currentPreset = presets.find(p => p.id === activePresetId)!;
-      const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
-      const tags = await llm.generateImageTags(rawPrompt, activeModel);
-      
-      const payload = {
-        prompt: `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`,
-        negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
-        steps: 20, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false, enable_hr: false,
-      };
+
+      const sdPromptPreset =
+        presets.find(p => p.id === settings?.sd_prompt_preset_id) || currentPreset;
+      const sdPromptModel = settings?.sd_prompt_model_id || activeModel;
+
+      let finalPrompt = rawPrompt;
+      if (useSdPromptConversion) {
+        const llm = new LLMClient(sdPromptPreset.api_base, sdPromptPreset.api_key, getPresetMode(sdPromptPreset));
+        const tags = await llm.generateImageTags(rawPrompt, sdPromptModel);
+        finalPrompt = `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`;
+      }
+
+      const payload =
+        imageBackend === 'openai'
+          ? { prompt: finalPrompt, width: 1024, height: 1536 }
+          : {
+              prompt: finalPrompt,
+              negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
+              steps: 20,
+              cfg_scale: 7,
+              sampler_name: "Euler a",
+              width: 512,
+              height: 768,
+              restore_faces: false,
+              enable_hr: false,
+            };
+
+      const imagePreset =
+        presets.find(p => p.id === settings?.image_preset_id) || currentPreset;
+      const imageModel = settings?.image_model_id || activeModel;
 
       const res = await fetch('/api/images', {
         method: 'POST',
@@ -239,9 +291,9 @@ function App() {
             ? { sd_url: settings!.sd_url, payload }
             : {
                 backend: 'openai',
-                apiBase: currentPreset.api_base,
-                apiKey: currentPreset.api_key,
-                model: settings!.image_model_id || activeModel,
+                apiBase: imagePreset.api_base,
+                apiKey: imagePreset.api_key,
+                model: imageModel,
                 payload,
               }
         ),
@@ -385,8 +437,10 @@ function App() {
                         setIsTyping(true);
                         const char = characters.find(c => c.id === selectedCharId);
                         const currentPreset = presets.find(p => p.id === activePresetId)!;
-                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
-                        const fragment = await llm.summarizeRecent(messages, activeModel);
+                        const summaryPreset = presets.find(p => p.id === settings?.summary_preset_id) || currentPreset;
+                        const summaryModel = settings?.summary_model_id || activeModel;
+                        const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
+                        const fragment = await llm.summarizeRecent(messages, summaryModel);
                         if(!fragment) return alert("没有检测到新剧情。");
                         const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
                         const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
@@ -415,8 +469,10 @@ function App() {
                         setIsTyping(true);
                         const char = characters.find(c => c.id === selectedCharId);
                         const currentPreset = presets.find(p => p.id === activePresetId)!;
-                        const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
-                        const fragment = await llm.summarizeRecent(messages, activeModel);
+                        const summaryPreset = presets.find(p => p.id === settings?.summary_preset_id) || currentPreset;
+                        const summaryModel = settings?.summary_model_id || activeModel;
+                        const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
+                        const fragment = await llm.summarizeRecent(messages, summaryModel);
                         if(!fragment) return alert("没有检测到新剧情。");
                         const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
                         const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
@@ -472,7 +528,7 @@ function App() {
               </div>
             )}
             <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
-              <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
+                <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
               <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
               {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
             </div>
@@ -504,6 +560,169 @@ function App() {
                             ) : (
                               <div className="form-control"><label className="label text-xs font-bold">OpenAI 生图模型 (可选)</label><input className="input input-bordered" placeholder="留空则使用顶部已选模型；如：gpt-image-1 / sdxl / flux-dev" value={settings.image_model_id || ''} onChange={e=>setSettings({...settings, image_model_id:e.target.value})} /></div>
                             )}
+                          </div>
+                      </section>
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">模型绑定 (可选)</h4>
+                          <div className="grid grid-cols-1 gap-4">
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">生图模型（OpenAI 兼容后端用）</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.image_preset_id ? String(settings.image_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) {
+                                        setSettings({ ...settings, image_preset_id: undefined, image_model_id: '' });
+                                        return;
+                                      }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, image_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`img-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.image_preset_id}
+                                      value={settings.image_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, image_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id] || []).map(m => (
+                                        <option key={`img-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`img-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      className={`btn btn-sm join-item btn-ghost ${settings.image_preset_id && presetModelsLoading[settings.image_preset_id] ? 'loading' : ''}`}
+                                      title="刷新模型列表"
+                                      onClick={() => fetchPresetModels(settings.image_preset_id, true)}
+                                      disabled={!settings.image_preset_id}
+                                    >
+                                      <RefreshCw size={14}/>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">记忆总结模型</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.summary_preset_id ? String(settings.summary_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) {
+                                        setSettings({ ...settings, summary_preset_id: undefined, summary_model_id: '' });
+                                        return;
+                                      }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, summary_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`sum-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.summary_preset_id}
+                                      value={settings.summary_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, summary_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id] || []).map(m => (
+                                        <option key={`sum-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`sum-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      className={`btn btn-sm join-item btn-ghost ${settings.summary_preset_id && presetModelsLoading[settings.summary_preset_id] ? 'loading' : ''}`}
+                                      title="刷新模型列表"
+                                      onClick={() => fetchPresetModels(settings.summary_preset_id, true)}
+                                      disabled={!settings.summary_preset_id}
+                                    >
+                                      <RefreshCw size={14}/>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">SD 转换模型（描述 → tags）</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.sd_prompt_preset_id ? String(settings.sd_prompt_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) {
+                                        setSettings({ ...settings, sd_prompt_preset_id: undefined, sd_prompt_model_id: '' });
+                                        return;
+                                      }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, sd_prompt_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`sd-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.sd_prompt_preset_id}
+                                      value={settings.sd_prompt_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, sd_prompt_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id] || []).map(m => (
+                                        <option key={`sd-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`sd-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      className={`btn btn-sm join-item btn-ghost ${settings.sd_prompt_preset_id && presetModelsLoading[settings.sd_prompt_preset_id] ? 'loading' : ''}`}
+                                      title="刷新模型列表"
+                                      onClick={() => fetchPresetModels(settings.sd_prompt_preset_id, true)}
+                                      disabled={!settings.sd_prompt_preset_id}
+                                    >
+                                      <RefreshCw size={14}/>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                       </section>
                       <section>
@@ -624,6 +843,12 @@ function App() {
               <div className="modal-box">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-xs font-bold">
+                    <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
+                    使用 SD 转换模型（描述 → tags）
+                  </label>
+                </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
                     <button className="btn flex-1" onClick={()=>setShowGenModal(false)}>取消</button>

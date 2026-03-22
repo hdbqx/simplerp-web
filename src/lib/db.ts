@@ -45,7 +45,12 @@ export interface Settings {
   user_name?: string;
   sd_url?: string;
   image_backend?: 'sdwebui' | 'openai';
+  image_preset_id?: number;
   image_model_id?: string;
+  summary_preset_id?: number;
+  summary_model_id?: string;
+  sd_prompt_preset_id?: number;
+  sd_prompt_model_id?: string;
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
