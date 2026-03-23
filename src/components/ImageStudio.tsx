@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Image as ImageIcon, RefreshCw } from 'lucide-react';
 import { LLMClient } from '../lib/llm';
 import type { ApiMode, ApiPreset, Settings } from '../lib/db';
@@ -29,6 +29,14 @@ const dataUrlToBase64 = (dataUrl: string): string => {
   const idx = dataUrl.indexOf(',');
   if (idx >= 0) return dataUrl.slice(idx + 1);
   return dataUrl;
+};
+
+const normalizeSdWebUiUiUrl = (input?: string): string => {
+  const raw = (input || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  const idx = raw.indexOf('/sdapi/');
+  if (idx >= 0) return raw.slice(0, idx);
+  return raw;
 };
 
 export function ImageStudio({
@@ -72,10 +80,19 @@ export function ImageStudio({
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
 
+  // --- 图片预览（缩放/拖拽） ---
+  const [viewerSrc, setViewerSrc] = useState<string>('');
+  const [viewerZoom, setViewerZoom] = useState<number>(1);
+  const [viewerOffset, setViewerOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [viewerDragging, setViewerDragging] = useState<boolean>(false);
+  const dragStart = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const viewerContainerRef = useRef<HTMLDivElement | null>(null);
+
   const resolvePresetById = (id?: number) => presets.find(p => p.id === id);
   const currentPreset = presets.find(p => p.id === activePresetId);
 
   const backend = (settings?.image_backend || 'sdwebui') as 'sdwebui' | 'openai';
+  const sdWebUiUrl = useMemo(() => normalizeSdWebUiUiUrl(settings?.sd_url), [settings?.sd_url]);
 
   const resolvedImagePreset =
     (imagePresetId ? resolvePresetById(parseInt(imagePresetId, 10)) : undefined) ||
@@ -96,6 +113,49 @@ export function ImageStudio({
   };
 
   const commonSizes = ['1024x1024', '1024x1792', '1792x1024', '1280x720', '720x1280'];
+
+  const openViewer = (src: string) => {
+    setViewerSrc(src);
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    // daisyUI modal uses checkbox via class; we use dialog pattern here with conditional render
+  };
+
+  const closeViewer = () => {
+    setViewerSrc('');
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    setViewerDragging(false);
+    dragStart.current = null;
+  };
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+  const onViewerWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const direction = e.deltaY > 0 ? -1 : 1;
+    const next = clamp(viewerZoom + direction * 0.15, 0.2, 6);
+    setViewerZoom(next);
+  };
+
+  const onViewerPointerDown = (e: React.PointerEvent) => {
+    if (!viewerSrc) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setViewerDragging(true);
+    dragStart.current = { x: e.clientX, y: e.clientY, ox: viewerOffset.x, oy: viewerOffset.y };
+  };
+
+  const onViewerPointerMove = (e: React.PointerEvent) => {
+    if (!viewerDragging || !dragStart.current) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setViewerOffset({ x: dragStart.current.ox + dx, y: dragStart.current.oy + dy });
+  };
+
+  const onViewerPointerUp = () => {
+    setViewerDragging(false);
+    dragStart.current = null;
+  };
 
   const run = async () => {
     if (!settings) return;
@@ -250,6 +310,9 @@ export function ImageStudio({
           <div className="flex items-center gap-2">
             <div className="text-lg font-black text-primary flex items-center gap-2"><ImageIcon size={18}/> 生图工作台</div>
             <div className="badge badge-outline">{backend === 'sdwebui' ? 'SD WebUI' : 'OpenAI 兼容'}</div>
+            {backend === 'sdwebui' && sdWebUiUrl && (
+              <button className="btn btn-xs btn-outline" onClick={() => window.open(sdWebUiUrl, '_blank', 'noopener,noreferrer')}>打开 WebUI</button>
+            )}
           </div>
           <div className="join">
             <button className={`btn btn-sm join-item ${mode === 'txt2img' ? 'btn-primary' : ''}`} onClick={() => setMode('txt2img')}>文生图</button>
@@ -430,11 +493,16 @@ export function ImageStudio({
               {results.length === 0 ? (
                 <div className="text-xs opacity-70">暂无结果，点击左侧按钮开始生成。</div>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {results.map((src, i) => (
-                    <div key={`r-${i}`} className="rounded-xl overflow-hidden border border-base-300 bg-base-100/60">
-                      <img src={src} className="w-full h-48 object-contain" />
-                    </div>
+                    <button
+                      key={`r-${i}`}
+                      className="rounded-xl overflow-hidden border border-base-300 bg-base-100/60 hover:border-primary transition-colors text-left"
+                      onClick={() => openViewer(src)}
+                      title="点击放大查看"
+                    >
+                      <img src={src} className="w-full h-64 md:h-80 object-contain bg-base-100" />
+                    </button>
                   ))}
                 </div>
               )}
@@ -442,7 +510,42 @@ export function ImageStudio({
           </div>
         </div>
       </div>
+
+      {viewerSrc && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-[95vw] w-[95vw] h-[90vh] p-0 overflow-hidden">
+            <div className="p-3 border-b border-base-300 bg-base-200 flex items-center justify-between">
+              <div className="text-xs font-black">预览（滚轮缩放 / 拖拽移动）</div>
+              <div className="flex items-center gap-2">
+                <button className="btn btn-xs" onClick={() => { setViewerZoom(1); setViewerOffset({ x: 0, y: 0 }); }}>重置</button>
+                <button className="btn btn-xs btn-ghost" onClick={closeViewer}>关闭</button>
+              </div>
+            </div>
+            <div
+              ref={viewerContainerRef}
+              className="w-full h-full bg-base-100 flex items-center justify-center select-none touch-none"
+              onWheel={onViewerWheel}
+              onPointerDown={onViewerPointerDown}
+              onPointerMove={onViewerPointerMove}
+              onPointerUp={onViewerPointerUp}
+              onPointerCancel={onViewerPointerUp}
+              onPointerLeave={onViewerPointerUp}
+            >
+              <img
+                src={viewerSrc}
+                className="max-w-none max-h-none"
+                style={{
+                  transform: `translate(${viewerOffset.x}px, ${viewerOffset.y}px) scale(${viewerZoom})`,
+                  transformOrigin: 'center',
+                  cursor: viewerDragging ? 'grabbing' : 'grab',
+                }}
+                draggable={false}
+              />
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={closeViewer}></div>
+        </div>
+      )}
     </div>
   );
 }
-
