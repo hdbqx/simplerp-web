@@ -10,7 +10,7 @@ import {
 
 function App() {
   // --- 核心状态 ---
-  const [viewMode, setViewMode] = useState<'char' | 'group'>('char');
+  const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
@@ -47,6 +47,33 @@ function App() {
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
   const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
+
+  // --- 生图工作台状态 ---
+  const [studioMode, setStudioMode] = useState<'txt2img' | 'img2img'>('txt2img');
+  const [studioPrompt, setStudioPrompt] = useState('');
+  const [studioNegative, setStudioNegative] = useState("(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark");
+  const [studioUseConversion, setStudioUseConversion] = useState(true);
+  const [studioImagePresetId, setStudioImagePresetId] = useState<string>(''); // empty => follow settings/top
+  const [studioImageModelId, setStudioImageModelId] = useState<string>(''); // empty => follow settings/top
+  const [studioOpenAiSize, setStudioOpenAiSize] = useState<string>('1024x1024');
+  const [studioOpenAiN, setStudioOpenAiN] = useState<number>(1);
+  const [studioOpenAiQuality, setStudioOpenAiQuality] = useState<string>('');
+  const [studioOpenAiStyle, setStudioOpenAiStyle] = useState<string>('');
+  const [studioOpenAiResponseFormat, setStudioOpenAiResponseFormat] = useState<string>('b64_json');
+  const [studioOpenAiPath, setStudioOpenAiPath] = useState<string>(''); // optional override
+  const [studioOpenAiMultipart, setStudioOpenAiMultipart] = useState<boolean>(true);
+  const [studioExtraJson, setStudioExtraJson] = useState<string>('');
+
+  const [studioSdWidth, setStudioSdWidth] = useState<number>(512);
+  const [studioSdHeight, setStudioSdHeight] = useState<number>(768);
+  const [studioSdSteps, setStudioSdSteps] = useState<number>(20);
+  const [studioSdCfg, setStudioSdCfg] = useState<number>(7);
+  const [studioSdSampler, setStudioSdSampler] = useState<string>('Euler a');
+  const [studioSdDenoise, setStudioSdDenoise] = useState<number>(0.6);
+  const [studioInitImage, setStudioInitImage] = useState<string>(''); // dataURL
+
+  const [studioResults, setStudioResults] = useState<string[]>([]);
+  const [studioError, setStudioError] = useState<string>('');
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
@@ -158,6 +185,187 @@ function App() {
       if(settings) await api.settings.update({ ...settings, active_model_id: modelId });
   };
 
+  const parseExtraJson = (raw: string): Record<string, unknown> => {
+    const trimmed = (raw || '').trim();
+    if (!trimmed) return {};
+    const obj = JSON.parse(trimmed);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    return obj as Record<string, unknown>;
+  };
+
+  const dataUrlToBase64 = (dataUrl: string): string => {
+    const idx = dataUrl.indexOf(',');
+    if (idx >= 0) return dataUrl.slice(idx + 1);
+    return dataUrl;
+  };
+
+  const resolvePresetById = (id?: number) => presets.find(p => p.id === id);
+
+  const resolveImagePresetAndModel = () => {
+    const currentPreset = presets.find(p => p.id === activePresetId);
+    const chosenPreset =
+      (studioImagePresetId ? resolvePresetById(parseInt(studioImagePresetId, 10)) : undefined) ||
+      resolvePresetById(settings?.image_preset_id) ||
+      currentPreset;
+
+    const chosenModel =
+      (studioImageModelId || '').trim() ||
+      (settings?.image_model_id || '').trim() ||
+      (activeModel || '').trim();
+
+    return { preset: chosenPreset, model: chosenModel };
+  };
+
+  const resolveSdPromptPresetAndModel = () => {
+    const currentPreset = presets.find(p => p.id === activePresetId);
+    const chosenPreset = resolvePresetById(settings?.sd_prompt_preset_id) || currentPreset;
+    const chosenModel = (settings?.sd_prompt_model_id || '').trim() || (activeModel || '').trim();
+    return { preset: chosenPreset, model: chosenModel };
+  };
+
+  const runStudioGenerate = async () => {
+    if (!settings) return;
+    setStudioError('');
+
+    const imageBackend = (settings.image_backend || 'sdwebui') as 'sdwebui' | 'openai';
+    if (imageBackend === 'sdwebui' && !settings.sd_url) {
+      setStudioError('请在系统设置中配置 SD URL');
+      return;
+    }
+    if (!activePresetId || !activeModel) {
+      setStudioError('请先在顶部选择 API 预设与模型');
+      return;
+    }
+
+    const { preset: imagePreset, model: imageModel } = resolveImagePresetAndModel();
+    if (imageBackend === 'openai' && (!imagePreset || !imageModel)) {
+      setStudioError('请配置生图预设/模型（或在顶部选择）');
+      return;
+    }
+
+    const raw = (studioPrompt || '').trim();
+    if (!raw) {
+      setStudioError('请输入提示词');
+      return;
+    }
+
+    if (studioMode === 'img2img' && !studioInitImage) {
+      setStudioError('请先上传一张初始图片');
+      return;
+    }
+
+    let promptToUse = raw;
+    if (studioUseConversion) {
+      const { preset: sdPreset, model: sdModel } = resolveSdPromptPresetAndModel();
+      if (!sdPreset || !sdModel) {
+        setStudioError('请配置 SD 转换模型（或在顶部选择）');
+        return;
+      }
+      const llm = new LLMClient(sdPreset.api_base, sdPreset.api_key, getPresetMode(sdPreset));
+      const tags = await llm.generateImageTags(raw, sdModel);
+      promptToUse = `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`;
+    }
+
+    let extra: Record<string, unknown> = {};
+    try {
+      extra = parseExtraJson(studioExtraJson);
+    } catch (e: any) {
+      setStudioError(`高级参数 JSON 无效：${e.message || e}`);
+      return;
+    }
+
+    setIsTyping(true);
+    try {
+      if (imageBackend === 'sdwebui') {
+        const payload: any =
+          studioMode === 'txt2img'
+            ? {
+                prompt: promptToUse,
+                negative_prompt: studioNegative,
+                steps: studioSdSteps,
+                cfg_scale: studioSdCfg,
+                sampler_name: studioSdSampler,
+                width: studioSdWidth,
+                height: studioSdHeight,
+                restore_faces: false,
+                enable_hr: false,
+                ...extra,
+              }
+            : {
+                prompt: promptToUse,
+                negative_prompt: studioNegative,
+                steps: studioSdSteps,
+                cfg_scale: studioSdCfg,
+                sampler_name: studioSdSampler,
+                width: studioSdWidth,
+                height: studioSdHeight,
+                denoising_strength: studioSdDenoise,
+                init_images: [dataUrlToBase64(studioInitImage)],
+                ...extra,
+              };
+
+        const res = await fetch('/api/images', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: studioMode,
+            sd_url: settings.sd_url,
+            payload,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data: any = await res.json();
+        const imgs = Array.isArray(data?.images) ? data.images : [];
+        const out = imgs.map((b64: string) => `data:image/png;base64,${b64}`);
+        setStudioResults(out);
+        return;
+      }
+
+      const payload: any = {
+        prompt: promptToUse,
+        size: studioOpenAiSize || '1024x1024',
+        n: studioOpenAiN || 1,
+        response_format: studioOpenAiResponseFormat || 'b64_json',
+        ...extra,
+      };
+      if (studioOpenAiQuality) payload.quality = studioOpenAiQuality;
+      if (studioOpenAiStyle) payload.style = studioOpenAiStyle;
+      if (studioMode === 'img2img') {
+        payload.image = studioInitImage;
+      }
+
+      const res = await fetch('/api/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backend: 'openai',
+          action: studioMode,
+          multipart: studioMode === 'img2img' ? studioOpenAiMultipart : undefined,
+          apiBase: imagePreset!.api_base,
+          apiKey: imagePreset!.api_key,
+          model: imageModel,
+          path: studioOpenAiPath || undefined,
+          payload,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data: any = await res.json();
+      const out: string[] = [];
+      if (Array.isArray(data?.images) && data.images[0]) {
+        out.push(...data.images.map((b64: string) => `data:image/png;base64,${b64}`));
+      }
+      if (Array.isArray(data?.urls) && data.urls[0]) {
+        out.push(...data.urls);
+      }
+      if (out.length === 0) throw new Error('后端未返回图片');
+      setStudioResults(out);
+    } catch (e: any) {
+      setStudioError(e?.message || String(e));
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   // --- 切换角色/剧场时的监听 ---
   useEffect(() => {
     setMessages([]);
@@ -266,7 +474,7 @@ function App() {
 
       const payload =
         imageBackend === 'openai'
-          ? { prompt: finalPrompt, width: 1024, height: 1536 }
+          ? { prompt: finalPrompt, size: '1024x1024', n: 1, response_format: 'b64_json' }
           : {
               prompt: finalPrompt,
               negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark",
@@ -360,6 +568,7 @@ function App() {
       <div className="tabs tabs-boxed mb-6">
         <button className={`tab flex-1 transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('char')}>单人</button>
         <button className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('group')}>剧场</button>
+        <button className={`tab flex-1 transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('image')}>生图</button>
       </div>
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
@@ -377,17 +586,233 @@ function App() {
                 }}><Trash2 size={14} /></button>
             </div>
           </div>
-        )) : groups.map(g => (
+        )) : viewMode === 'group' ? groups.map(g => (
           <div key={g.id} onClick={() => { setSelectedGroupId(g.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedGroupId === g.id ? 'bg-secondary text-secondary-content shadow-lg' : 'hover:bg-base-300'}`}>
             <span className="font-bold truncate">{g.name}</span>
             <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity" onClick={(e) => { e.stopPropagation(); if(confirm(`删除剧场 ${g.name}？`)) api.groups.delete(g.id!).then(() => loadData()); }} />
           </div>
-        ))}
-        <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if(n) { if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); else await api.groups.add({name:n, description:""}); await loadData(); } }}><Plus size={16} /> 新建</button>
+        )) : (
+          <div className="p-3 rounded-xl border border-base-300 bg-base-100/40 text-xs leading-relaxed">
+            <div className="font-black mb-2 flex items-center gap-2"><ImageIcon size={16}/> 生图工作台</div>
+            <div>支持文生图、图生图；参数可通过“高级 JSON”适配不同 OpenAI 兼容 API 或 SD WebUI。</div>
+          </div>
+        )}
+        {(viewMode === 'char' || viewMode === 'group') && (
+          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if(n) { if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); else await api.groups.add({name:n, description:""}); await loadData(); } }}><Plus size={16} /> 新建</button>
+        )}
       </div>
       <div className="mt-4 pt-4 border-t border-base-content/10"><button className="btn btn-ghost btn-sm btn-block justify-start" onClick={() => {setShowSettings(true); setMobileMenuOpen(false);}}><SettingsIcon size={16} /> 系统设置</button></div>
     </div>
   );
+
+  const ImageStudio = () => {
+    const backend = (settings?.image_backend || 'sdwebui') as 'sdwebui' | 'openai';
+    const { preset: resolvedPreset } = resolveImagePresetAndModel();
+    const resolvedPresetId = resolvedPreset?.id;
+    const resolvedPresetModels = resolvedPresetId ? (presetModelsMap[resolvedPresetId] || []) : [];
+    const commonSizes = ['1024x1024', '1024x1792', '1792x1024', '1280x720', '720x1280'];
+
+    return (
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
+        <div className="max-w-5xl mx-auto space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="text-lg font-black text-primary flex items-center gap-2"><ImageIcon size={18}/> 生图工作台</div>
+              <div className="badge badge-outline">{backend === 'sdwebui' ? 'SD WebUI' : 'OpenAI 兼容'}</div>
+            </div>
+            <div className="join">
+              <button className={`btn btn-sm join-item ${studioMode === 'txt2img' ? 'btn-primary' : ''}`} onClick={() => setStudioMode('txt2img')}>文生图</button>
+              <button className={`btn btn-sm join-item ${studioMode === 'img2img' ? 'btn-primary' : ''}`} onClick={() => setStudioMode('img2img')}>图生图</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="card bg-base-200 border border-base-300 shadow-sm">
+              <div className="card-body space-y-3">
+                <div className="text-sm font-black">输入</div>
+                <textarea className="textarea textarea-bordered w-full h-32" value={studioPrompt} onChange={e => setStudioPrompt(e.target.value)} placeholder="输入提示词（自然语言或 tags 都可）" />
+
+                <label className="flex items-center gap-2 text-xs font-bold">
+                  <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={studioUseConversion} onChange={(e)=>setStudioUseConversion(e.target.checked)} />
+                  使用 SD 转换模型（描述 → tags）
+                </label>
+
+                {studioMode === 'img2img' && (
+                  <div className="space-y-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="file-input file-input-bordered w-full"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => setStudioInitImage(String(reader.result || ''));
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                    {studioInitImage && (
+                      <div className="rounded-xl overflow-hidden border border-base-300 bg-base-100/60">
+                        <img src={studioInitImage} className="max-h-48 w-full object-contain" />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {backend === 'sdwebui' && (
+                  <>
+                    <textarea className="textarea textarea-bordered w-full h-20" value={studioNegative} onChange={e => setStudioNegative(e.target.value)} placeholder="Negative prompt（可选）" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">宽</label>
+                        <input className="input input-bordered input-sm" type="number" value={studioSdWidth} onChange={e => setStudioSdWidth(parseInt(e.target.value || '0', 10) || 0)} />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">高</label>
+                        <input className="input input-bordered input-sm" type="number" value={studioSdHeight} onChange={e => setStudioSdHeight(parseInt(e.target.value || '0', 10) || 0)} />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">Steps</label>
+                        <input className="input input-bordered input-sm" type="number" value={studioSdSteps} onChange={e => setStudioSdSteps(parseInt(e.target.value || '0', 10) || 0)} />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">CFG</label>
+                        <input className="input input-bordered input-sm" type="number" step="0.5" value={studioSdCfg} onChange={e => setStudioSdCfg(parseFloat(e.target.value || '0') || 0)} />
+                      </div>
+                    </div>
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">Sampler</label>
+                      <input className="input input-bordered input-sm" value={studioSdSampler} onChange={e => setStudioSdSampler(e.target.value)} />
+                    </div>
+                    {studioMode === 'img2img' && (
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">Denoise</label>
+                        <input className="range range-primary" type="range" min="0" max="1" step="0.05" value={studioSdDenoise} onChange={e => setStudioSdDenoise(parseFloat(e.target.value || '0'))} />
+                        <div className="text-[10px] opacity-70 mt-1">{studioSdDenoise.toFixed(2)}</div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {backend === 'openai' && (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">Size</label>
+                        <select className="select select-bordered select-sm" value={studioOpenAiSize} onChange={e => setStudioOpenAiSize(e.target.value)}>
+                          {commonSizes.map(s => <option key={`sz-${s}`} value={s}>{s}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">n</label>
+                        <input className="input input-bordered input-sm" type="number" min="1" max="8" value={studioOpenAiN} onChange={e => setStudioOpenAiN(parseInt(e.target.value || '1', 10) || 1)} />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">quality（可选）</label>
+                        <input className="input input-bordered input-sm" value={studioOpenAiQuality} onChange={e => setStudioOpenAiQuality(e.target.value)} placeholder="如：standard / hd" />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">style（可选）</label>
+                        <input className="input input-bordered input-sm" value={studioOpenAiStyle} onChange={e => setStudioOpenAiStyle(e.target.value)} placeholder="如：vivid / natural" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">response_format</label>
+                        <select className="select select-bordered select-sm" value={studioOpenAiResponseFormat} onChange={e => setStudioOpenAiResponseFormat(e.target.value)}>
+                          <option value="b64_json">b64_json</option>
+                          <option value="url">url</option>
+                        </select>
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">path 覆盖（可选）</label>
+                        <input className="input input-bordered input-sm" value={studioOpenAiPath} onChange={e => setStudioOpenAiPath(e.target.value)} placeholder="如：/v1/images/generations" />
+                      </div>
+                    </div>
+                    {studioMode === 'img2img' && (
+                      <label className="flex items-center gap-2 text-xs font-bold">
+                        <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={studioOpenAiMultipart} onChange={(e)=>setStudioOpenAiMultipart(e.target.checked)} />
+                        使用 multipart（常见 OpenAI `/images/edits`）
+                      </label>
+                    )}
+                  </>
+                )}
+
+                <div className="form-control">
+                  <label className="label text-xs font-bold">高级参数 JSON（可选，合并到请求 payload）</label>
+                  <textarea className="textarea textarea-bordered w-full h-24 font-mono text-xs" value={studioExtraJson} onChange={e => setStudioExtraJson(e.target.value)} placeholder='例如：{"seed":123,"user":"demo"}' />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">生图预设（可选）</label>
+                    <select
+                      className="select select-bordered select-sm"
+                      value={studioImagePresetId}
+                      onChange={(e) => {
+                        setStudioImagePresetId(e.target.value);
+                        setStudioImageModelId('');
+                        const v = e.target.value;
+                        if (v) fetchPresetModels(parseInt(v, 10));
+                      }}
+                    >
+                      <option value="">跟随系统绑定/顶栏</option>
+                      {presets.map(p => <option key={`studio-p-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">生图模型（可选）</label>
+                    <div className="join">
+                      <select className="select select-bordered select-sm join-item w-full" value={studioImageModelId} onChange={(e) => setStudioImageModelId(e.target.value)}>
+                        <option value="">跟随系统绑定/顶栏</option>
+                        {resolvedPresetModels.map(m => <option key={`studio-m-${m}`} value={m}>{m}</option>)}
+                        {resolvedPresetModels.length === 0 && manualModels.map(m => <option key={`studio-man-${m}`} value={m}>{m}</option>)}
+                      </select>
+                      <button
+                        className={`btn btn-sm join-item btn-ghost ${resolvedPresetId && presetModelsLoading[resolvedPresetId] ? 'loading' : ''}`}
+                        title="刷新模型列表"
+                        onClick={() => resolvedPresetId && fetchPresetModels(resolvedPresetId, true)}
+                        disabled={!resolvedPresetId}
+                      >
+                        <RefreshCw size={14}/>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {studioError && (
+                  <div className="alert alert-error py-2 text-xs">
+                    <span className="break-words">{studioError}</span>
+                  </div>
+                )}
+
+                <button className={`btn btn-primary ${isTyping ? 'loading' : ''}`} onClick={runStudioGenerate} disabled={isTyping}>
+                  {studioMode === 'txt2img' ? '生成图片' : '开始图生图'}
+                </button>
+              </div>
+            </div>
+
+            <div className="card bg-base-200 border border-base-300 shadow-sm">
+              <div className="card-body space-y-3">
+                <div className="text-sm font-black">结果</div>
+                {studioResults.length === 0 ? (
+                  <div className="text-xs opacity-70">暂无结果，点击左侧按钮开始生成。</div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {studioResults.map((src, i) => (
+                      <div key={`r-${i}`} className="rounded-xl overflow-hidden border border-base-300 bg-base-100/60">
+                        <img src={src} className="w-full h-48 object-contain" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
@@ -398,7 +823,11 @@ function App() {
         {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20 min-h-[3.5rem]">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
-          <div className="flex-1 font-bold truncate px-2 hidden md:block">{viewMode==='char'?characters.find(c=>c.id===selectedCharId)?.name:groups.find(g=>g.id===selectedGroupId)?.name || "SimpleRP"}</div>
+          <div className="flex-1 font-bold truncate px-2 hidden md:block">
+            {viewMode === 'image'
+              ? '生图工作台'
+              : (viewMode === 'char' ? characters.find(c=>c.id===selectedCharId)?.name : groups.find(g=>g.id===selectedGroupId)?.name) || "SimpleRP"}
+          </div>
           
           {/* API Selector (Top Bar) - 已优化，支持分组显示 */}
           <div className="flex-none flex items-center gap-2 mr-2 max-w-[72vw] md:max-w-none overflow-x-auto no-scrollbar">
@@ -428,7 +857,9 @@ function App() {
           </div>
 
           <div className="hidden md:flex flex-none gap-2">
-            <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
+            {viewMode !== 'image' && (
+              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
+            )}
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button className="btn btn-sm btn-ghost text-info" title="总结新进展" onClick={async ()=>{ 
@@ -458,7 +889,9 @@ function App() {
 
         <div className="md:hidden px-2 py-2 border-b border-base-300 bg-base-100">
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-            <button className="btn btn-xs btn-ghost text-error whitespace-nowrap" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={14}/> 清空</button>
+            {viewMode !== 'image' && (
+              <button className="btn btn-xs btn-ghost text-error whitespace-nowrap" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={14}/> 清空</button>
+            )}
             {viewMode === 'char' && selectedCharId && (
               <>
                 <button
@@ -489,51 +922,57 @@ function App() {
           </div>
         </div>
 
-        {/* Chat Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-          {messages.map((m, idx) => (
-            <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'} group animate-message`}>
-              <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
-                {m.role === 'user' ? '我' : (characters.find(c=>c.id===m.char_id)?.name || 'AI')}
-                <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
-                    {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
-                    {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                    <button className="hover:text-error" onClick={async () => { if (confirm("删除该条记录？")) { if (m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg => msg.id !== m.id)); } else { setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp)); } } }}><Trash2 size={10}/></button>
+        {viewMode === 'image' ? (
+          <ImageStudio />
+        ) : (
+          <>
+            {/* Chat Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+              {messages.map((m, idx) => (
+                <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'} group animate-message`}>
+                  <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
+                    {m.role === 'user' ? '我' : (characters.find(c=>c.id===m.char_id)?.name || 'AI')}
+                    <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
+                        {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
+                        {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
+                        <button className="hover:text-error" onClick={async () => { if (confirm("删除该条记录？")) { if (m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg => msg.id !== m.id)); } else { setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp)); } } }}><Trash2 size={10}/></button>
+                    </div>
+                  </div>
+                  {m.image ? (
+                    <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
+                      <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
+                      {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
+                    </div>
+                  ) : (
+                    <div className={`chat-bubble shadow-lg border ${m.role === 'user' ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
+                      {editingMsgId === m.id ? (
+                          <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
+                      ) : <div className="prose prose-sm break-words"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
+                    </div>
+                  )}
                 </div>
-              </div>
-              {m.image ? (
-                <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
-                  <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                  {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
-                </div>
-              ) : (
-                <div className={`chat-bubble shadow-lg border ${m.role === 'user' ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
-                  {editingMsgId === m.id ? (
-                      <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
-                  ) : <div className="prose prose-sm break-words"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
-                </div>
-              )}
+              ))}
+              {isTyping && <div className="chat chat-start opacity-50 animate-pulse"><div className="chat-bubble">思考中...</div></div>}
+              <div ref={bottomRef} className="h-20" />
             </div>
-          ))}
-          {isTyping && <div className="chat chat-start opacity-50 animate-pulse"><div className="chat-bubble">思考中...</div></div>}
-          <div ref={bottomRef} className="h-20" />
-        </div>
 
-        {/* Input Area */}
-        <div className="p-4 bg-base-100 border-t border-base-300">
-          <div className="max-w-4xl mx-auto flex flex-col gap-2">
-            {viewMode === 'group' && selectedGroupId && (
-              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (<button key={m.id} onClick={() => triggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">@{m.name}</button>))}
+            {/* Input Area */}
+            <div className="p-4 bg-base-100 border-t border-base-300">
+              <div className="max-w-4xl mx-auto flex flex-col gap-2">
+                {viewMode === 'group' && selectedGroupId && (
+                  <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                    {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (<button key={m.id} onClick={() => triggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">@{m.name}</button>))}
+                  </div>
+                )}
+                <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
+                    <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
+                  <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
+                  {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
+                </div>
               </div>
-            )}
-            <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
-                <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-              <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
-              {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
