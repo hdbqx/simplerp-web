@@ -31,6 +31,44 @@ const dataUrlToBase64 = (dataUrl: string): string => {
   return dataUrl;
 };
 
+const parseSize = (size: string): { w: number; h: number } | null => {
+  const m = (size || '').trim().match(/^(\d+)x(\d+)$/);
+  if (!m) return null;
+  const w = parseInt(m[1], 10);
+  const h = parseInt(m[2], 10);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { w, h };
+};
+
+const resizeDataUrl = async (dataUrl: string, maxW: number, maxH: number, mime: string): Promise<string> => {
+  const img = new Image();
+  const loaded = new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Image load failed'));
+  });
+  img.src = dataUrl;
+  await loaded;
+
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return dataUrl;
+
+  const scale = Math.min(maxW / iw, maxH / ih, 1);
+  const tw = Math.max(1, Math.round(iw * scale));
+  const th = Math.max(1, Math.round(ih * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataUrl;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, tw, th);
+
+  return canvas.toDataURL(mime);
+};
+
 const normalizeSdWebUiUiUrl = (input?: string): string => {
   const raw = (input || '').trim().replace(/\/+$/, '');
   if (!raw) return '';
@@ -65,6 +103,9 @@ export function ImageStudio({
   const [openAiResponseFormat, setOpenAiResponseFormat] = useState<string>('b64_json');
   const [openAiPath, setOpenAiPath] = useState<string>(''); // optional override
   const [openAiMultipart, setOpenAiMultipart] = useState<boolean>(true);
+  const [openAiImageField, setOpenAiImageField] = useState<string>('image');
+  const [openAiMaskField, setOpenAiMaskField] = useState<string>('mask');
+  const [autoResizeUpload, setAutoResizeUpload] = useState<boolean>(true);
 
   const [extraJson, setExtraJson] = useState<string>('');
 
@@ -278,6 +319,8 @@ export function ImageStudio({
           backend: 'openai',
           action: mode,
           multipart: mode === 'img2img' ? openAiMultipart : undefined,
+          imageField: mode === 'img2img' && openAiMultipart ? openAiImageField : undefined,
+          maskField: mode === 'img2img' && openAiMultipart ? openAiMaskField : undefined,
           apiBase: resolvedImagePreset!.api_base,
           apiKey: resolvedImagePreset!.api_key,
           model: resolvedImageModel,
@@ -341,10 +384,33 @@ export function ImageStudio({
                       const file = e.target.files?.[0];
                       if (!file) return;
                       const reader = new FileReader();
-                      reader.onload = () => setInitImage(String(reader.result || ''));
+                      reader.onload = async () => {
+                        const raw = String(reader.result || '');
+                        if (!autoResizeUpload) {
+                          setInitImage(raw);
+                          return;
+                        }
+
+                        try {
+                          if (backend === 'openai') {
+                            const sz = parseSize(openAiSize) || { w: 1024, h: 1024 };
+                            const resized = await resizeDataUrl(raw, sz.w, sz.h, 'image/png');
+                            setInitImage(resized);
+                            return;
+                          }
+                          const resized = await resizeDataUrl(raw, sdWidth || 1024, sdHeight || 1024, 'image/png');
+                          setInitImage(resized);
+                        } catch {
+                          setInitImage(raw);
+                        }
+                      };
                       reader.readAsDataURL(file);
                     }}
                   />
+                  <label className="flex items-center gap-2 text-xs font-bold">
+                    <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={autoResizeUpload} onChange={(e)=>setAutoResizeUpload(e.target.checked)} />
+                    上传后缩放到目标尺寸（减少超时/断连）
+                  </label>
                   {initImage && (
                     <div className="rounded-xl overflow-hidden border border-base-300 bg-base-100/60">
                       <img src={initImage} className="max-h-48 w-full object-contain" />
@@ -429,6 +495,18 @@ export function ImageStudio({
                       <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={openAiMultipart} onChange={(e)=>setOpenAiMultipart(e.target.checked)} />
                       使用 multipart（常见 OpenAI `/images/edits`）
                     </label>
+                  )}
+                  {mode === 'img2img' && openAiMultipart && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">image 字段名</label>
+                        <input className="input input-bordered input-sm" value={openAiImageField} onChange={e => setOpenAiImageField(e.target.value)} placeholder="默认 image" />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">mask 字段名（可选）</label>
+                        <input className="input input-bordered input-sm" value={openAiMaskField} onChange={e => setOpenAiMaskField(e.target.value)} placeholder="默认 mask" />
+                      </div>
+                    </div>
                   )}
                 </>
               )}

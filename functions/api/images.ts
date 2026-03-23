@@ -6,6 +6,8 @@ interface ImageProxyBody {
   backend?: ImageBackend;
   action?: ImageAction;
   multipart?: boolean;
+  imageField?: string;
+  maskField?: string;
 
   // sdwebui backend
   sd_url?: string;
@@ -150,41 +152,59 @@ export const onRequestPost: PagesFunction = async (context) => {
     if (trimmedKey) headers.Authorization = `Bearer ${trimmedKey}`;
 
     const useMultipart = body.multipart === true && action === 'img2img';
+    const imageField = (body.imageField || 'image').trim() || 'image';
+    const maskField = (body.maskField || 'mask').trim() || 'mask';
 
     let res: Response;
-    if (useMultipart) {
-      const form = new FormData();
-      for (const [k, v] of Object.entries(requestPayload)) {
-        if (v === undefined || v === null) continue;
-        if (k === 'image' || k === 'mask') continue;
-        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-          form.append(k, String(v));
-        } else {
-          form.append(k, JSON.stringify(v));
+    try {
+      if (useMultipart) {
+        const form = new FormData();
+        for (const [k, v] of Object.entries(requestPayload)) {
+          if (v === undefined || v === null) continue;
+          if (k === 'image' || k === 'mask') continue;
+          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+            form.append(k, String(v));
+          } else {
+            form.append(k, JSON.stringify(v));
+          }
         }
-      }
 
-      const image = (requestPayload as any).image;
-      if (typeof image === 'string' && image.trim()) {
-        const blob = dataUrlToBlob(image);
-        form.append('image', blob, 'image.png');
-      }
+        const image = (requestPayload as any).image;
+        if (typeof image === 'string' && image.trim()) {
+          const blob = dataUrlToBlob(image);
+          form.append(imageField, blob, 'image.png');
+        }
 
-      const mask = (requestPayload as any).mask;
-      if (typeof mask === 'string' && mask.trim()) {
-        const blob = dataUrlToBlob(mask);
-        form.append('mask', blob, 'mask.png');
-      }
+        const mask = (requestPayload as any).mask;
+        if (typeof mask === 'string' && mask.trim()) {
+          const blob = dataUrlToBlob(mask);
+          form.append(maskField, blob, 'mask.png');
+        }
 
-      const mpHeaders: Record<string, string> = {};
-      if (trimmedKey) mpHeaders.Authorization = `Bearer ${trimmedKey}`;
-      res = await fetch(url, { method: 'POST', headers: mpHeaders, body: form });
-    } else {
-      res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(requestPayload) });
+        const mpHeaders: Record<string, string> = {};
+        if (trimmedKey) mpHeaders.Authorization = `Bearer ${trimmedKey}`;
+        res = await fetch(url, { method: 'POST', headers: mpHeaders, body: form });
+      } else {
+        res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(requestPayload) });
+      }
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({
+          error: err?.message || 'Network connection lost.',
+          detail: { backend, action, url, multipart: useMultipart, model: body.model, imageField, maskField },
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
     }
     if (!res.ok) {
       const text = await res.text();
-      return new Response(text || 'Image generation failed', { status: res.status });
+      return new Response(
+        JSON.stringify({
+          error: text || 'Image generation failed',
+          detail: { backend, action, url, multipart: useMultipart, model: body.model, imageField, maskField },
+        }),
+        { status: res.status, headers: { 'Content-Type': 'application/json' } },
+      );
     }
     const data: any = await res.json();
     const items = Array.isArray(data?.data) ? data.data : [];
