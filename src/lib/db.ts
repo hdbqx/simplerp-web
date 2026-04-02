@@ -174,6 +174,10 @@ export const api = {
   rooms: {
     list: () => fetch(`${API}/rooms`).then(r => r.json() as Promise<Room[]>),
     add: (room: Partial<Room>) => fetch(`${API}/rooms`, { method: 'POST', headers, body: JSON.stringify(room) }).then(r => r.json() as Promise<{ id: number }>),
+    seedEmperorSim: () => fetch(`${API}/rooms?action=seed_emperor_sim`, { method: 'POST', headers, body: JSON.stringify({}) }).then(async r => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<{ ok: boolean; room_ids?: Record<string, number>; room_id?: number; message?: string }>;
+    }),
     update: (id: number, room: Partial<Room>) => fetch(`${API}/rooms`, { method: 'PUT', headers, body: JSON.stringify({ id, ...room }) }),
     delete: (id: number) => fetch(`${API}/rooms?id=${id}`, { method: 'DELETE' }),
     getMembers: (roomId: number) => fetch(`${API}/rooms?type=members&room_id=${roomId}`).then(r => r.json() as Promise<RoomMember[]>),
