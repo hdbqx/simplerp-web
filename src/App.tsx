@@ -581,35 +581,13 @@ function App() {
           </div>
         )}
         {(viewMode === 'char' || viewMode === 'group') && (
-          <div className="space-y-2 mt-4">
-            {viewMode === 'group' && (
-              <button className="btn btn-secondary btn-sm btn-block" onClick={async () => {
-                try {
-                  setIsTyping(true);
-                  await api.rooms.seedEmperorSim();
-                  await loadData();
-                  const freshRooms = await api.rooms.list();
-                  setRooms(freshRooms);
-                  const main = freshRooms.find(r => r.name === '御前议政') || freshRooms.find(r => r.category === 'emperor_sim');
-                  if (main?.id) setSelectedRoomId(main.id);
-                  alert('已创建：皇帝模拟器（御前议政/中书省/六部/后宫/外邦）');
-                } catch (e: any) {
-                  alert(e.message || String(e));
-                } finally {
-                  setIsTyping(false);
-                }
-              }}>
-                <Plus size={16} /> 创建：皇帝模拟器
-              </button>
-            )}
-            <button className="btn btn-outline btn-sm btn-block border-dashed" onClick={async () => {
-              const n = prompt("名称?");
-              if (!n) return;
-              if (viewMode === 'char') await api.characters.add({ name: n, description: "", first_message: "你好", summary: "" });
-              else await api.rooms.add({ name: n, mode: 'agents', description: "" });
-              await loadData();
-            }}><Plus size={16} /> 新建</button>
-          </div>
+          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => {
+            const n = prompt("名称?");
+            if (!n) return;
+            if (viewMode === 'char') await api.characters.add({ name: n, description: "", first_message: "你好", summary: "" });
+            else await api.rooms.add({ name: n, mode: 'agents', description: "" });
+            await loadData();
+          }}><Plus size={16} /> 新建</button>
         )}
       </div>
       <div className="mt-4 pt-4 border-t border-base-content/10"><button className="btn btn-ghost btn-sm btn-block justify-start" onClick={() => {setShowSettings(true); setMobileMenuOpen(false);}}><SettingsIcon size={16} /> 系统设置</button></div>
