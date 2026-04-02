@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode } from './lib/db';
+import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage, type Dispatch, type RoomAgentConfig, type RoomDirectorConfig, type WorldState, type RoomStateSnapshot, type WorldStateSnapshot } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { ImageStudio } from './components/ImageStudio';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy 
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy, Inbox
 } from 'lucide-react';
 
 function App() {
@@ -14,6 +14,7 @@ function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
   
   // --- API 全局状态 ---
@@ -27,7 +28,10 @@ function App() {
   // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedGroupId, setSelectedGroupId] = useState<number>();
+  const [selectedRoomId, setSelectedRoomId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
+  const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [settings, setSettings] = useState<Settings>();
   const [lorebookEntries, setLorebookEntries] = useState<LorebookEntry[]>([]);
@@ -39,6 +43,7 @@ function App() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // --- 弹窗控制状态 ---
   const [showSettings, setShowSettings] = useState(false);
@@ -48,14 +53,46 @@ function App() {
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
   const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
+  const [showInbox, setShowInbox] = useState(false);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
+
+  // --- Room 配置状态（Phase B/C/D） ---
+  const [roomAgentConfigs, setRoomAgentConfigs] = useState<RoomAgentConfig[]>([]);
+  const [roomDirectorConfig, setRoomDirectorConfig] = useState<RoomDirectorConfig | null>(null);
+  const [pendingDispatches, setPendingDispatches] = useState<Dispatch[]>([]);
+  const [roomDispatches, setRoomDispatches] = useState<Dispatch[]>([]);
+  const [roomSummaries, setRoomSummaries] = useState<Array<{ id: number; summary: string; source: string; updated_at: number }>>([]);
+  const [worldState, setWorldState] = useState<WorldState | null>(null);
+  const [draftWorldStateJson, setDraftWorldStateJson] = useState<string>('');
+  const [roomSnapshots, setRoomSnapshots] = useState<RoomStateSnapshot[]>([]);
+  const [worldSnapshots, setWorldSnapshots] = useState<WorldStateSnapshot[]>([]);
+  const [roomMembersDraft, setRoomMembersDraft] = useState<RoomMember[]>([]);
 
   // --- 计算属性：手动配置的模型列表 ---
   const manualModels = useMemo(() => {
     if (!settings?.model_list) return [];
     return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
   }, [settings?.model_list]);
+
+  const pendingCount = useMemo(
+    () => (pendingDispatches || []).filter(d => (d as any)?.status === 'pending' || !(d as any)?.status).length,
+    [pendingDispatches]
+  );
+
+  const characterNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const c of characters) {
+      if (c.id) m.set(c.id, c.name);
+    }
+    return m;
+  }, [characters]);
+
+  const isLogRoom = useMemo(() => {
+    if (viewMode !== 'group' || !selectedRoomId) return false;
+    const mode = rooms.find(r => r.id === selectedRoomId)?.mode;
+    return mode === 'log';
+  }, [viewMode, selectedRoomId, rooms]);
 
   const getPresetMode = (preset?: ApiPreset): ApiMode =>
     preset?.api_mode === 'responses' ? 'responses' : 'chat_completions';
@@ -81,13 +118,15 @@ function App() {
   // --- 初始化数据 ---
   const loadData = async () => {
     try {
-        const [c, g, s, p] = await Promise.all([
-            api.characters.list(), 
-            api.groups.list(), 
-            api.settings.get(), 
-            api.presets.list()
+        const [c, g, r, s, p, d] = await Promise.all([
+            api.characters.list(),
+            api.groups.list(),
+            api.rooms.list(),
+            api.settings.get(),
+            api.presets.list(),
+            api.dispatches.listPending().catch(() => []),
         ]);
-        setCharacters(c); setGroups(g); setSettings(s); setPresets(p);
+        setCharacters(c); setGroups(g); setRooms(r); setSettings(s); setPresets(p); setPendingDispatches(d as any);
         
         // 恢复上次选择的 Preset 和 Model
         if (s.active_preset_id && p.some(pre => pre.id === s.active_preset_id)) {
@@ -112,6 +151,38 @@ function App() {
     fetchPresetModels(settings?.sd_prompt_preset_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSettings]);
+
+  useEffect(() => {
+    if (!showGroupEdit) return;
+    if (!selectedRoomId) return;
+
+    (async () => {
+      try {
+        const [members, agentCfgs, directorCfg, summaries, dispatches, ws, snaps, wsSnaps] = await Promise.all([
+          api.rooms.getMembers(selectedRoomId),
+          api.roomAgentConfig.list(selectedRoomId).catch(() => []),
+          api.roomDirectorConfig.get(selectedRoomId).catch(() => null),
+          api.roomSummaries.list(selectedRoomId).catch(() => []),
+          api.dispatches.listByRoom(selectedRoomId).catch(() => []),
+          api.worldState.get().catch(() => null as any),
+          api.roomStateSnapshots.list(selectedRoomId).catch(() => []),
+          api.worldStateSnapshots.list().catch(() => []),
+        ]);
+
+        setRoomMembersDraft(members as any);
+        setRoomAgentConfigs(agentCfgs as any);
+        setRoomDirectorConfig(directorCfg as any);
+        setRoomSummaries(summaries as any);
+        setRoomDispatches(dispatches as any);
+        setWorldState(ws as any);
+        setDraftWorldStateJson((ws as any)?.state_json || '{}');
+        setRoomSnapshots(snaps as any);
+        setWorldSnapshots(wsSnaps as any);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, [showGroupEdit, selectedRoomId]);
 
   // --- API 状态管理逻辑 ---
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
@@ -162,19 +233,22 @@ function App() {
   // --- 切换角色/剧场时的监听 ---
   useEffect(() => {
     setMessages([]);
+    setRoomMessages([]);
     if (viewMode === 'char' && selectedCharId) {
       api.messages.list(selectedCharId).then(setMessages);
       api.lorebook.list(selectedCharId).then(setLorebookEntries);
-    } else if (viewMode === 'group' && selectedGroupId) {
-      api.groups.getMembers(selectedGroupId).then(ids => {
-          setGroupMemberIds(ids);
-          api.messages.list(undefined, selectedGroupId).then(setMessages);
-          if(ids.length > 0) api.lorebook.list(ids[0]).then(setLorebookEntries);
+    } else if (viewMode === 'group' && selectedRoomId) {
+      api.rooms.getMembers(selectedRoomId).then((m) => {
+        setRoomMembers(m);
+        const activeIds = (m || []).filter(x => (x as any).is_active !== 0).map(x => x.char_id);
+        setGroupMemberIds(activeIds);
       });
+      api.roomMessages.list(selectedRoomId).then(setRoomMessages);
     }
-  }, [selectedCharId, selectedGroupId, viewMode]);
+  }, [selectedCharId, selectedRoomId, viewMode]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length, isTyping]);
+  const messageCount = viewMode === 'group' ? roomMessages.length : messages.length;
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messageCount, isTyping]);
 
   // --- 逻辑函数 ---
   const stopGeneration = () => {
@@ -183,6 +257,109 @@ function App() {
         abortControllerRef.current = null;
         setIsTyping(false);
     }
+  };
+
+  const sendRoomChat = async (userText: string, speakerCharId?: number) => {
+    if (!settings) return;
+    if (!selectedRoomId) return alert("请先选择房间");
+    if (!activePresetId || !activeModel) return alert("请先在顶部选择 API 预设和模型！");
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsTyping(true);
+    try {
+      const roomMode = rooms.find(r => r.id === selectedRoomId)?.mode || 'agents';
+      await api.roomChat.send({
+        room_id: selectedRoomId,
+        user_input: userText,
+        speaker_char_id: speakerCharId,
+        fallback_preset_id: activePresetId,
+        fallback_model_id: activeModel,
+        max_speakers: roomMode === 'sandbox' ? 2 : 1,
+      }, controller.signal);
+      const latest = await api.roomMessages.list(selectedRoomId);
+      setRoomMessages(latest);
+      const pending = await api.dispatches.listPending().catch(() => []);
+      setPendingDispatches(pending as any);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      alert(e.message || String(e));
+    } finally {
+      setIsTyping(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleDispatchAction = async (dispatchId: number, action: 'approve' | 'reject' | 'rewrite') => {
+    try {
+      await api.dispatches.resolve(dispatchId, action);
+      const pending = await api.dispatches.listPending().catch(() => []);
+      setPendingDispatches(pending as any);
+      if (selectedRoomId) {
+        const [dispatches, latestMessages, snaps, ws, wsSnaps] = await Promise.all([
+          api.dispatches.listByRoom(selectedRoomId).catch(() => []),
+          api.roomMessages.list(selectedRoomId).catch(() => []),
+          api.roomStateSnapshots.list(selectedRoomId).catch(() => []),
+          api.worldState.get().catch(() => null as any),
+          api.worldStateSnapshots.list().catch(() => []),
+        ]);
+        setRoomDispatches(dispatches as any);
+        setRoomMessages(latestMessages as any);
+        setRoomSnapshots(snaps as any);
+        setWorldState(ws as any);
+        setDraftWorldStateJson((ws as any)?.state_json || '{}');
+        setWorldSnapshots(wsSnaps as any);
+      }
+    } catch (e: any) {
+      alert(e.message || String(e));
+    }
+  };
+
+  const saveRoomConfigs = async () => {
+    if (!selectedRoomId) return;
+    const room = rooms.find(x => x.id === selectedRoomId);
+    if (!room) return;
+
+    try { JSON.parse(room.state_json || '{}'); } catch { return alert('房间状态 JSON 格式错误'); }
+    if (room.mode === 'sandbox') {
+      try { JSON.parse(draftWorldStateJson || '{}'); } catch { return alert('全局世界状态 JSON 格式错误'); }
+    }
+
+    await api.rooms.update(selectedRoomId, {
+      name: room.name,
+      description: room.description,
+      mode: room.mode || 'agents',
+      rules: room.rules || '',
+      category: room.category || '',
+      state_json: room.state_json || '{}',
+    });
+
+    await api.rooms.updateMembers(selectedRoomId, roomMembersDraft.map((m, idx) => ({
+      char_id: m.char_id,
+      role: m.role || 'agent',
+      order_index: m.order_index ?? idx,
+      is_active: m.is_active === 0 ? 0 : 1,
+    })).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)).map((m, idx) => ({ ...m, order_index: idx })));
+
+    if (room.mode === 'sandbox') {
+      await api.worldState.update(draftWorldStateJson || '{}');
+    }
+
+    if (roomDirectorConfig) {
+      await api.roomDirectorConfig.upsert({ ...roomDirectorConfig, room_id: selectedRoomId });
+    }
+
+    for (const cfg of roomAgentConfigs) {
+      await api.roomAgentConfig.upsert({ ...cfg, room_id: selectedRoomId });
+    }
+
+    setShowGroupEdit(false);
+    await loadData();
+    const members = await api.rooms.getMembers(selectedRoomId).catch(() => []);
+    setRoomMembers(members as any);
+    const activeIds = (members as any[]).filter(x => (x as any).is_active !== 0).map(x => Number((x as any).char_id)).filter(Boolean);
+    setGroupMemberIds(activeIds);
+    alert('房间配置已保存');
   };
 
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
@@ -209,11 +386,7 @@ function App() {
         char, currentHistory, textOverride || "", 
         settings, activeModel, 
         lorebookEntries, 
-        viewMode === 'group' ? {
-          name: groups.find(g => g.id === selectedGroupId)?.name || "",
-          description: groups.find(g => g.id === selectedGroupId)?.description || "",
-          members: characters.filter(c => groupMemberIds.includes(c.id!))
-        } : undefined,
+        undefined,
         controller
       );
 
@@ -228,7 +401,7 @@ function App() {
           try {
             const res = await api.messages.add({ 
                 role: 'assistant', content: fullContent, char_id: char.id, 
-                group_id: viewMode === 'group' ? selectedGroupId : undefined, 
+                group_id: undefined, 
                 timestamp: tempTs 
             });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
@@ -246,7 +419,11 @@ function App() {
     if (imageBackend === 'sdwebui' && !settings?.sd_url) return alert("请在设置中配置 SD URL");
     if (!activePresetId || !activeModel) return alert("请先选择 API 模型用于生成 Prompt");
 
-    const rawPrompt = genPrompt || (messages.length > 0 ? messages[messages.length - 1].content : "");
+    const rawPrompt =
+      genPrompt ||
+      (viewMode === 'group'
+        ? (roomMessages.length > 0 ? roomMessages[roomMessages.length - 1].content : "")
+        : (messages.length > 0 ? messages[messages.length - 1].content : ""));
     if (!rawPrompt) return;
 
     setShowGenModal(false);
@@ -309,7 +486,7 @@ function App() {
 
       const ephemeralMsg: Message = { 
           role: 'assistant', content: '', image: imgSrc, timestamp: Date.now(), 
-          group_id: selectedGroupId, char_id: selectedCharId 
+          group_id: undefined, char_id: selectedCharId 
       };
       setMessages(prev => [...prev, ephemeralMsg]);
 
@@ -319,13 +496,19 @@ function App() {
   const handleSend = async () => {
     if (!input.trim() || !settings || isTyping) return;
     const text = input; setInput('');
-    const tx = document.querySelector('textarea'); if (tx) tx.style.height = 'auto';
+    const tx = inputRef.current; if (tx) tx.style.height = 'auto';
+
+    if (viewMode === 'group') {
+      if (isLogRoom) { alert('世界日志为只读房间'); return; }
+      await sendRoomChat(text);
+      return;
+    }
 
     const timestamp = Date.now();
     const userMsg: Message = { 
       role: 'user', content: text, timestamp,
       char_id: viewMode === 'char' ? selectedCharId : undefined,
-      group_id: viewMode === 'group' ? selectedGroupId : undefined
+      group_id: undefined
     };
 
     setMessages(prev => [...prev, userMsg]);
@@ -379,10 +562,17 @@ function App() {
                 }}><Trash2 size={14} /></button>
             </div>
           </div>
-        )) : viewMode === 'group' ? groups.map(g => (
-          <div key={g.id} onClick={() => { setSelectedGroupId(g.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedGroupId === g.id ? 'bg-secondary text-secondary-content shadow-lg' : 'hover:bg-base-300'}`}>
-            <span className="font-bold truncate">{g.name}</span>
-            <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity" onClick={(e) => { e.stopPropagation(); if(confirm(`删除剧场 ${g.name}？`)) api.groups.delete(g.id!).then(() => loadData()); }} />
+        )) : viewMode === 'group' ? rooms.map(r => (
+          <div key={r.id} onClick={() => { setSelectedRoomId(r.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedRoomId === r.id ? 'bg-secondary text-secondary-content shadow-lg' : 'hover:bg-base-300'}`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-bold truncate">{r.name}</span>
+              <span className={`badge badge-xs ${r.mode === 'sandbox' ? 'badge-primary' : r.mode === 'agents' ? 'badge-secondary' : r.mode === 'log' ? 'badge-neutral' : 'badge-ghost'}`}>
+                {r.mode || 'agents'}
+              </span>
+            </div>
+            {r.mode !== 'log' && (
+              <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity" onClick={(e) => { e.stopPropagation(); if(confirm(`删除房间 ${r.name}？`)) api.rooms.delete(r.id!).then(() => loadData()); }} />
+            )}
           </div>
         )) : (
           <div className="p-3 rounded-xl border border-base-300 bg-base-100/40 text-xs leading-relaxed">
@@ -391,7 +581,7 @@ function App() {
           </div>
         )}
         {(viewMode === 'char' || viewMode === 'group') && (
-          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if(n) { if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); else await api.groups.add({name:n, description:""}); await loadData(); } }}><Plus size={16} /> 新建</button>
+          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if(n) { if(viewMode==='char') await api.characters.add({name:n, description:"", first_message:"你好", summary:""}); else await api.rooms.add({name:n, mode:'agents', description:""}); await loadData(); } }}><Plus size={16} /> 新建</button>
         )}
       </div>
       <div className="mt-4 pt-4 border-t border-base-content/10"><button className="btn btn-ghost btn-sm btn-block justify-start" onClick={() => {setShowSettings(true); setMobileMenuOpen(false);}}><SettingsIcon size={16} /> 系统设置</button></div>
@@ -410,7 +600,9 @@ function App() {
           <div className="flex-1 font-bold truncate px-2 hidden md:block">
             {viewMode === 'image'
               ? '生图工作台'
-              : (viewMode === 'char' ? characters.find(c=>c.id===selectedCharId)?.name : groups.find(g=>g.id===selectedGroupId)?.name) || "SimpleRP"}
+              : (viewMode === 'char'
+                  ? characters.find(c=>c.id===selectedCharId)?.name
+                  : rooms.find(r=>r.id===selectedRoomId)?.name) || "SimpleRP"}
           </div>
           
           {/* API Selector (Top Bar) - 已优化，支持分组显示 */}
@@ -442,7 +634,14 @@ function App() {
 
           <div className="hidden md:flex flex-none gap-2">
             {viewMode !== 'image' && (
-              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={18}/></button>
+              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
+                if (!confirm("确定清空会话？")) return;
+                if (viewMode === 'group' && selectedRoomId) {
+                  api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); });
+                } else {
+                  api.messages.clear(viewMode==='char'?selectedCharId:undefined, undefined).then(()=>{setMessages([]); alert("已清空");});
+                }
+              }}><Eraser size={18}/></button>
             )}
             {viewMode === 'char' && selectedCharId && (
               <>
@@ -467,14 +666,27 @@ function App() {
                 <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
               </>
             )}
-            {viewMode === 'group' && selectedGroupId && <button className="btn btn-sm btn-secondary" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>}
+            <button className="btn btn-sm btn-ghost relative" title="公文箱 / Inbox" onClick={() => setShowInbox(true)}>
+              <Inbox size={18} />
+              {pendingCount > 0 && (
+                <span className="badge badge-error badge-xs absolute -top-1 -right-1">{pendingCount}</span>
+              )}
+            </button>
+            {viewMode === 'group' && selectedRoomId && <button className="btn btn-sm btn-secondary" title="房间设置" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>}
           </div>
         </div>
 
         <div className="md:hidden px-2 py-2 border-b border-base-300 bg-base-100">
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
             {viewMode !== 'image' && (
-              <button className="btn btn-xs btn-ghost text-error whitespace-nowrap" onClick={() => { if(confirm("确定清空会话？")) api.messages.clear(viewMode==='char'?selectedCharId:undefined, viewMode==='group'?selectedGroupId:undefined).then(()=>{setMessages([]); alert("已清空");}); }}><Eraser size={14}/> 清空</button>
+              <button className="btn btn-xs btn-ghost text-error whitespace-nowrap" onClick={() => {
+                if (!confirm("确定清空会话？")) return;
+                if (viewMode === 'group' && selectedRoomId) {
+                  api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); });
+                } else {
+                  api.messages.clear(viewMode==='char'?selectedCharId:undefined, undefined).then(()=>{setMessages([]); alert("已清空");});
+                }
+              }}><Eraser size={14}/> 清空</button>
             )}
             {viewMode === 'char' && selectedCharId && (
               <>
@@ -502,7 +714,13 @@ function App() {
                 <button className="btn btn-xs btn-primary whitespace-nowrap" onClick={()=>setShowCharEdit(true)}><Pencil size={14}/> 人设</button>
               </>
             )}
-            {viewMode === 'group' && selectedGroupId && <button className="btn btn-xs btn-secondary whitespace-nowrap" onClick={()=>setShowGroupEdit(true)}><Users size={14}/> 剧场</button>}
+            <button className="btn btn-xs btn-ghost relative whitespace-nowrap" onClick={() => setShowInbox(true)}>
+              <Inbox size={14} /> 公文
+              {pendingCount > 0 && (
+                <span className="badge badge-error badge-xs absolute -top-1 -right-1">{pendingCount}</span>
+              )}
+            </button>
+            {viewMode === 'group' && selectedRoomId && <button className="btn btn-xs btn-secondary whitespace-nowrap" onClick={()=>setShowGroupEdit(true)}><Users size={14}/> 房间</button>}
           </div>
         </div>
 
@@ -522,15 +740,27 @@ function App() {
           <>
             {/* Chat Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-              {messages.map((m, idx) => (
-                <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'} group animate-message`}>
+              {(viewMode === 'group' ? (roomMessages as any) : (messages as any)).map((m: any, idx: number) => {
+                const isUser = m.role === 'user' || m.sender_type === 'user';
+                const isSystemLike = viewMode === 'group' && (m.sender_type === 'tool' || m.sender_type === 'director' || m.role === 'system');
+                const headerName =
+                  isUser
+                    ? '我'
+                    : viewMode === 'group'
+                      ? (m.sender_type === 'director' ? 'Director' : m.sender_type === 'tool' ? 'Tool' : (characterNameById.get(m.char_id) || 'AI'))
+                      : (characterNameById.get(m.char_id) || 'AI');
+
+                return (
+                <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group animate-message`}>
                   <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
-                    {m.role === 'user' ? '我' : (characters.find(c=>c.id===m.char_id)?.name || 'AI')}
-                    <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
-                        {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
-                        {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
-                        <button className="hover:text-error" onClick={async () => { if (confirm("删除该条记录？")) { if (m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg => msg.id !== m.id)); } else { setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp)); } } }}><Trash2 size={10}/></button>
-                    </div>
+                    {headerName}
+                    {viewMode === 'char' && (
+                      <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
+                          {!m.image && <button className="hover:text-primary" onClick={()=>{setEditingMsgId(m.id!); setEditContent(m.content)}}><Pencil size={10}/></button>}
+                          {m.role !== 'user' && idx === messages.length - 1 && <button className="hover:text-primary" onClick={handleRegenerate}><RefreshCw size={10}/></button>}
+                          <button className="hover:text-error" onClick={async () => { if (confirm("删除该条记录？")) { if (m.id) { await api.messages.delete(m.id); setMessages(prev => prev.filter(msg => msg.id !== m.id)); } else { setMessages(prev => prev.filter(msg => msg.timestamp !== m.timestamp)); } } }}><Trash2 size={10}/></button>
+                      </div>
+                    )}
                   </div>
                   {m.image ? (
                     <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
@@ -538,14 +768,15 @@ function App() {
                       {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
                     </div>
                   ) : (
-                    <div className={`chat-bubble shadow-lg border ${m.role === 'user' ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
-                      {editingMsgId === m.id ? (
+                    <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : isSystemLike ? 'bg-base-300 text-base-content border-base-300 text-xs' : 'bg-base-200 text-base-content border-base-300'}`}>
+                      {viewMode === 'char' && editingMsgId === m.id ? (
                           <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
-                      ) : <div className="prose prose-sm break-words"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
+                      ) : <div className={`prose prose-sm break-words ${isSystemLike ? 'prose-p:my-1' : ''}`}><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
                     </div>
                   )}
                 </div>
-              ))}
+              );
+              })}
               {isTyping && <div className="chat chat-start opacity-50 animate-pulse"><div className="chat-bubble">思考中...</div></div>}
               <div ref={bottomRef} className="h-20" />
             </div>
@@ -553,15 +784,19 @@ function App() {
             {/* Input Area */}
             <div className="p-4 bg-base-100 border-t border-base-300">
               <div className="max-w-4xl mx-auto flex flex-col gap-2">
-                {viewMode === 'group' && selectedGroupId && (
+                {viewMode === 'group' && selectedRoomId && !isLogRoom && (
                   <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                    {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (<button key={m.id} onClick={() => triggerAI(m)} disabled={isTyping} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">@{m.name}</button>))}
+                    {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (
+                      <button key={m.id} onClick={() => sendRoomChat(input || '', m.id)} disabled={isTyping || !input.trim()} className="btn btn-xs btn-outline btn-secondary whitespace-nowrap rounded-full">
+                        @{m.name}
+                      </button>
+                    ))}
                   </div>
                 )}
                 <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
-                    <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(messages[messages.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-                  <textarea className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder="输入消息..." onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
-                  {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
+                    <button className="btn btn-circle btn-ghost btn-sm text-accent" disabled={isLogRoom} onClick={()=>{const src = viewMode === 'group' ? (roomMessages as any[]) : (messages as any[]); setGenPrompt(src[src.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
+                  <textarea ref={inputRef} disabled={isLogRoom} className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder={isLogRoom ? "世界日志只读（不能发言）" : "输入消息..."} onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); handleSend();}}} />
+                  {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (<button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={isLogRoom || !input.trim()}><Send size={18}/></button>)}
                 </div>
               </div>
             </div>
@@ -816,29 +1051,339 @@ function App() {
           </div>
       )}
 
-      {/* 3. 剧场编辑器 (保持不变) */}
-      {showGroupEdit && selectedGroupId && (
+      {/* 3. 房间编辑器 (Phase A-D) */}
+      {showGroupEdit && selectedRoomId && (() => {
+        const room = rooms.find(r => r.id === selectedRoomId);
+        if (!room) return null;
+        const roomPendingDispatches = roomDispatches.filter(d => d.status === 'pending');
+        return (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-3xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center"><h3>剧场/群聊配置</h3><button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowGroupEdit(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="form-control"><label className="label font-bold">剧场名</label><input className="input input-bordered" value={groups.find(g=>g.id===selectedGroupId)?.name} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, name:e.target.value}:g))} /></div>
-                      <div className="form-control"><label className="label font-bold text-xs text-primary">当前场景描述</label><textarea className="textarea textarea-bordered h-40" value={groups.find(g=>g.id===selectedGroupId)?.description} onChange={e=>setGroups(groups.map(g=>g.id===selectedGroupId?{...g, description:e.target.value}:g))} /></div>
-                      <div className="space-y-4">
-                          <label className="label font-bold text-xs">选择成员</label>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              {characters.map(c => (
-                                  <label key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${groupMemberIds.includes(c.id!) ? 'border-primary bg-primary/10' : 'border-base-300'}`}>
-                                      <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={groupMemberIds.includes(c.id!)} onChange={e => { const next = e.target.checked ? [...groupMemberIds, c.id!] : groupMemberIds.filter(id => id !== c.id); setGroupMemberIds(next); }} />
-                                      <span className="text-sm truncate font-bold">{c.name}</span>
-                                  </label>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
-                  <div className="p-6 border-t bg-base-200 flex justify-end"><button className="btn btn-primary" onClick={async ()=>{const g=groups.find(grp=>grp.id===selectedGroupId); if(g){await api.groups.update(selectedGroupId, {...g, memberIds: groupMemberIds}); setShowGroupEdit(false); alert("已更新剧场成员")}}}>保存剧场</button></div>
+            <div className="modal-box max-w-6xl h-[90vh] flex flex-col p-0 overflow-hidden">
+              <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">
+                <h3>房间配置 / Sandbox & Agent</h3>
+                <button className="btn btn-sm btn-circle btn-ghost" onClick={() => setShowGroupEdit(false)}><X /></button>
               </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="form-control">
+                    <label className="label font-bold">房间名</label>
+                    <input className="input input-bordered" value={room.name || ''} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, name: e.target.value } : r))} />
+                  </div>
+                  <div className="form-control">
+                    <label className="label font-bold">模式</label>
+                    <select className="select select-bordered" value={room.mode || 'agents'} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, mode: e.target.value as any } : r))}>
+                      <option value="agents">Agent 模式</option>
+                      <option value="sandbox">Sandbox 模式</option>
+                      <option value="chat">Chat 模式</option>
+                    </select>
+                  </div>
+                  <div className="form-control">
+                    <label className="label font-bold">分类</label>
+                    <input className="input input-bordered" placeholder="例如：主线 / 支线 / 系统" value={room.category || ''} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, category: e.target.value } : r))} />
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="form-control">
+                    <label className="label font-bold text-xs text-primary">场景描述</label>
+                    <textarea className="textarea textarea-bordered h-40" value={room.description || ''} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, description: e.target.value } : r))} />
+                  </div>
+                  <div className="form-control">
+                    <label className="label font-bold text-xs text-secondary">规则 / 调度说明</label>
+                    <textarea className="textarea textarea-bordered h-40 font-mono text-xs" placeholder="例如：严格回合制；导演每回合最多选择 2 名角色；状态修改须走 HITL..." value={room.rules || ''} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, rules: e.target.value } : r))} />
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="form-control">
+                    <label className="label font-bold text-xs">房间状态 JSON</label>
+                    <textarea className="textarea textarea-bordered h-52 font-mono text-[11px]" value={room.state_json || '{}'} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, state_json: e.target.value } : r))} />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="label font-bold text-xs m-0">全局世界状态 JSON</label>
+                      {room.mode === 'sandbox' && <span className="badge badge-primary badge-sm">保存房间时同步</span>}
+                    </div>
+                    <textarea className="textarea textarea-bordered h-52 font-mono text-[11px]" value={draftWorldStateJson} onChange={e => setDraftWorldStateJson(e.target.value)} />
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div className="p-4 rounded-xl border border-base-300 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-black text-sm">成员 / 顺序 / 角色</div>
+                      <div className="text-[11px] opacity-60">可在聊天输入区通过 @角色 指定发言</div>
+                    </div>
+                    <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                      {characters.map(c => {
+                        const existing = roomMembersDraft.find(m => m.char_id === c.id);
+                        const active = !!existing;
+                        return (
+                          <div key={c.id} className={`p-3 rounded-xl border ${active ? 'border-primary bg-primary/5' : 'border-base-300 bg-base-100'}`}>
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                className="checkbox checkbox-primary checkbox-sm"
+                                checked={active}
+                                onChange={e => {
+                                  if (!c.id) return;
+                                  if (e.target.checked) {
+                                    setRoomMembersDraft(prev => [...prev, { char_id: c.id!, role: 'agent', order_index: prev.length, is_active: 1 }]);
+                                  } else {
+                                    setRoomMembersDraft(prev => prev.filter(m => m.char_id !== c.id).map((m, idx) => ({ ...m, order_index: idx })));
+                                  }
+                                }}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold truncate">{c.name}</div>
+                                <div className="text-[11px] opacity-60 truncate">{c.description || '未填写描述'}</div>
+                              </div>
+                              {active && (
+                                <div className="flex gap-2 items-center">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    className="input input-bordered input-xs w-16"
+                                    value={existing?.order_index ?? 0}
+                                    onChange={e => setRoomMembersDraft(prev => prev.map(m => m.char_id === c.id ? { ...m, order_index: parseInt(e.target.value || '0', 10) || 0 } : m))}
+                                  />
+                                  <select
+                                    className="select select-bordered select-xs"
+                                    value={existing?.role || 'agent'}
+                                    onChange={e => setRoomMembersDraft(prev => prev.map(m => m.char_id === c.id ? { ...m, role: e.target.value } : m))}
+                                  >
+                                    <option value="agent">agent</option>
+                                    <option value="npc">npc</option>
+                                    <option value="narrator">narrator</option>
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-base-300 space-y-3">
+                    <div className="font-black text-sm">导演配置</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">预设</label>
+                        <select className="select select-bordered" value={roomDirectorConfig?.api_preset_id ? String(roomDirectorConfig.api_preset_id) : ''} onChange={e => {
+                          const v = e.target.value ? parseInt(e.target.value, 10) : null;
+                          if (v) fetchPresetModels(v);
+                          setRoomDirectorConfig(prev => ({ ...(prev || { room_id: selectedRoomId }), api_preset_id: v, model_id: prev?.model_id || null, temperature: prev?.temperature ?? 0.7, max_output_tokens: prev?.max_output_tokens ?? 600 }));
+                        }}>
+                          <option value="">跟随顶部预设</option>
+                          {presets.map(p => <option key={`dir-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">模型</label>
+                        <select className="select select-bordered" value={roomDirectorConfig?.model_id || ''} onChange={e => setRoomDirectorConfig(prev => ({ ...(prev || { room_id: selectedRoomId }), model_id: e.target.value || null, api_preset_id: prev?.api_preset_id ?? null, temperature: prev?.temperature ?? 0.7, max_output_tokens: prev?.max_output_tokens ?? 600 }))}>
+                          <option value="">跟随顶部模型</option>
+                          {(roomDirectorConfig?.api_preset_id ? (presetModelsMap[roomDirectorConfig.api_preset_id] || []) : []).map(m => <option key={`dir-model-${m}`} value={m}>{m}</option>)}
+                          {manualModels.map(m => <option key={`dir-manual-${m}`} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">温度</label>
+                        <input type="number" step="0.1" className="input input-bordered" value={roomDirectorConfig?.temperature ?? 0.7} onChange={e => setRoomDirectorConfig(prev => ({ ...(prev || { room_id: selectedRoomId }), api_preset_id: prev?.api_preset_id ?? null, model_id: prev?.model_id ?? null, temperature: parseFloat(e.target.value || '0.7'), max_output_tokens: prev?.max_output_tokens ?? 600 }))} />
+                      </div>
+                      <div className="form-control">
+                        <label className="label text-xs font-bold">输出上限</label>
+                        <input type="number" className="input input-bordered" value={roomDirectorConfig?.max_output_tokens ?? 600} onChange={e => setRoomDirectorConfig(prev => ({ ...(prev || { room_id: selectedRoomId }), api_preset_id: prev?.api_preset_id ?? null, model_id: prev?.model_id ?? null, temperature: prev?.temperature ?? 0.7, max_output_tokens: parseInt(e.target.value || '600', 10) || 600 }))} />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="p-4 rounded-xl border border-base-300 space-y-3">
+                  <div className="font-black text-sm">Agent 配置（按成员）</div>
+                  <div className="space-y-3">
+                    {roomMembersDraft.slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)).map(member => {
+                      const cfg = roomAgentConfigs.find(x => x.char_id === member.char_id) || { room_id: selectedRoomId, char_id: member.char_id, temperature: 0.8, max_output_tokens: 800, tool_policy_json: '{"update_state":"dispatch","request_image":"dispatch"}' };
+                      const selectedPresetId = cfg.api_preset_id || undefined;
+                      return (
+                        <div key={`agent-cfg-${member.char_id}`} className="p-3 rounded-xl border border-base-300 bg-base-100">
+                          <div className="font-bold mb-3">{characterNameById.get(member.char_id) || `#${member.char_id}`}</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                            <select className="select select-bordered" value={selectedPresetId ? String(selectedPresetId) : ''} onChange={e => {
+                              const pid = e.target.value ? parseInt(e.target.value, 10) : null;
+                              if (pid) fetchPresetModels(pid);
+                              setRoomAgentConfigs(prev => {
+                                const next = prev.filter(x => x.char_id !== member.char_id);
+                                return [...next, { ...cfg, api_preset_id: pid }];
+                              });
+                            }}>
+                              <option value="">跟随顶部预设</option>
+                              {presets.map(p => <option key={`agent-preset-${member.char_id}-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                            </select>
+                            <select className="select select-bordered" value={cfg.model_id || ''} onChange={e => setRoomAgentConfigs(prev => {
+                              const next = prev.filter(x => x.char_id !== member.char_id);
+                              return [...next, { ...cfg, model_id: e.target.value || null }];
+                            })}>
+                              <option value="">跟随顶部模型</option>
+                              {(selectedPresetId ? (presetModelsMap[selectedPresetId] || []) : []).map(m => <option key={`agent-model-${member.char_id}-${m}`} value={m}>{m}</option>)}
+                              {manualModels.map(m => <option key={`agent-manual-${member.char_id}-${m}`} value={m}>{m}</option>)}
+                            </select>
+                            <input type="number" step="0.1" className="input input-bordered" value={cfg.temperature ?? 0.8} onChange={e => setRoomAgentConfigs(prev => {
+                              const next = prev.filter(x => x.char_id !== member.char_id);
+                              return [...next, { ...cfg, temperature: parseFloat(e.target.value || '0.8') }];
+                            })} />
+                            <input type="number" className="input input-bordered" value={cfg.max_output_tokens ?? 800} onChange={e => setRoomAgentConfigs(prev => {
+                              const next = prev.filter(x => x.char_id !== member.char_id);
+                              return [...next, { ...cfg, max_output_tokens: parseInt(e.target.value || '800', 10) || 800 }];
+                            })} />
+                            <input className="input input-bordered font-mono text-xs" value={cfg.tool_policy_json || ''} onChange={e => setRoomAgentConfigs(prev => {
+                              const next = prev.filter(x => x.char_id !== member.char_id);
+                              return [...next, { ...cfg, tool_policy_json: e.target.value }];
+                            })} placeholder='{"update_state":"dispatch"}' />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-xl border border-base-300 space-y-3">
+                    <div className="font-black text-sm">长期记忆</div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {roomSummaries.length === 0 ? <div className="text-sm opacity-60">暂无记忆摘要。</div> : roomSummaries.map(s => (
+                        <div key={s.id} className="p-3 rounded-lg bg-base-200 border border-base-content/5">
+                          <div className="text-[11px] opacity-60 mb-1">{s.source} · {new Date(s.updated_at).toLocaleString()}</div>
+                          <div className="text-sm whitespace-pre-wrap">{s.summary}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-xl border border-base-300 space-y-3">
+                    <div className="font-black text-sm">房间状态快照</div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {roomSnapshots.length === 0 ? <div className="text-sm opacity-60">暂无快照。</div> : roomSnapshots.map(s => (
+                        <div key={s.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-base-200">
+                          <span className="text-xs">#{s.id} · {new Date(s.created_at).toLocaleString()}</span>
+                          <button className="btn btn-xs" onClick={async () => {
+                            await api.roomStateSnapshots.restore(s.id);
+                            const [snaps, latestMessages] = await Promise.all([
+                              api.roomStateSnapshots.list(selectedRoomId),
+                              api.roomMessages.list(selectedRoomId),
+                            ]);
+                            setRoomSnapshots(snaps as any);
+                            setRoomMessages(latestMessages as any);
+                            const refreshedRooms = await api.rooms.list();
+                            setRooms(refreshedRooms);
+                          }}>回滚</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-xl border border-base-300 space-y-3">
+                    <div className="font-black text-sm">全局状态快照</div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {worldSnapshots.length === 0 ? <div className="text-sm opacity-60">暂无快照。</div> : worldSnapshots.map(s => (
+                        <div key={s.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-base-200">
+                          <span className="text-xs">#{s.id} · {new Date(s.created_at).toLocaleString()}</span>
+                          <button className="btn btn-xs" onClick={async () => {
+                            await api.worldStateSnapshots.restore(s.id);
+                            const [ws, wsSnaps] = await Promise.all([api.worldState.get(), api.worldStateSnapshots.list()]);
+                            setWorldState(ws);
+                            setDraftWorldStateJson(ws.state_json || '{}');
+                            setWorldSnapshots(wsSnaps);
+                          }}>回滚</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="p-4 rounded-xl border border-base-300 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-black text-sm">房间公文流</div>
+                    <div className="badge badge-secondary badge-sm">pending {roomPendingDispatches.length}</div>
+                  </div>
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {roomDispatches.length === 0 ? <div className="text-sm opacity-60">暂无公文。</div> : roomDispatches.map(d => (
+                      <div key={d.id} className="p-3 rounded-lg bg-base-200 border border-base-content/5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-bold text-sm">{d.abstract}</div>
+                          <span className={`badge badge-sm ${d.status === 'approved' ? 'badge-success' : d.status === 'rejected' ? 'badge-error' : d.status === 'rewrite_requested' ? 'badge-warning' : 'badge-secondary'}`}>{d.status || 'pending'}</span>
+                        </div>
+                        <div className="text-[11px] opacity-60 mt-1">#{d.id} · from {d.from_room_id ?? '-'} → {d.to_room_id} · {d.created_at ? new Date(d.created_at).toLocaleString() : ''}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+              <div className="p-6 border-t bg-base-200 flex justify-between items-center gap-3">
+                <div className="text-xs opacity-70">Global updated: {worldState?.updated_at ? new Date(worldState.updated_at).toLocaleString() : '未加载'}</div>
+                <div className="flex gap-2">
+                  <button className="btn" onClick={() => setShowGroupEdit(false)}>取消</button>
+                  <button className="btn btn-primary" onClick={saveRoomConfigs}>保存房间</button>
+                </div>
+              </div>
+            </div>
           </div>
+        );
+      })()}
+
+      {/* 3b. 公文箱 / Inbox (Phase D) */}
+      {showInbox && (
+        <div className="modal modal-open text-base-content">
+          <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
+            <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">
+              <h3 className="flex items-center gap-2"><Inbox size={18}/> 公文箱 / Inbox</h3>
+              <button className="btn btn-sm btn-circle btn-ghost" onClick={() => setShowInbox(false)}><X /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs opacity-70">待处理：{pendingCount}</div>
+                <button className="btn btn-sm" onClick={async () => {
+                  const pending = await api.dispatches.listPending().catch(() => []);
+                  setPendingDispatches(pending as any);
+                }}><RefreshCw size={16}/> 刷新</button>
+              </div>
+
+              {(pendingDispatches || []).filter(d => (d as any)?.status === 'pending' || !(d as any)?.status).length === 0 ? (
+                <div className="p-4 rounded-xl border border-base-300 text-sm opacity-70">暂无待处理公文。</div>
+              ) : (
+                <div className="space-y-3">
+                  {(pendingDispatches || []).filter(d => (d as any)?.status === 'pending' || !(d as any)?.status).map(d => {
+                    const payloadObj = (() => {
+                      try { return d.payload_json ? JSON.parse(d.payload_json) : null; } catch { return null; }
+                    })();
+                    return (
+                      <div key={d.id} className="p-4 rounded-xl border border-base-300 bg-base-100 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-bold truncate">{d.abstract}</div>
+                            <div className="text-[11px] opacity-70 mt-1">
+                              from: {d.from_room_id ?? '-'} → to: {d.to_room_id} · #{d.id}
+                            </div>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <button className="btn btn-sm btn-success" onClick={() => handleDispatchAction(d.id!, 'approve')}>批准</button>
+                            <button className="btn btn-sm btn-error" onClick={() => handleDispatchAction(d.id!, 'reject')}>驳回</button>
+                          </div>
+                        </div>
+                        {payloadObj && (
+                          <details className="collapse collapse-arrow bg-base-200 border border-base-content/5">
+                            <summary className="collapse-title text-xs font-bold">Payload</summary>
+                            <div className="collapse-content">
+                              <pre className="text-[11px] whitespace-pre-wrap break-words font-mono">{JSON.stringify(payloadObj, null, 2)}</pre>
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 4. 世界书编辑器 (保持不变) */}
