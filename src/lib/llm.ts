@@ -67,8 +67,8 @@ export class LLMClient {
   }
 
   private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
-    if (!entries || entries.length === 0) return '';
-    const contextText = (currentInput + ' ' + history.slice(-10).map(m => m.content).join(' ')).toLowerCase();
+  if (!entries || entries.length === 0) return '';
+    const contextText = (currentInput + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
     const hits = entries.filter((e: LorebookEntry) => {
       if (!e.isActive || !e.keywords) return false;
       if (e.keywords.trim() === '*') return true;
@@ -167,7 +167,7 @@ export class LLMClient {
     const fullSystemContent = replaceVariables(basePrompt + lorebookInjection, settings, char);
 
     const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
-    history.slice(-15).forEach((m: Message) => {
+    history.forEach((m: Message) => {
       if (isGroupMode) {
         const name = m.role === 'user' ? playerDisplayName : (char.name || 'AI');
         chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
@@ -228,7 +228,6 @@ export class LLMClient {
     const facts = history
       .filter(m => m.content && m.content.trim() && !m.image)
       .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
-      .slice(-40)
       .join('\n');
 
     if (!facts) return '';
