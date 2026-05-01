@@ -69,9 +69,22 @@ export const onRequestPost: PagesFunction = async (context) => {
       const spaceBase = "https://mrfakename-z-image-turbo.hf.space";
       const postUrl = `${spaceBase}/gradio_api/call/generate_image`;
       
-      // Gradio 参数结构通常是一个按 UI 组件排序的数组，[prompt, seed, randomize_seed, width, height, steps]
-      // 大部分 Space 允许只传前几个必要的
-      const hfPayload = { data: [prompt] }; 
+      // 生成随机 session_hash
+      const sessionHash = Math.random().toString(36).substring(2, 12);
+      
+      // 【核心修复】：补齐 Gradio API 要求的完整参数矩阵
+      // 对应 UI: Prompt, Seed, Randomize Seed, Width, Height, Num Steps
+      const hfPayload = { 
+        data: [
+          prompt, 
+          0,       // Seed
+          true,    // Randomize seed
+          1024,    // Width
+          1024,    // Height
+          8        // Num inference steps
+        ],
+        session_hash: sessionHash
+      }; 
 
       let lastError = '';
       
@@ -139,13 +152,19 @@ export const onRequestPost: PagesFunction = async (context) => {
                 if (dataLine) {
                   const dataStr = dataLine.substring(6).trim();
                   const dataObj = JSON.parse(dataStr);
-                  // Gradio 返回的 data 通常是一个数组，包含生成的输出对象
                   if (dataObj && dataObj[0]) {
-                    finalImageUrl = dataObj[0].url || dataObj[0].image?.url || dataObj[0].path || '';
+                    // Gradio v4 的图片路径通常在 path 字段中
+                    finalImageUrl = dataObj[0].url || `/gradio_api/file=${dataObj[0].path}`;
                   }
                 }
               } else if (event.includes('event: error')) {
-                lastError = "Gradio 服务器生成内部错误";
+                // 【核心修复】：精准捕获 Python 代码报错信息
+                const dataLine = event.split('\n').find(l => l.startsWith('data: '));
+                if (dataLine) {
+                  lastError = `Gradio 后端报错: ${dataLine.substring(6).trim()}`;
+                } else {
+                  lastError = "Gradio 服务器生成内部错误";
+                }
               }
             }
             if (finalImageUrl || lastError) break; 
@@ -176,7 +195,7 @@ export const onRequestPost: PagesFunction = async (context) => {
         }
       }
 
-      return new Response(JSON.stringify({ error: `Z-Image 生成失败，所有 Key 已用尽。最新报错: ${lastError}` }), { status: 500 });
+      return new Response(JSON.stringify({ error: `Z-Image 生成失败，最新报错: ${lastError}` }), { status: 500 });
     }
 
     // ==========================================
