@@ -202,7 +202,6 @@ function App() {
     setIsTyping(true);
     try {
       if (speakerCharId) {
-        // 如果 @ 了人，触发 AI 回复
         if (!activePresetId || !activeModel) return alert("请先在顶部选择 API 预设和模型！");
         await api.roomChat.send({
           room_id: selectedRoomId,
@@ -212,7 +211,6 @@ function App() {
           fallback_model_id: activeModel,
         });
       } else if (userText) {
-        // 如果只是玩家旁白，不 @ 人，仅存入数据库
         await api.roomMessages.add({
           room_id: selectedRoomId,
           role: 'user',
@@ -356,7 +354,7 @@ function App() {
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (viewMode === 'group') {
-      await sendRoomChat(text, null); // 默认不 @ 任何人，仅发旁白
+      await sendRoomChat(text, null); // 默认发旁白
       return;
     }
 
@@ -618,7 +616,7 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* 1. 设置面板 */}
+      {/* 1. 设置面板 (已完全恢复所有原配置选项) */}
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -632,8 +630,146 @@ function App() {
                               <label className="label text-xs font-bold">生图后端</label>
                               <select className="select select-bordered" value={settings.image_backend || 'sdwebui'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
                                 <option value="sdwebui">SD WebUI (txt2img)</option>
-                                <option value="openai">OpenAI 兼容</option>
+                                <option value="openai">OpenAI 兼容 (/images/generations)</option>
                               </select>
+                            </div>
+                            { (settings.image_backend || 'sdwebui') === 'sdwebui' ? (
+                              <div className="form-control"><label className="label text-xs font-bold">SD 地址 (API)</label><input className="input input-bordered" placeholder="http://127.0.0.1:7860" value={settings.sd_url || ''} onChange={e=>setSettings({...settings, sd_url:e.target.value})} /></div>
+                            ) : (
+                              <div className="form-control"><label className="label text-xs font-bold">OpenAI 生图模型 (可选)</label><input className="input input-bordered" placeholder="留空则使用顶部已选模型；如：gpt-image-1" value={settings.image_model_id || ''} onChange={e=>setSettings({...settings, image_model_id:e.target.value})} /></div>
+                            )}
+                          </div>
+                      </section>
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">模型绑定 (可选)</h4>
+                          <div className="grid grid-cols-1 gap-4">
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">生图模型（OpenAI 兼容后端用）</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.image_preset_id ? String(settings.image_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) { setSettings({ ...settings, image_preset_id: undefined, image_model_id: '' }); return; }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, image_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`img-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.image_preset_id}
+                                      value={settings.image_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, image_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id] || []).map(m => (
+                                        <option key={`img-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`img-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button className={`btn btn-sm join-item btn-ghost ${settings.image_preset_id && presetModelsLoading[settings.image_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.image_preset_id, true)} disabled={!settings.image_preset_id}><RefreshCw size={14}/></button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">记忆总结模型</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.summary_preset_id ? String(settings.summary_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) { setSettings({ ...settings, summary_preset_id: undefined, summary_model_id: '' }); return; }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, summary_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`sum-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.summary_preset_id}
+                                      value={settings.summary_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, summary_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id] || []).map(m => (
+                                        <option key={`sum-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`sum-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button className={`btn btn-sm join-item btn-ghost ${settings.summary_preset_id && presetModelsLoading[settings.summary_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.summary_preset_id, true)} disabled={!settings.summary_preset_id}><RefreshCw size={14}/></button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">SD 转换模型（描述 → tags）</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select
+                                    className="select select-bordered"
+                                    value={settings.sd_prompt_preset_id ? String(settings.sd_prompt_preset_id) : ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (!v) { setSettings({ ...settings, sd_prompt_preset_id: undefined, sd_prompt_model_id: '' }); return; }
+                                      const pid = parseInt(v, 10);
+                                      setSettings({ ...settings, sd_prompt_preset_id: pid });
+                                      fetchPresetModels(pid);
+                                    }}
+                                  >
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`sd-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select
+                                      className="select select-bordered join-item w-full"
+                                      disabled={!settings.sd_prompt_preset_id}
+                                      value={settings.sd_prompt_model_id || ''}
+                                      onChange={(e) => setSettings({ ...settings, sd_prompt_model_id: e.target.value })}
+                                    >
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id] || []).map(m => (
+                                        <option key={`sd-model-${m}`} value={m}>{m}</option>
+                                      ))}
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                        <option key={`sd-manual-${m}`} value={m}>{m}</option>
+                                      ))}
+                                    </select>
+                                    <button className={`btn btn-sm join-item btn-ghost ${settings.sd_prompt_preset_id && presetModelsLoading[settings.sd_prompt_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.sd_prompt_preset_id, true)} disabled={!settings.sd_prompt_preset_id}><RefreshCw size={14}/></button>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </div>
                       </section>
@@ -663,7 +799,14 @@ function App() {
                           </div>
                           <div className="form-control">
                                 <label className="label font-bold text-xs">备用模型列表 (手动输入，逗号分隔)</label>
-                                <textarea className="textarea textarea-bordered w-full text-xs h-20" placeholder="当 API 不支持自动获取模型列表时使用" value={settings.model_list || ""} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
+                                <textarea className="textarea textarea-bordered w-full text-xs h-20" placeholder="当 API 不支持自动获取模型列表时使用，例如：gpt-4o, claude-3-5-sonnet, deepseek-chat" value={settings.model_list || ""} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
+                          </div>
+                      </section>
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-error uppercase">数据管理</h4>
+                          <div className="p-4 border border-error/20 rounded-xl bg-error/5 flex justify-between items-center gap-4">
+                              <div className="flex-1"><p className="text-xs font-bold text-error">清理数据库图片</p><p className="text-[10px] opacity-60 mt-1">永久删除 D1 数据库中存储的所有图片消息。</p></div>
+                              <button className="btn btn-error btn-sm shadow-md" onClick={async () => { if(confirm("确定清理图片？")) { await api.messages.clearAllImages(); alert("清理成功"); } }}><Eraser size={14} className="mr-1"/> 清理图片</button>
                           </div>
                       </section>
                   </div>
