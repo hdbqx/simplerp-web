@@ -61,16 +61,22 @@ export const onRequestPost: PagesFunction = async (context) => {
     if (!prompt) return new Response('Missing prompt', { status: 400 });
 
     // ==========================================
-    // Hugging Face 接口处理（升级新版 router 路由 + Key 轮询）
+    // Hugging Face 接口处理（兼容标准库与抓包的 Space URL）
     // ==========================================
     if (backend === 'huggingface') {
       const keys = (body.apiKey || '').split(',').map(k => k.trim()).filter(Boolean);
       if (keys.length === 0) return new Response('Missing Hugging Face Keys', { status: 400 });
 
-      // 【核心修复】使用 HF 最新的 Inference Providers 统一路由节点
-      // 传统 api-inference 节点不包含第三方代理模型，会导致 Cannot POST 报错
-      const url = `https://router.huggingface.co/hf-inference/models/${model}`;
-      const hfPayload = { inputs: prompt, parameters: body.payload };
+      let url = `https://router.huggingface.co/hf-inference/models/${model}`;
+      let hfPayload: any = { inputs: prompt, parameters: body.payload };
+      let isSpaceApi = false;
+
+      // 【核心升级】：如果用户填入的是 http 开头的抓包链接，自动切换为 Gradio API 模式
+      if (model.startsWith('http') && model.includes('hf.space')) {
+        url = model;
+        hfPayload = { data: [prompt] }; // Gradio 接口通常要求参数放在 data 数组中
+        isSpaceApi = true;
+      }
 
       let lastError = '';
       
@@ -81,19 +87,39 @@ export const onRequestPost: PagesFunction = async (context) => {
           headers: {
             'Authorization': `Bearer ${key}`,
             'Content-Type': 'application/json',
-            'Accept': 'image/jpeg, image/png, image/*, application/json'
+            'Accept': 'application/json, image/*, */*'
           },
           body: JSON.stringify(hfPayload)
         });
 
         if (res.ok) {
           const contentType = res.headers.get('content-type') || '';
-          // 兼容部分 Provider 返回 JSON URL 的情况
+          
           if (contentType.includes('application/json')) {
             const data: any = await res.json();
+            
+            // 兼容解析 Gradio Space 的特殊返回格式
+            if (isSpaceApi) {
+               // 情况1：同步返回了 data 数组
+               if (data.data && Array.isArray(data.data)) {
+                  const item = data.data[0]; // 获取返回的第一个结果
+                  if (typeof item === 'string') {
+                     if (item.startsWith('http')) return Response.json({ images: [], urls: [item] });
+                     if (item.startsWith('data:')) return Response.json({ images: [item.split(',')[1]], urls: [] });
+                  }
+                  if (item?.url) return Response.json({ images: [], urls: [item.url] });
+               }
+               // 情况2：返回了异步 event_id (Gradio v4 特性)
+               if (data.event_id) {
+                   return new Response(JSON.stringify({ error: `该 Space 使用了异步流式 API (需长链接获取)。极简版系统当前仅支持同步出图。` }), { status: 500 });
+               }
+            }
+
+            // 官方标准 JSON 返回
             if (data.url) return Response.json({ images: [], urls: [data.url] });
             if (data.image) return Response.json({ images: [data.image], urls: [] });
-            return new Response(JSON.stringify({ error: `HF 返回了无法解析的 JSON: ${JSON.stringify(data)}` }), { status: 500 });
+            
+            return new Response(JSON.stringify({ error: `未知的 JSON 返回格式` }), { status: 500 });
           } else {
             // 标准返回：二进制图片流
             const buffer = await res.arrayBuffer();
@@ -102,15 +128,12 @@ export const onRequestPost: PagesFunction = async (context) => {
           }
         } else {
           lastError = await res.text();
-          // 如果是被限流 (429) 或加载中 (503)，继续尝试下个 Key
-          if (res.status === 429 || res.status === 503) {
-            continue;
-          }
-          // 其他报错直接抛出
+          // 被限流或服务重启，切下一个 key
+          if (res.status === 429 || res.status === 503) continue;
           break;
         }
       }
-      return new Response(JSON.stringify({ error: `Hugging Face Generation failed: ${lastError}` }), { status: 500 });
+      return new Response(JSON.stringify({ error: `Generation failed: ${lastError}` }), { status: 500 });
     }
 
     // ==========================================
