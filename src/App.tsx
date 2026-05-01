@@ -10,14 +10,11 @@ import {
 } from 'lucide-react';
 
 function App() {
-  // --- 核心状态 ---
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
   
-  // --- API 全局状态 ---
   const [activePresetId, setActivePresetId] = useState<number | undefined>();
   const [activeModel, setActiveModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -25,7 +22,6 @@ function App() {
   const [presetModelsMap, setPresetModelsMap] = useState<Record<number, string[]>>({});
   const [presetModelsLoading, setPresetModelsLoading] = useState<Record<number, boolean>>({});
 
-  // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedRoomId, setSelectedRoomId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
@@ -44,21 +40,17 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // --- 弹窗控制状态 ---
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
-  const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
-  // --- 房间配置草稿 ---
   const [roomMembersDraft, setRoomMembersDraft] = useState<RoomMember[]>([]);
 
-  // --- 计算属性 ---
   const manualModels = useMemo(() => {
     if (!settings?.model_list) return [];
     return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
@@ -93,7 +85,6 @@ function App() {
     }
   };
 
-  // --- 初始化数据 ---
   const loadData = async () => {
     try {
         const [c, r, s, p] = await Promise.all([
@@ -121,7 +112,6 @@ function App() {
     fetchPresetModels(activePresetId);
     fetchPresetModels(settings?.image_preset_id);
     fetchPresetModels(settings?.summary_preset_id);
-    fetchPresetModels(settings?.sd_prompt_preset_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSettings]);
 
@@ -167,7 +157,6 @@ function App() {
       if(settings) await api.settings.update({ ...settings, active_model_id: modelId });
   };
 
-  // --- 切换角色/剧场时的监听 ---
   useEffect(() => {
     setMessages([]);
     setRoomMessages([]);
@@ -194,7 +183,6 @@ function App() {
     }
   };
 
-  // --- 发送群聊消息 (精简版) ---
   const sendRoomChat = async (userText: string, speakerCharId: number | null) => {
     if (!settings) return;
     if (!selectedRoomId) return alert("请先选择房间");
@@ -211,23 +199,13 @@ function App() {
           fallback_model_id: activeModel,
         });
       } else if (userText) {
-        await api.roomMessages.add({
-          room_id: selectedRoomId,
-          role: 'user',
-          sender_type: 'user',
-          content: userText,
-          timestamp: Date.now()
-        });
+        await api.roomMessages.add({ room_id: selectedRoomId, role: 'user', sender_type: 'user', content: userText, timestamp: Date.now() });
       }
       const latest = await api.roomMessages.list(selectedRoomId);
       setRoomMessages(latest);
       setInput(''); 
       if (inputRef.current) inputRef.current.style.height = 'auto';
-    } catch (e: any) {
-      alert(e.message || String(e));
-    } finally {
-      setIsTyping(false);
-    }
+    } catch (e: any) { alert(e.message || String(e)); } finally { setIsTyping(false); }
   };
 
   const saveRoomConfigs = async () => {
@@ -240,7 +218,6 @@ function App() {
       description: room.description,
       summary: room.summary || '',
     });
-
     await api.rooms.updateMembers(selectedRoomId, roomMembersDraft.map(m => ({ char_id: m.char_id })));
 
     setShowGroupEdit(false);
@@ -254,31 +231,21 @@ function App() {
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
     if (!activePresetId || !activeModel) { return alert("请先在顶部导航栏选择 API 预设和模型！"); }
-    
     const currentPreset = presets.find(p => p.id === activePresetId);
     if (!currentPreset) { return alert("无效的 API 预设"); }
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    
     setIsTyping(true);
     const tempTs = Date.now() + 1;
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
-    
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
     let fullContent = "";
 
     try {
-      const stream = llm.chatStream(
-        char, currentHistory, textOverride || "", 
-        settings, activeModel, 
-        lorebookEntries, 
-        undefined,
-        controller
-      );
-
+      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, lorebookEntries, undefined, controller);
       for await (const chunk of stream) {
         fullContent += chunk;
         setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, content: fullContent } : m));
@@ -288,12 +255,9 @@ function App() {
     } finally {
       if (fullContent.trim().length > 0) {
           try {
-            const res = await api.messages.add({ 
-                role: 'assistant', content: fullContent, char_id: char.id, 
-                timestamp: tempTs 
-            });
+            const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
-          } catch (dbErr) { console.error("持久化失败", dbErr); }
+          } catch (dbErr) {}
       } else {
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
       }
@@ -303,48 +267,53 @@ function App() {
   };
 
   const handleGenImageAction = async () => {
-    const imageBackend = (settings?.image_backend || 'sdwebui') as 'sdwebui' | 'openai';
-    if (imageBackend === 'sdwebui' && !settings?.sd_url) return alert("请在设置中配置 SD URL");
-    if (!activePresetId || !activeModel) return alert("请先选择 API 模型用于生成 Prompt");
-
+    if (!settings) return;
+    const imageBackend = (settings.image_backend || 'huggingface');
     const rawPrompt = genPrompt || (viewMode === 'group' ? (roomMessages.length > 0 ? roomMessages[roomMessages.length - 1].content : "") : (messages.length > 0 ? messages[messages.length - 1].content : ""));
     if (!rawPrompt) return;
 
     setShowGenModal(false);
     setIsTyping(true);
     try {
-      const currentPreset = presets.find(p => p.id === activePresetId)!;
-      const sdPromptPreset = presets.find(p => p.id === settings?.sd_prompt_preset_id) || currentPreset;
-      const sdPromptModel = settings?.sd_prompt_model_id || activeModel;
-
-      let finalPrompt = rawPrompt;
-      if (useSdPromptConversion) {
-        const llm = new LLMClient(sdPromptPreset.api_base, sdPromptPreset.api_key, getPresetMode(sdPromptPreset));
-        const tags = await llm.generateImageTags(rawPrompt, sdPromptModel);
-        finalPrompt = `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`;
+      let reqBody: any;
+      if (imageBackend === 'huggingface') {
+        if (!settings.hf_keys) throw new Error("请在系统设置中配置 Hugging Face Keys");
+        const modelId = settings.hf_model_id || 'black-forest-labs/FLUX.1-schnell';
+        reqBody = {
+          backend: 'huggingface',
+          model: modelId,
+          apiKey: settings.hf_keys,
+          payload: { prompt: rawPrompt }
+        };
+      } else {
+        const imagePreset = presets.find(p => p.id === settings.image_preset_id) || presets.find(p => p.id === activePresetId);
+        const imageModel = settings.image_model_id || activeModel;
+        if (!imagePreset || !imageModel) throw new Error("请配置 OpenAI 生图预设和模型");
+        reqBody = {
+          backend: 'openai',
+          apiBase: imagePreset.api_base,
+          apiKey: imagePreset.api_key,
+          model: imageModel,
+          payload: { prompt: rawPrompt, size: '1024x1024', n: 1, response_format: 'b64_json' }
+        };
       }
-
-      const payload = imageBackend === 'openai'
-          ? { prompt: finalPrompt, size: '1024x1024', n: 1, response_format: 'b64_json' }
-          : { prompt: finalPrompt, negative_prompt: "(worst quality:2), (low quality:2), (normal quality:2), lowres, watermark", steps: 20, cfg_scale: 7, sampler_name: "Euler a", width: 512, height: 768, restore_faces: false, enable_hr: false };
-
-      const imagePreset = presets.find(p => p.id === settings?.image_preset_id) || currentPreset;
-      const imageModel = settings?.image_model_id || activeModel;
 
       const res = await fetch('/api/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(imageBackend === 'sdwebui' ? { sd_url: settings!.sd_url, payload } : { backend: 'openai', apiBase: imagePreset.api_base, apiKey: imagePreset.api_key, model: imageModel, payload }),
+        body: JSON.stringify(reqBody),
       });
-      if (!res.ok) throw new Error("生图后端未响应");
+      if (!res.ok) {
+         const errData = await res.json().catch(()=>({error: "生图失败"}));
+         throw new Error(errData.error || "后端未响应");
+      }
+      
       const data = await res.json();
       const imgSrc = (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') || (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
-
       if (!imgSrc) throw new Error("后端未返回图片");
 
       const ephemeralMsg: Message = { role: 'assistant', content: '', image: imgSrc, timestamp: Date.now(), char_id: selectedCharId };
       setMessages(prev => [...prev, ephemeralMsg]);
-
     } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsTyping(false); }
   };
 
@@ -354,7 +323,7 @@ function App() {
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (viewMode === 'group') {
-      await sendRoomChat(text, null); // 默认发旁白
+      await sendRoomChat(text, null); 
       return;
     }
 
@@ -384,7 +353,6 @@ function App() {
     if (char) triggerAI(char, lastUserMsg?.content || "", newHistory);
   };
 
-  // --- UI 组件 ---
   const Sidebar = () => (
     <div className="flex flex-col h-full bg-base-200 w-80 p-4 border-r border-base-content/10 shadow-xl overflow-hidden">
       <div className="flex justify-between items-center mb-6 pl-2">
@@ -401,38 +369,23 @@ function App() {
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
             <span className="font-bold truncate max-w-[140px]">{c.name}</span>
             <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity items-center">
-                <button className="hover:text-info p-1" title="创建副本" onClick={async (e) => {
-                    e.stopPropagation();
-                    const newName = prompt("新角色名称:", `${c.name} (Copy)`);
-                    if(newName) { await api.characters.duplicate(c.id!, newName); loadData(); }
-                }}><Copy size={14}/></button>
-                <button className="hover:text-error p-1" title="删除" onClick={(e) => { 
-                    e.stopPropagation(); 
-                    if(confirm(`删除角色 ${c.name}？`)) api.characters.delete(c.id!).then(() => loadData()); 
-                }}><Trash2 size={14} /></button>
+                <button className="hover:text-info p-1" title="创建副本" onClick={async (e) => { e.stopPropagation(); const newName = prompt("新角色名称:", `${c.name} (Copy)`); if(newName) { await api.characters.duplicate(c.id!, newName); loadData(); } }}><Copy size={14}/></button>
+                <button className="hover:text-error p-1" title="删除" onClick={(e) => { e.stopPropagation(); if(confirm(`删除角色 ${c.name}？`)) api.characters.delete(c.id!).then(() => loadData()); }}><Trash2 size={14} /></button>
             </div>
           </div>
         )) : viewMode === 'group' ? rooms.map(r => (
           <div key={r.id} onClick={() => { setSelectedRoomId(r.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedRoomId === r.id ? 'bg-secondary text-secondary-content shadow-lg' : 'hover:bg-base-300'}`}>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-bold truncate">{r.name}</span>
-            </div>
+            <div className="flex items-center gap-2 min-w-0"><span className="font-bold truncate">{r.name}</span></div>
             <Trash2 size={14} className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity" onClick={(e) => { e.stopPropagation(); if(confirm(`删除房间 ${r.name}？`)) api.rooms.delete(r.id!).then(() => loadData()); }} />
           </div>
         )) : (
           <div className="p-3 rounded-xl border border-base-300 bg-base-100/40 text-xs leading-relaxed">
             <div className="font-black mb-2 flex items-center gap-2"><ImageIcon size={16}/> 生图工作台</div>
-            <div>支持文生图、图生图；参数可通过“高级 JSON”适配不同 OpenAI 兼容 API 或 SD WebUI。</div>
+            <div>支持 Hugging Face 多 Key 自动轮询与 OpenAI 兼容端点生图。</div>
           </div>
         )}
         {(viewMode === 'char' || viewMode === 'group') && (
-          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => {
-            const n = prompt("名称?");
-            if (!n) return;
-            if (viewMode === 'char') await api.characters.add({ name: n, description: "", first_message: "你好", summary: "" });
-            else await api.rooms.add({ name: n, description: "" });
-            await loadData();
-          }}><Plus size={16} /> 新建</button>
+          <button className="btn btn-outline btn-sm btn-block mt-4 border-dashed" onClick={async () => { const n = prompt("名称?"); if (!n) return; if (viewMode === 'char') await api.characters.add({ name: n, description: "", first_message: "你好", summary: "" }); else await api.rooms.add({ name: n, description: "" }); await loadData(); }}><Plus size={16} /> 新建</button>
         )}
       </div>
       <div className="mt-4 pt-4 border-t border-base-content/10"><button className="btn btn-ghost btn-sm btn-block justify-start" onClick={() => {setShowSettings(true); setMobileMenuOpen(false);}}><SettingsIcon size={16} /> 系统设置</button></div>
@@ -445,18 +398,11 @@ function App() {
     <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        {/* Navbar */}
         <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20 min-h-[3.5rem]">
           <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
           <div className="flex-1 font-bold truncate px-2 hidden md:block">
-            {viewMode === 'image'
-              ? '生图工作台'
-              : (viewMode === 'char'
-                  ? characters.find(c=>c.id===selectedCharId)?.name
-                  : rooms.find(r=>r.id===selectedRoomId)?.name) || "SimpleRP"}
+            {viewMode === 'image' ? '生图工作台' : (viewMode === 'char' ? characters.find(c=>c.id===selectedCharId)?.name : rooms.find(r=>r.id===selectedRoomId)?.name) || "SimpleRP"}
           </div>
-          
-          {/* API Selector */}
           <div className="flex-none flex items-center gap-2 mr-2 max-w-[72vw] md:max-w-none overflow-x-auto no-scrollbar">
             <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
@@ -471,20 +417,10 @@ function App() {
                 <button className={`btn btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel, undefined, getPresetMode(p)); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
             </div>
           </div>
-
           <div className="hidden md:flex flex-none gap-2">
             {viewMode !== 'image' && (
-              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => {
-                if (!confirm("确定清空会话？")) return;
-                if (viewMode === 'group' && selectedRoomId) {
-                  api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); });
-                } else {
-                  api.messages.clear(viewMode==='char'?selectedCharId:undefined).then(()=>{setMessages([]); alert("已清空");});
-                }
-              }}><Eraser size={18}/></button>
+              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if (!confirm("确定清空会话？")) return; if (viewMode === 'group' && selectedRoomId) { api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); }); } else { api.messages.clear(viewMode==='char'?selectedCharId:undefined).then(()=>{setMessages([]); alert("已清空");}); } }}><Eraser size={18}/></button>
             )}
-            
-            {/* 全局共用的总结按钮 */}
             {(viewMode === 'char' || viewMode === 'group') && (selectedCharId || selectedRoomId) && (
               <button className="btn btn-sm btn-ghost text-info" title="总结剧情进展" onClick={async ()=>{ 
                   if (!activePresetId || !activeModel) return alert("请先选择模型");
@@ -513,14 +449,9 @@ function App() {
                   } catch (e: any) { alert(e.message); } finally { setIsTyping(false); }
               }}><BookOpen size={18}/></button>
             )}
-
             {viewMode === 'char' && selectedCharId && (
-              <>
-                <button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button>
-                <button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button>
-              </>
+              <><button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button><button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button></>
             )}
-            
             {viewMode === 'group' && selectedRoomId && (
               <button className="btn btn-sm btn-secondary" title="房间设置" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>
             )}
@@ -528,25 +459,13 @@ function App() {
         </div>
 
         {viewMode === 'image' ? (
-          <ImageStudio
-            settings={settings}
-            presets={presets}
-            activePresetId={activePresetId}
-            activeModel={activeModel}
-            manualModels={manualModels}
-            getPresetMode={getPresetMode}
-            fetchPresetModels={fetchPresetModels}
-            presetModelsMap={presetModelsMap}
-            presetModelsLoading={presetModelsLoading}
-          />
+          <ImageStudio settings={settings} presets={presets} activePresetId={activePresetId} activeModel={activeModel} manualModels={manualModels} getPresetMode={getPresetMode} fetchPresetModels={fetchPresetModels} presetModelsMap={presetModelsMap} presetModelsLoading={presetModelsLoading} />
         ) : (
           <>
-            {/* Chat Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
               {(viewMode === 'group' ? (roomMessages as any) : (messages as any)).map((m: any, idx: number) => {
                 const isUser = m.role === 'user' || m.sender_type === 'user';
                 const headerName = isUser ? (settings?.user_name || '我') : (characterNameById.get(m.char_id) || 'AI');
-
                 return (
                 <div key={`${m.id || m.timestamp}-${idx}`} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group animate-message`}>
                   <div className="chat-header opacity-50 text-[10px] mb-1 flex items-center gap-2">
@@ -578,33 +497,18 @@ function App() {
               <div ref={bottomRef} className="h-20" />
             </div>
 
-            {/* Input Area */}
             <div className="p-4 bg-base-100 border-t border-base-300">
               <div className="max-w-4xl mx-auto flex flex-col gap-2">
-                {/* 群聊人工调度 @ 按钮栏 */}
                 {viewMode === 'group' && selectedRoomId && (
                   <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                    <button 
-                      onClick={() => sendRoomChat(input || '', null)} 
-                      disabled={isTyping || !input.trim()} 
-                      className="btn btn-xs btn-outline whitespace-nowrap rounded-full"
-                    >
-                      发送 (玩家发言)
-                    </button>
+                    <button onClick={() => sendRoomChat(input || '', null)} disabled={isTyping || !input.trim()} className="btn btn-xs btn-outline whitespace-nowrap rounded-full">发送 (玩家发言)</button>
                     {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (
-                      <button 
-                        key={m.id} 
-                        onClick={() => sendRoomChat(input || '', m.id!)} 
-                        disabled={isTyping} 
-                        className="btn btn-xs btn-secondary whitespace-nowrap rounded-full"
-                      >
-                        @{m.name} 回应
-                      </button>
+                      <button key={m.id} onClick={() => sendRoomChat(input || '', m.id!)} disabled={isTyping} className="btn btn-xs btn-secondary whitespace-nowrap rounded-full">@{m.name} 回应</button>
                     ))}
                   </div>
                 )}
                 <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
-                    <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{const src = viewMode === 'group' ? (roomMessages as any[]) : (messages as any[]); setGenPrompt(src[src.length-1]?.content || ""); setUseSdPromptConversion(true); setShowGenModal(true)}}><ImageIcon size={20}/></button>
+                    <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
                   <textarea ref={inputRef} className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder={viewMode === 'group' ? "输入并点击上面的 @ 指定角色回答..." : "输入消息..."} onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); if(viewMode === 'char') handleSend();}}} />
                   {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (viewMode === 'char' && <button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
                 </div>
@@ -616,7 +520,6 @@ function App() {
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
 
-      {/* 1. 设置面板 (已完全恢复所有原配置选项) */}
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -627,38 +530,36 @@ function App() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="form-control"><label className="label text-xs font-bold">玩家姓名</label><input className="input input-bordered" placeholder="如：朕" value={settings.user_name || ''} onChange={e=>setSettings({...settings, user_name:e.target.value})} /></div>
                             <div className="form-control">
-                              <label className="label text-xs font-bold">生图后端</label>
-                              <select className="select select-bordered" value={settings.image_backend || 'sdwebui'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
-                                <option value="sdwebui">SD WebUI (txt2img)</option>
-                                <option value="openai">OpenAI 兼容 (/images/generations)</option>
+                              <label className="label text-xs font-bold">默认生图后端</label>
+                              <select className="select select-bordered" value={settings.image_backend || 'huggingface'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
+                                <option value="huggingface">Hugging Face (免费高质模型库)</option>
+                                <option value="openai">OpenAI 兼容端点</option>
                               </select>
                             </div>
-                            { (settings.image_backend || 'sdwebui') === 'sdwebui' ? (
-                              <div className="form-control"><label className="label text-xs font-bold">SD 地址 (API)</label><input className="input input-bordered" placeholder="http://127.0.0.1:7860" value={settings.sd_url || ''} onChange={e=>setSettings({...settings, sd_url:e.target.value})} /></div>
-                            ) : (
-                              <div className="form-control"><label className="label text-xs font-bold">OpenAI 生图模型 (可选)</label><input className="input input-bordered" placeholder="留空则使用顶部已选模型；如：gpt-image-1" value={settings.image_model_id || ''} onChange={e=>setSettings({...settings, image_model_id:e.target.value})} /></div>
-                            )}
                           </div>
                       </section>
                       <section>
-                          <h4 className="text-sm font-black mb-3 text-primary uppercase">模型绑定 (可选)</h4>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">生图核心配置 (Hugging Face / OpenAI)</h4>
                           <div className="grid grid-cols-1 gap-4">
+                            <div className="p-4 border border-base-300 rounded-xl bg-base-100">
+                              <div className="text-xs font-black mb-3 text-accent">Hugging Face 生图参数</div>
+                              <div className="grid grid-cols-1 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">HF Access Tokens (轮询池)</label>
+                                  <textarea className="textarea textarea-bordered h-20 text-xs font-mono" placeholder="填入以 hf_ 开头的密钥，多个 key 请用英文逗号(,)分隔。触发 429 报错时将自动重试下一个 key。" value={settings.hf_keys || ''} onChange={e=>setSettings({...settings, hf_keys:e.target.value})} />
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">HF 模型仓库名</label>
+                                  <input className="input input-bordered input-sm" placeholder="如：black-forest-labs/FLUX.1-schnell" value={settings.hf_model_id || ''} onChange={e=>setSettings({...settings, hf_model_id:e.target.value})} />
+                                </div>
+                              </div>
+                            </div>
                             <div className="p-4 border border-base-300 rounded-xl">
-                              <div className="text-xs font-black mb-3">生图模型（OpenAI 兼容后端用）</div>
+                              <div className="text-xs font-black mb-3">OpenAI 生图参数（备用）</div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="form-control">
                                   <label className="label text-xs font-bold">预设</label>
-                                  <select
-                                    className="select select-bordered"
-                                    value={settings.image_preset_id ? String(settings.image_preset_id) : ''}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      if (!v) { setSettings({ ...settings, image_preset_id: undefined, image_model_id: '' }); return; }
-                                      const pid = parseInt(v, 10);
-                                      setSettings({ ...settings, image_preset_id: pid });
-                                      fetchPresetModels(pid);
-                                    }}
-                                  >
+                                  <select className="select select-bordered select-sm" value={settings.image_preset_id ? String(settings.image_preset_id) : ''} onChange={(e) => { const v = e.target.value; if (!v) { setSettings({ ...settings, image_preset_id: undefined, image_model_id: '' }); return; } const pid = parseInt(v, 10); setSettings({ ...settings, image_preset_id: pid }); fetchPresetModels(pid); }}>
                                     <option value="">跟随顶部预设</option>
                                     {presets.map(p => <option key={`img-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
                                   </select>
@@ -666,42 +567,26 @@ function App() {
                                 <div className="form-control">
                                   <label className="label text-xs font-bold">模型</label>
                                   <div className="join">
-                                    <select
-                                      className="select select-bordered join-item w-full"
-                                      disabled={!settings.image_preset_id}
-                                      value={settings.image_model_id || ''}
-                                      onChange={(e) => setSettings({ ...settings, image_model_id: e.target.value })}
-                                    >
+                                    <select className="select select-bordered select-sm join-item w-full" disabled={!settings.image_preset_id} value={settings.image_model_id || ''} onChange={(e) => setSettings({ ...settings, image_model_id: e.target.value })}>
                                       <option value="">跟随顶部模型</option>
-                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id] || []).map(m => (
-                                        <option key={`img-model-${m}`} value={m}>{m}</option>
-                                      ))}
-                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 && manualModels.map(m => (
-                                        <option key={`img-manual-${m}`} value={m}>{m}</option>
-                                      ))}
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id] || []).map(m => <option key={`img-model-${m}`} value={m}>{m}</option>)}
+                                      {settings.image_preset_id && (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 && manualModels.map(m => <option key={`img-manual-${m}`} value={m}>{m}</option>)}
                                     </select>
-                                    <button className={`btn btn-sm join-item btn-ghost ${settings.image_preset_id && presetModelsLoading[settings.image_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.image_preset_id, true)} disabled={!settings.image_preset_id}><RefreshCw size={14}/></button>
                                   </div>
                                 </div>
                               </div>
                             </div>
-
+                          </div>
+                      </section>
+                      <section>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">其他辅助模型绑定</h4>
+                          <div className="grid grid-cols-1 gap-4">
                             <div className="p-4 border border-base-300 rounded-xl">
                               <div className="text-xs font-black mb-3">记忆总结模型</div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="form-control">
                                   <label className="label text-xs font-bold">预设</label>
-                                  <select
-                                    className="select select-bordered"
-                                    value={settings.summary_preset_id ? String(settings.summary_preset_id) : ''}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      if (!v) { setSettings({ ...settings, summary_preset_id: undefined, summary_model_id: '' }); return; }
-                                      const pid = parseInt(v, 10);
-                                      setSettings({ ...settings, summary_preset_id: pid });
-                                      fetchPresetModels(pid);
-                                    }}
-                                  >
+                                  <select className="select select-bordered select-sm" value={settings.summary_preset_id ? String(settings.summary_preset_id) : ''} onChange={(e) => { const v = e.target.value; if (!v) { setSettings({ ...settings, summary_preset_id: undefined, summary_model_id: '' }); return; } const pid = parseInt(v, 10); setSettings({ ...settings, summary_preset_id: pid }); fetchPresetModels(pid); }}>
                                     <option value="">跟随顶部预设</option>
                                     {presets.map(p => <option key={`sum-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
                                   </select>
@@ -709,64 +594,11 @@ function App() {
                                 <div className="form-control">
                                   <label className="label text-xs font-bold">模型</label>
                                   <div className="join">
-                                    <select
-                                      className="select select-bordered join-item w-full"
-                                      disabled={!settings.summary_preset_id}
-                                      value={settings.summary_model_id || ''}
-                                      onChange={(e) => setSettings({ ...settings, summary_model_id: e.target.value })}
-                                    >
+                                    <select className="select select-bordered select-sm join-item w-full" disabled={!settings.summary_preset_id} value={settings.summary_model_id || ''} onChange={(e) => setSettings({ ...settings, summary_model_id: e.target.value })}>
                                       <option value="">跟随顶部模型</option>
-                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id] || []).map(m => (
-                                        <option key={`sum-model-${m}`} value={m}>{m}</option>
-                                      ))}
-                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 && manualModels.map(m => (
-                                        <option key={`sum-manual-${m}`} value={m}>{m}</option>
-                                      ))}
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id] || []).map(m => <option key={`sum-model-${m}`} value={m}>{m}</option>)}
+                                      {settings.summary_preset_id && (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 && manualModels.map(m => <option key={`sum-manual-${m}`} value={m}>{m}</option>)}
                                     </select>
-                                    <button className={`btn btn-sm join-item btn-ghost ${settings.summary_preset_id && presetModelsLoading[settings.summary_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.summary_preset_id, true)} disabled={!settings.summary_preset_id}><RefreshCw size={14}/></button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="p-4 border border-base-300 rounded-xl">
-                              <div className="text-xs font-black mb-3">SD 转换模型（描述 → tags）</div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="form-control">
-                                  <label className="label text-xs font-bold">预设</label>
-                                  <select
-                                    className="select select-bordered"
-                                    value={settings.sd_prompt_preset_id ? String(settings.sd_prompt_preset_id) : ''}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      if (!v) { setSettings({ ...settings, sd_prompt_preset_id: undefined, sd_prompt_model_id: '' }); return; }
-                                      const pid = parseInt(v, 10);
-                                      setSettings({ ...settings, sd_prompt_preset_id: pid });
-                                      fetchPresetModels(pid);
-                                    }}
-                                  >
-                                    <option value="">跟随顶部预设</option>
-                                    {presets.map(p => <option key={`sd-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
-                                  </select>
-                                </div>
-                                <div className="form-control">
-                                  <label className="label text-xs font-bold">模型</label>
-                                  <div className="join">
-                                    <select
-                                      className="select select-bordered join-item w-full"
-                                      disabled={!settings.sd_prompt_preset_id}
-                                      value={settings.sd_prompt_model_id || ''}
-                                      onChange={(e) => setSettings({ ...settings, sd_prompt_model_id: e.target.value })}
-                                    >
-                                      <option value="">跟随顶部模型</option>
-                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id] || []).map(m => (
-                                        <option key={`sd-model-${m}`} value={m}>{m}</option>
-                                      ))}
-                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 && manualModels.map(m => (
-                                        <option key={`sd-manual-${m}`} value={m}>{m}</option>
-                                      ))}
-                                    </select>
-                                    <button className={`btn btn-sm join-item btn-ghost ${settings.sd_prompt_preset_id && presetModelsLoading[settings.sd_prompt_preset_id] ? 'loading' : ''}`} title="刷新模型列表" onClick={() => fetchPresetModels(settings.sd_prompt_preset_id, true)} disabled={!settings.sd_prompt_preset_id}><RefreshCw size={14}/></button>
                                   </div>
                                 </div>
                               </div>
@@ -815,7 +647,6 @@ function App() {
           </div>
       )}
 
-      {/* 2. 角色编辑器 */}
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
@@ -830,7 +661,6 @@ function App() {
           </div>
       )}
 
-      {/* 3. 极简房间编辑器 */}
       {showGroupEdit && selectedRoomId && (() => {
         const room = rooms.find(r => r.id === selectedRoomId);
         if (!room) return null;
@@ -856,7 +686,6 @@ function App() {
                     <textarea className="textarea textarea-bordered h-40 font-mono text-xs" value={room.summary || ''} onChange={e => setRooms(rooms.map(r => r.id === selectedRoomId ? { ...r, summary: e.target.value } : r))} placeholder="点击顶部界面的【书本】图标可以自动总结对话并追加到这里..." />
                   </div>
                 </section>
-
                 <section className="p-4 rounded-xl border border-base-300 space-y-3">
                   <div className="font-black text-sm">选择房间成员</div>
                   <div className="space-y-2 max-h-80 overflow-y-auto pr-1 grid grid-cols-2 gap-2">
@@ -885,7 +714,6 @@ function App() {
         );
       })()}
 
-      {/* 4. 世界书编辑器 */}
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[75vh] flex flex-col p-0 overflow-hidden">
@@ -914,17 +742,13 @@ function App() {
           </div>
       )}
 
-      {/* 5. 生图提示词弹窗 */}
       {showGenModal && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-xs font-bold">
-                    <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
-                    使用 SD 转换模型（描述 → tags）
-                  </label>
+                <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
+                   当前后端: <b>{settings.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>

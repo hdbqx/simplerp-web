@@ -25,7 +25,7 @@ export interface Room {
   id?: number;
   name: string;
   description?: string;
-  summary?: string; // 房间的整体记忆
+  summary?: string;
   created_at?: number;
 }
 
@@ -54,14 +54,17 @@ export interface ApiPreset {
 export interface Settings {
   id?: number;
   user_name?: string;
-  sd_url?: string;
-  image_backend?: 'sdwebui' | 'openai';
+  image_backend?: 'huggingface' | 'openai';
+  // OpenAI 相关
   image_preset_id?: number;
   image_model_id?: string;
+  // Hugging Face 相关
+  hf_keys?: string;     // 逗号分隔的多个 keys
+  hf_model_id?: string; // HF 仓库名，如 black-forest-labs/FLUX.1-schnell
+  // 剧情总结模型
   summary_preset_id?: number;
   summary_model_id?: string;
-  sd_prompt_preset_id?: number;
-  sd_prompt_model_id?: string;
+  
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
