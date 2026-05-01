@@ -59,11 +59,14 @@ export interface Settings {
   image_preset_id?: number;
   image_model_id?: string;
   // Hugging Face 相关
-  hf_keys?: string;     // 逗号分隔的多个 keys
-  hf_model_id?: string; // HF 仓库名，如 black-forest-labs/FLUX.1-schnell
+  hf_keys?: string;
+  hf_model_id?: string;
   // 剧情总结模型
   summary_preset_id?: number;
   summary_model_id?: string;
+  // 提示词扩写/翻译模型（保留此项，非常有用）
+  sd_prompt_preset_id?: number;
+  sd_prompt_model_id?: string;
   
   temperature?: number;
   model_list?: string;

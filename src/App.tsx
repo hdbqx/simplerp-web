@@ -10,13 +10,11 @@ import {
 } from 'lucide-react';
 
 function App() {
-  // --- 核心状态 ---
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
   
-  // --- API 全局状态 ---
   const [activePresetId, setActivePresetId] = useState<number | undefined>();
   const [activeModel, setActiveModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -24,7 +22,6 @@ function App() {
   const [presetModelsMap, setPresetModelsMap] = useState<Record<number, string[]>>({});
   const [presetModelsLoading, setPresetModelsLoading] = useState<Record<number, boolean>>({});
 
-  // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedRoomId, setSelectedRoomId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
@@ -43,21 +40,18 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // --- 弹窗控制状态 ---
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
-  const [useSdPromptConversion, setUseSdPromptConversion] = useState(false);
+  const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
-  // --- 房间配置草稿 ---
   const [roomMembersDraft, setRoomMembersDraft] = useState<RoomMember[]>([]);
 
-  // --- 计算属性 ---
   const manualModels = useMemo(() => {
     if (!settings?.model_list) return [];
     return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
@@ -92,7 +86,6 @@ function App() {
     }
   };
 
-  // --- 初始化数据 ---
   const loadData = async () => {
     try {
         const [c, r, s, p] = await Promise.all([
@@ -192,7 +185,6 @@ function App() {
     }
   };
 
-  // --- 发送群聊消息 (精简版) ---
   const sendRoomChat = async (userText: string, speakerCharId: number | null) => {
     if (!settings) return;
     if (!selectedRoomId) return alert("请先选择房间");
@@ -267,7 +259,7 @@ function App() {
           try {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
-          } catch (dbErr) { console.error("保存失败", dbErr); }
+          } catch (dbErr) { }
       } else {
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
       }
@@ -287,7 +279,6 @@ function App() {
     try {
       let finalPrompt = rawPrompt;
 
-      // SD 模型转换逻辑 (翻译/丰富 Tags)
       if (useSdPromptConversion) {
         const sdPromptPreset = presets.find(p => p.id === settings.sd_prompt_preset_id) || presets.find(p => p.id === activePresetId);
         const sdPromptModel = settings.sd_prompt_model_id || activeModel;
@@ -798,7 +789,7 @@ function App() {
                     <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
                     自动扩写词条
                   </label>
-                  <span className="opacity-70">后端: <b>{settings.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b></span>
+                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b></span>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
