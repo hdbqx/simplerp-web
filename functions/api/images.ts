@@ -1,3 +1,5 @@
+// functions/api/images.ts
+
 type ImageBackend = 'huggingface' | 'openai';
 type ImageAction = 'txt2img' | 'img2img';
 
@@ -5,16 +7,12 @@ interface ImageProxyBody {
   backend: ImageBackend;
   action?: ImageAction;
   model: string;
-  apiKey?: string; // 对于 HF，可能是逗号分隔的多个 key
-  
-  // openai 专属
+  apiKey?: string; 
   apiBase?: string;
   path?: string;
   multipart?: boolean;
   imageField?: string;
   maskField?: string;
-
-  // 请求负载
   payload?: Record<string, unknown>;
 }
 
@@ -39,7 +37,6 @@ function dataUrlToBlob(input: string): Blob {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-// 将 ArrayBuffer 转换为 Base64
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   let binary = '';
   const bytes = new Uint8Array(buffer);
@@ -64,13 +61,15 @@ export const onRequestPost: PagesFunction = async (context) => {
     if (!prompt) return new Response('Missing prompt', { status: 400 });
 
     // ==========================================
-    // Hugging Face 接口处理（带 Key 轮询机制）
+    // Hugging Face 接口处理（升级新版 router 路由 + Key 轮询）
     // ==========================================
     if (backend === 'huggingface') {
       const keys = (body.apiKey || '').split(',').map(k => k.trim()).filter(Boolean);
       if (keys.length === 0) return new Response('Missing Hugging Face Keys', { status: 400 });
 
-      const url = `https://api-inference.huggingface.co/models/${model}`;
+      // 【核心修复】使用 HF 最新的 Inference Providers 统一路由节点
+      // 传统 api-inference 节点不包含第三方代理模型，会导致 Cannot POST 报错
+      const url = `https://router.huggingface.co/hf-inference/models/${model}`;
       const hfPayload = { inputs: prompt, parameters: body.payload };
 
       let lastError = '';
@@ -81,22 +80,33 @@ export const onRequestPost: PagesFunction = async (context) => {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Accept': 'image/jpeg, image/png, image/*, application/json'
           },
           body: JSON.stringify(hfPayload)
         });
 
         if (res.ok) {
-          const buffer = await res.arrayBuffer();
-          const base64 = arrayBufferToBase64(buffer);
-          return Response.json({ images: [base64], urls: [] });
+          const contentType = res.headers.get('content-type') || '';
+          // 兼容部分 Provider 返回 JSON URL 的情况
+          if (contentType.includes('application/json')) {
+            const data: any = await res.json();
+            if (data.url) return Response.json({ images: [], urls: [data.url] });
+            if (data.image) return Response.json({ images: [data.image], urls: [] });
+            return new Response(JSON.stringify({ error: `HF 返回了无法解析的 JSON: ${JSON.stringify(data)}` }), { status: 500 });
+          } else {
+            // 标准返回：二进制图片流
+            const buffer = await res.arrayBuffer();
+            const base64 = arrayBufferToBase64(buffer);
+            return Response.json({ images: [base64], urls: [] });
+          }
         } else {
           lastError = await res.text();
-          // 如果是 429 速率限制或 503 模型加载中，继续尝试下一个 Key
+          // 如果是被限流 (429) 或加载中 (503)，继续尝试下个 Key
           if (res.status === 429 || res.status === 503) {
             continue;
           }
-          // 如果是其他错误（如参数错误 400），没必要轮询，直接返回
+          // 其他报错直接抛出
           break;
         }
       }
