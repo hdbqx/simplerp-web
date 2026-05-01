@@ -68,10 +68,18 @@ export const onRequestPost: PagesFunction = async (context) => {
       const spaceBase = "https://mrfakename-z-image-turbo.hf.space";
       const postUrl = `${spaceBase}/gradio_api/call/generate_image`;
       
-      // 【核心修复1】：还原为 46 字节极简载荷
       const sessionHash = Math.random().toString(36).substring(2, 12);
+      
+      // 【终极解析修复】：完全贴合抓包拿到的 6 个参数矩阵！少一个都不行！
       const hfPayload = { 
-        data: [prompt],
+        data: [
+          prompt,                                  // 0: prompt
+          1024,                                    // 1: width
+          1024,                                    // 2: height
+          8,                                       // 3: steps (Z-Image推荐8步)
+          Math.floor(Math.random() * 2147483647),  // 4: seed (随机大整数)
+          true                                     // 5: randomize_seed
+        ],
         session_hash: sessionHash
       }; 
 
@@ -95,7 +103,7 @@ export const onRequestPost: PagesFunction = async (context) => {
             break; 
           }
 
-          // 【核心修复2】：拦截 Cookie 以维持会话路由 (Load Balancer Affinity)
+          // 拦截 Cookie 以维持会话路由 (Load Balancer Affinity)
           const setCookieHeader = initRes.headers.get('set-cookie');
           
           const initData: any = await initRes.json();
@@ -105,7 +113,7 @@ export const onRequestPost: PagesFunction = async (context) => {
             continue;
           }
 
-          // 步骤 2：请求 GET 长连接，必须带上刚才拦截到的 Cookie
+          // 步骤 2：请求 GET 长连接，必须带上 Cookie
           const streamUrl = `${spaceBase}/gradio_api/call/generate_image/${eventId}`;
           
           const streamHeaders: Record<string, string> = {
@@ -113,7 +121,7 @@ export const onRequestPost: PagesFunction = async (context) => {
             'Accept': 'text/event-stream'
           };
           if (setCookieHeader) {
-            streamHeaders['Cookie'] = setCookieHeader; // 保持路由分配到同一台机器
+            streamHeaders['Cookie'] = setCookieHeader; 
           }
 
           const streamRes = await fetch(streamUrl, {
