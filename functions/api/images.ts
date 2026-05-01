@@ -54,90 +54,133 @@ export const onRequestPost: PagesFunction = async (context) => {
     const action: ImageAction = body.action === 'img2img' ? 'img2img' : 'txt2img';
     const model = (body.model || '').trim();
 
-    if (!model) return new Response('Missing model', { status: 400 });
-
     const rawPrompt = (body.payload as any)?.prompt;
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
     if (!prompt) return new Response('Missing prompt', { status: 400 });
 
     // ==========================================
-    // Hugging Face 接口处理（兼容标准库与抓包的 Space URL）
+    // Hugging Face 接口：Z-Image-Turbo 独占处理 (Gradio API)
     // ==========================================
     if (backend === 'huggingface') {
       const keys = (body.apiKey || '').split(',').map(k => k.trim()).filter(Boolean);
       if (keys.length === 0) return new Response('Missing Hugging Face Keys', { status: 400 });
 
-      let url = `https://router.huggingface.co/hf-inference/models/${model}`;
-      let hfPayload: any = { inputs: prompt, parameters: body.payload };
-      let isSpaceApi = false;
-
-      // 【核心升级】：如果用户填入的是 http 开头的抓包链接，自动切换为 Gradio API 模式
-      if (model.startsWith('http') && model.includes('hf.space')) {
-        url = model;
-        hfPayload = { data: [prompt] }; // Gradio 接口通常要求参数放在 data 数组中
-        isSpaceApi = true;
-      }
+      // 写死 Z-Image 的 Space 空间地址
+      const spaceBase = "https://mrfakename-z-image-turbo.hf.space";
+      const postUrl = `${spaceBase}/gradio_api/call/generate_image`;
+      
+      // Gradio 参数结构通常是一个按 UI 组件排序的数组，[prompt, seed, randomize_seed, width, height, steps]
+      // 大部分 Space 允许只传前几个必要的
+      const hfPayload = { data: [prompt] }; 
 
       let lastError = '';
       
-      // 遍历轮询 Key
+      // 遍历轮询 Key，防止单个 Key 被限流
       for (const key of keys) {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, image/*, */*'
-          },
-          body: JSON.stringify(hfPayload)
-        });
+        try {
+          // 步骤 1：发送 POST 请求获取 event_id
+          const initRes = await fetch(postUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(hfPayload)
+          });
 
-        if (res.ok) {
-          const contentType = res.headers.get('content-type') || '';
+          if (!initRes.ok) {
+            lastError = `POST failed: ${initRes.status} ${await initRes.text()}`;
+            if (initRes.status === 429 || initRes.status === 503) continue; // 限流/拥挤，尝试下一个 Key
+            break; 
+          }
+
+          const initData: any = await initRes.json();
+          const eventId = initData.event_id;
+          if (!eventId) {
+            lastError = "未收到 event_id，API 结构可能已变。";
+            continue;
+          }
+
+          // 步骤 2：请求 GET 长连接，监听 event stream
+          const streamUrl = `${spaceBase}/gradio_api/call/generate_image/${eventId}`;
+          const streamRes = await fetch(streamUrl, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Accept': 'text/event-stream'
+            }
+          });
+
+          if (!streamRes.ok) {
+             lastError = `Stream failed: ${streamRes.status}`;
+             continue;
+          }
+
+          const reader = streamRes.body?.getReader();
+          if (!reader) throw new Error("无法读取流");
+          const decoder = new TextDecoder();
           
-          if (contentType.includes('application/json')) {
-            const data: any = await res.json();
+          let buffer = '';
+          let finalImageUrl = '';
+
+          // 步骤 3：解析 SSE 数据流，寻找 complete 事件
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
             
-            // 兼容解析 Gradio Space 的特殊返回格式
-            if (isSpaceApi) {
-               // 情况1：同步返回了 data 数组
-               if (data.data && Array.isArray(data.data)) {
-                  const item = data.data[0]; // 获取返回的第一个结果
-                  if (typeof item === 'string') {
-                     if (item.startsWith('http')) return Response.json({ images: [], urls: [item] });
-                     if (item.startsWith('data:')) return Response.json({ images: [item.split(',')[1]], urls: [] });
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || ''; // 最后一个可能不完整，放回 buffer
+
+            for (const event of events) {
+              if (event.includes('event: complete')) {
+                // 找到完成事件，提取 data 行
+                const dataLine = event.split('\n').find(l => l.startsWith('data: '));
+                if (dataLine) {
+                  const dataStr = dataLine.substring(6).trim();
+                  const dataObj = JSON.parse(dataStr);
+                  // Gradio 返回的 data 通常是一个数组，包含生成的输出对象
+                  if (dataObj && dataObj[0]) {
+                    finalImageUrl = dataObj[0].url || dataObj[0].image?.url || dataObj[0].path || '';
                   }
-                  if (item?.url) return Response.json({ images: [], urls: [item.url] });
-               }
-               // 情况2：返回了异步 event_id (Gradio v4 特性)
-               if (data.event_id) {
-                   return new Response(JSON.stringify({ error: `该 Space 使用了异步流式 API (需长链接获取)。极简版系统当前仅支持同步出图。` }), { status: 500 });
-               }
+                }
+              } else if (event.includes('event: error')) {
+                lastError = "Gradio 服务器生成内部错误";
+              }
+            }
+            if (finalImageUrl || lastError) break; 
+          }
+
+          // 步骤 4：如果成功拿到了图片 URL，下载并转为 Base64 发给前端
+          if (finalImageUrl) {
+            // 补全相对路径
+            if (!finalImageUrl.startsWith('http')) {
+              finalImageUrl = `${spaceBase}${finalImageUrl.startsWith('/') ? '' : '/'}${finalImageUrl}`;
             }
 
-            // 官方标准 JSON 返回
-            if (data.url) return Response.json({ images: [], urls: [data.url] });
-            if (data.image) return Response.json({ images: [data.image], urls: [] });
-            
-            return new Response(JSON.stringify({ error: `未知的 JSON 返回格式` }), { status: 500 });
-          } else {
-            // 标准返回：二进制图片流
-            const buffer = await res.arrayBuffer();
-            const base64 = arrayBufferToBase64(buffer);
-            return Response.json({ images: [base64], urls: [] });
+            const imgRes = await fetch(finalImageUrl, {
+              headers: { 'Authorization': `Bearer ${key}` }
+            });
+
+            if (imgRes.ok) {
+              const imgBuf = await imgRes.arrayBuffer();
+              const base64Str = arrayBufferToBase64(imgBuf);
+              return Response.json({ images: [base64Str], urls: [] });
+            } else {
+              lastError = `提取最终图片失败: ${imgRes.status}`;
+            }
           }
-        } else {
-          lastError = await res.text();
-          // 被限流或服务重启，切下一个 key
-          if (res.status === 429 || res.status === 503) continue;
-          break;
+
+        } catch (err: any) {
+          lastError = err.message;
         }
       }
-      return new Response(JSON.stringify({ error: `Generation failed: ${lastError}` }), { status: 500 });
+
+      return new Response(JSON.stringify({ error: `Z-Image 生成失败，所有 Key 已用尽。最新报错: ${lastError}` }), { status: 500 });
     }
 
     // ==========================================
-    // OpenAI 兼容接口处理
+    // OpenAI 兼容接口处理 (备用生图逻辑保持不变)
     // ==========================================
     if (!body.apiBase) return new Response('Missing apiBase for OpenAI', { status: 400 });
     
