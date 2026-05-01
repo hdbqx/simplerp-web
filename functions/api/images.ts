@@ -65,30 +65,18 @@ export const onRequestPost: PagesFunction = async (context) => {
       const keys = (body.apiKey || '').split(',').map(k => k.trim()).filter(Boolean);
       if (keys.length === 0) return new Response('Missing Hugging Face Keys', { status: 400 });
 
-      // 写死 Z-Image 的 Space 空间地址
       const spaceBase = "https://mrfakename-z-image-turbo.hf.space";
       const postUrl = `${spaceBase}/gradio_api/call/generate_image`;
       
-      // 生成随机 session_hash
+      // 【核心修复1】：还原为 46 字节极简载荷
       const sessionHash = Math.random().toString(36).substring(2, 12);
-      
-      // 【核心修复】：补齐 Gradio API 要求的完整参数矩阵
-      // 对应 UI: Prompt, Seed, Randomize Seed, Width, Height, Num Steps
       const hfPayload = { 
-        data: [
-          prompt, 
-          0,       // Seed
-          true,    // Randomize seed
-          1024,    // Width
-          1024,    // Height
-          8        // Num inference steps
-        ],
+        data: [prompt],
         session_hash: sessionHash
       }; 
 
       let lastError = '';
       
-      // 遍历轮询 Key，防止单个 Key 被限流
       for (const key of keys) {
         try {
           // 步骤 1：发送 POST 请求获取 event_id
@@ -103,10 +91,13 @@ export const onRequestPost: PagesFunction = async (context) => {
 
           if (!initRes.ok) {
             lastError = `POST failed: ${initRes.status} ${await initRes.text()}`;
-            if (initRes.status === 429 || initRes.status === 503) continue; // 限流/拥挤，尝试下一个 Key
+            if (initRes.status === 429 || initRes.status === 503) continue;
             break; 
           }
 
+          // 【核心修复2】：拦截 Cookie 以维持会话路由 (Load Balancer Affinity)
+          const setCookieHeader = initRes.headers.get('set-cookie');
+          
           const initData: any = await initRes.json();
           const eventId = initData.event_id;
           if (!eventId) {
@@ -114,14 +105,20 @@ export const onRequestPost: PagesFunction = async (context) => {
             continue;
           }
 
-          // 步骤 2：请求 GET 长连接，监听 event stream
+          // 步骤 2：请求 GET 长连接，必须带上刚才拦截到的 Cookie
           const streamUrl = `${spaceBase}/gradio_api/call/generate_image/${eventId}`;
+          
+          const streamHeaders: Record<string, string> = {
+            'Authorization': `Bearer ${key}`,
+            'Accept': 'text/event-stream'
+          };
+          if (setCookieHeader) {
+            streamHeaders['Cookie'] = setCookieHeader; // 保持路由分配到同一台机器
+          }
+
           const streamRes = await fetch(streamUrl, {
             method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${key}`,
-              'Accept': 'text/event-stream'
-            }
+            headers: streamHeaders
           });
 
           if (!streamRes.ok) {
@@ -136,32 +133,29 @@ export const onRequestPost: PagesFunction = async (context) => {
           let buffer = '';
           let finalImageUrl = '';
 
-          // 步骤 3：解析 SSE 数据流，寻找 complete 事件
+          // 步骤 3：解析 SSE 数据流
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             
             const events = buffer.split('\n\n');
-            buffer = events.pop() || ''; // 最后一个可能不完整，放回 buffer
+            buffer = events.pop() || ''; 
 
             for (const event of events) {
               if (event.includes('event: complete')) {
-                // 找到完成事件，提取 data 行
                 const dataLine = event.split('\n').find(l => l.startsWith('data: '));
                 if (dataLine) {
                   const dataStr = dataLine.substring(6).trim();
                   const dataObj = JSON.parse(dataStr);
                   if (dataObj && dataObj[0]) {
-                    // Gradio v4 的图片路径通常在 path 字段中
                     finalImageUrl = dataObj[0].url || `/gradio_api/file=${dataObj[0].path}`;
                   }
                 }
               } else if (event.includes('event: error')) {
-                // 【核心修复】：精准捕获 Python 代码报错信息
                 const dataLine = event.split('\n').find(l => l.startsWith('data: '));
                 if (dataLine) {
-                  lastError = `Gradio 后端报错: ${dataLine.substring(6).trim()}`;
+                  lastError = `Gradio 内部报错: ${dataLine.substring(6).trim()}`;
                 } else {
                   lastError = "Gradio 服务器生成内部错误";
                 }
@@ -170,15 +164,14 @@ export const onRequestPost: PagesFunction = async (context) => {
             if (finalImageUrl || lastError) break; 
           }
 
-          // 步骤 4：如果成功拿到了图片 URL，下载并转为 Base64 发给前端
+          // 步骤 4：提取最终图片
           if (finalImageUrl) {
-            // 补全相对路径
             if (!finalImageUrl.startsWith('http')) {
               finalImageUrl = `${spaceBase}${finalImageUrl.startsWith('/') ? '' : '/'}${finalImageUrl}`;
             }
 
             const imgRes = await fetch(finalImageUrl, {
-              headers: { 'Authorization': `Bearer ${key}` }
+              headers: streamHeaders // 获取文件同样需要维持 Cookie 和权限
             });
 
             if (imgRes.ok) {
@@ -195,11 +188,11 @@ export const onRequestPost: PagesFunction = async (context) => {
         }
       }
 
-      return new Response(JSON.stringify({ error: `Z-Image 生成失败，最新报错: ${lastError}` }), { status: 500 });
+      return new Response(JSON.stringify({ error: `Z-Image 生成失败。最新报错: ${lastError}` }), { status: 500 });
     }
 
     // ==========================================
-    // OpenAI 兼容接口处理 (备用生图逻辑保持不变)
+    // OpenAI 兼容接口处理 (备用逻辑)
     // ==========================================
     if (!body.apiBase) return new Response('Missing apiBase for OpenAI', { status: 400 });
     
