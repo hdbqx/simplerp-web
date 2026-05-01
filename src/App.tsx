@@ -10,11 +10,13 @@ import {
 } from 'lucide-react';
 
 function App() {
+  // --- 核心状态 ---
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
   
+  // --- API 全局状态 ---
   const [activePresetId, setActivePresetId] = useState<number | undefined>();
   const [activeModel, setActiveModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -22,6 +24,7 @@ function App() {
   const [presetModelsMap, setPresetModelsMap] = useState<Record<number, string[]>>({});
   const [presetModelsLoading, setPresetModelsLoading] = useState<Record<number, boolean>>({});
 
+  // --- 基础数据状态 ---
   const [selectedCharId, setSelectedCharId] = useState<number>();
   const [selectedRoomId, setSelectedRoomId] = useState<number>();
   const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
@@ -40,17 +43,21 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // --- 弹窗控制状态 ---
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
+  const [useSdPromptConversion, setUseSdPromptConversion] = useState(false);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState("");
 
+  // --- 房间配置草稿 ---
   const [roomMembersDraft, setRoomMembersDraft] = useState<RoomMember[]>([]);
 
+  // --- 计算属性 ---
   const manualModels = useMemo(() => {
     if (!settings?.model_list) return [];
     return settings.model_list.split(/[,，\n]/).map(m => m.trim()).filter(m => m);
@@ -85,6 +92,7 @@ function App() {
     }
   };
 
+  // --- 初始化数据 ---
   const loadData = async () => {
     try {
         const [c, r, s, p] = await Promise.all([
@@ -112,6 +120,7 @@ function App() {
     fetchPresetModels(activePresetId);
     fetchPresetModels(settings?.image_preset_id);
     fetchPresetModels(settings?.summary_preset_id);
+    fetchPresetModels(settings?.sd_prompt_preset_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSettings]);
 
@@ -183,6 +192,7 @@ function App() {
     }
   };
 
+  // --- 发送群聊消息 (精简版) ---
   const sendRoomChat = async (userText: string, speakerCharId: number | null) => {
     if (!settings) return;
     if (!selectedRoomId) return alert("请先选择房间");
@@ -257,7 +267,7 @@ function App() {
           try {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
-          } catch (dbErr) {}
+          } catch (dbErr) { console.error("保存失败", dbErr); }
       } else {
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
       }
@@ -275,6 +285,19 @@ function App() {
     setShowGenModal(false);
     setIsTyping(true);
     try {
+      let finalPrompt = rawPrompt;
+
+      // SD 模型转换逻辑 (翻译/丰富 Tags)
+      if (useSdPromptConversion) {
+        const sdPromptPreset = presets.find(p => p.id === settings.sd_prompt_preset_id) || presets.find(p => p.id === activePresetId);
+        const sdPromptModel = settings.sd_prompt_model_id || activeModel;
+        if (sdPromptPreset && sdPromptModel) {
+            const llm = new LLMClient(sdPromptPreset.api_base, sdPromptPreset.api_key, getPresetMode(sdPromptPreset));
+            const tags = await llm.generateImageTags(rawPrompt, sdPromptModel);
+            finalPrompt = `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`;
+        }
+      }
+
       let reqBody: any;
       if (imageBackend === 'huggingface') {
         if (!settings.hf_keys) throw new Error("请在系统设置中配置 Hugging Face Keys");
@@ -283,7 +306,7 @@ function App() {
           backend: 'huggingface',
           model: modelId,
           apiKey: settings.hf_keys,
-          payload: { prompt: rawPrompt }
+          payload: { prompt: finalPrompt }
         };
       } else {
         const imagePreset = presets.find(p => p.id === settings.image_preset_id) || presets.find(p => p.id === activePresetId);
@@ -294,7 +317,7 @@ function App() {
           apiBase: imagePreset.api_base,
           apiKey: imagePreset.api_key,
           model: imageModel,
-          payload: { prompt: rawPrompt, size: '1024x1024', n: 1, response_format: 'b64_json' }
+          payload: { prompt: finalPrompt, size: '1024x1024', n: 1, response_format: 'b64_json' }
         };
       }
 
@@ -603,6 +626,29 @@ function App() {
                                 </div>
                               </div>
                             </div>
+                            
+                            <div className="p-4 border border-base-300 rounded-xl">
+                              <div className="text-xs font-black mb-3">SD 转换模型（生图描述翻译与丰富）</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">预设</label>
+                                  <select className="select select-bordered select-sm" value={settings.sd_prompt_preset_id ? String(settings.sd_prompt_preset_id) : ''} onChange={(e) => { const v = e.target.value; if (!v) { setSettings({ ...settings, sd_prompt_preset_id: undefined, sd_prompt_model_id: '' }); return; } const pid = parseInt(v, 10); setSettings({ ...settings, sd_prompt_preset_id: pid }); fetchPresetModels(pid); }}>
+                                    <option value="">跟随顶部预设</option>
+                                    {presets.map(p => <option key={`sd-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型</label>
+                                  <div className="join">
+                                    <select className="select select-bordered select-sm join-item w-full" disabled={!settings.sd_prompt_preset_id} value={settings.sd_prompt_model_id || ''} onChange={(e) => setSettings({ ...settings, sd_prompt_model_id: e.target.value })}>
+                                      <option value="">跟随顶部模型</option>
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id] || []).map(m => <option key={`sd-model-${m}`} value={m}>{m}</option>)}
+                                      {settings.sd_prompt_preset_id && (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 && manualModels.map(m => <option key={`sd-manual-${m}`} value={m}>{m}</option>)}
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                       </section>
                       <section>
@@ -747,8 +793,12 @@ function App() {
               <div className="modal-box">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
                 <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
-                <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
-                   当前后端: <b>{settings.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b>
+                <div className="mt-3 flex items-center gap-4 text-xs">
+                  <label className="flex items-center gap-2 font-bold cursor-pointer">
+                    <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
+                    自动扩写词条
+                  </label>
+                  <span className="opacity-70">后端: <b>{settings.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b></span>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
