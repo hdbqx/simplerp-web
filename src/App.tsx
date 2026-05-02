@@ -291,12 +291,11 @@ function App() {
 
       let reqBody: any;
       if (imageBackend === 'huggingface') {
-        if (!settings.hf_keys) throw new Error("请在系统设置中配置 Hugging Face Keys");
-        const modelId = settings.hf_model_id || 'black-forest-labs/FLUX.1-schnell';
+        if (!settings.hf_keys) throw new Error("请在系统设置中配置 ComfyUI 内网穿透 URL");
         reqBody = {
           backend: 'huggingface',
-          model: modelId,
-          apiKey: settings.hf_keys,
+          model: 'comfyui-local',
+          apiKey: settings.hf_keys, // 借用 apiKey 传递 ComfyUI URL
           payload: { prompt: finalPrompt }
         };
       } else {
@@ -395,7 +394,7 @@ function App() {
         )) : (
           <div className="p-3 rounded-xl border border-base-300 bg-base-100/40 text-xs leading-relaxed">
             <div className="font-black mb-2 flex items-center gap-2"><ImageIcon size={16}/> 生图工作台</div>
-            <div>支持 Hugging Face 多 Key 自动轮询与 OpenAI 兼容端点生图。</div>
+            <div>支持 本地 ComfyUI 异步穿透生图 与 OpenAI 兼容端点生图。</div>
           </div>
         )}
         {(viewMode === 'char' || viewMode === 'group') && (
@@ -409,66 +408,76 @@ function App() {
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
-    <div className="drawer md:drawer-open h-[100dvh] w-full bg-base-100 overflow-hidden text-base-content">
+    // 使用 fixed inset-0 彻底锁死外层框架，防止移动端滚动溢出
+    <div className="drawer md:drawer-open fixed inset-0 w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
-        <div className="navbar bg-base-100 border-b border-base-300 px-4 sticky top-0 z-20 min-h-[3.5rem]">
-          <div className="flex-none md:hidden"><button className="btn btn-square btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu/></button></div>
-          <div className="flex-1 font-bold truncate px-2 hidden md:block">
-            {viewMode === 'image' ? '生图工作台' : (viewMode === 'char' ? characters.find(c=>c.id===selectedCharId)?.name : rooms.find(r=>r.id===selectedRoomId)?.name) || "SimpleRP"}
+        
+        {/* 针对移动端优化的 Navbar */}
+        <div className="bg-base-100 border-b border-base-300 safe-pt z-20 shrink-0">
+          <div className="navbar min-h-[3rem] px-2 md:px-4">
+            <div className="flex-none md:hidden">
+              <button className="btn btn-square btn-sm btn-ghost" onClick={()=>setMobileMenuOpen(true)}><Menu size={20}/></button>
+            </div>
+            <div className="flex-1 font-bold text-base md:text-lg truncate px-2">
+              {viewMode === 'image' ? '生图工作台' : (viewMode === 'char' ? characters.find(c=>c.id===selectedCharId)?.name : rooms.find(r=>r.id===selectedRoomId)?.name) || "SimpleRP"}
+            </div>
           </div>
-          <div className="flex-none flex items-center gap-2 mr-2 max-w-[72vw] md:max-w-none overflow-x-auto no-scrollbar">
-            <select className="select select-bordered select-sm max-w-[8rem] text-xs" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
+          
+          {/* 功能栏：移动端允许横向滑动，不再强制隐藏 */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-3 pb-2 w-full">
+            <select className="select select-bordered select-xs md:select-sm shrink-0" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
                 {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <div className="join">
-                <select className="select select-bordered select-sm join-item max-w-[10rem] text-xs" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
+            <div className="join shrink-0">
+                <select className="select select-bordered select-xs md:select-sm join-item max-w-[8rem] md:max-w-[10rem]" value={activeModel} onChange={(e) => handleModelChange(e.target.value)} disabled={!activePresetId}>
                     {manualModels.length === 0 && availableModels.length === 0 && <option value="">无可用模型</option>}
-                    {manualModels.length > 0 && <optgroup label="手动配置 (Settings)">{manualModels.map(m => <option key={`man-${m}`} value={m}>{m}</option>)}</optgroup>}
-                    {availableModels.length > 0 && <optgroup label="自动获取 (API)">{availableModels.map(m => <option key={`auto-${m}`} value={m}>{m}</option>)}</optgroup>}
+                    {manualModels.length > 0 && <optgroup label="手动配置">{manualModels.map(m => <option key={`man-${m}`} value={m}>{m}</option>)}</optgroup>}
+                    {availableModels.length > 0 && <optgroup label="自动获取">{availableModels.map(m => <option key={`auto-${m}`} value={m}>{m}</option>)}</optgroup>}
                 </select>
-                <button className={`btn btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel, undefined, getPresetMode(p)); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
+                <button className={`btn btn-xs md:btn-sm join-item btn-ghost ${isFetchingModels ? 'loading' : ''}`} title="刷新模型" onClick={() => { const p = presets.find(pre => pre.id === activePresetId); if(p) refreshModels(p.api_base, p.api_key, activeModel, undefined, getPresetMode(p)); }} disabled={!activePresetId}><RefreshCw size={14}/></button>
             </div>
-          </div>
-          <div className="hidden md:flex flex-none gap-2">
-            {viewMode !== 'image' && (
-              <button className="btn btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if (!confirm("确定清空会话？")) return; if (viewMode === 'group' && selectedRoomId) { api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); }); } else { api.messages.clear(viewMode==='char'?selectedCharId:undefined).then(()=>{setMessages([]); alert("已清空");}); } }}><Eraser size={18}/></button>
-            )}
-            {(viewMode === 'char' || viewMode === 'group') && (selectedCharId || selectedRoomId) && (
-              <button className="btn btn-sm btn-ghost text-info" title="总结剧情进展" onClick={async ()=>{ 
-                  if (!activePresetId || !activeModel) return alert("请先选择模型");
-                  try {
-                      setIsTyping(true);
-                      const currentPreset = presets.find(p => p.id === activePresetId)!;
-                      const summaryPreset = presets.find(p => p.id === settings?.summary_preset_id) || currentPreset;
-                      const summaryModel = settings?.summary_model_id || activeModel;
-                      const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
-                      
-                      const sourceMessages = viewMode === 'group' ? roomMessages : messages;
-                      const fragment = await llm.summarizeRecent(sourceMessages as any, summaryModel);
-                      if(!fragment) return alert("没有检测到新剧情。");
-                      
-                      const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
-                      if (viewMode === 'char' && selectedCharId) {
-                         const char = characters.find(c => c.id === selectedCharId);
-                         const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
-                         await api.characters.update(selectedCharId, { summary: updatedSummary });
-                      } else if (viewMode === 'group' && selectedRoomId) {
-                         const room = rooms.find(r => r.id === selectedRoomId);
-                         const updatedSummary = (room?.summary ? room.summary + "\n\n" : "") + `#### [群聊更新 ${date}]\n${fragment}`;
-                         await api.rooms.update(selectedRoomId, { summary: updatedSummary });
-                      }
-                      await loadData(); alert("新进展已追加。");
-                  } catch (e: any) { alert(e.message); } finally { setIsTyping(false); }
-              }}><BookOpen size={18}/></button>
-            )}
-            {viewMode === 'char' && selectedCharId && (
-              <><button className="btn btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={18}/></button><button className="btn btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={18}/></button></>
-            )}
-            {viewMode === 'group' && selectedRoomId && (
-              <button className="btn btn-sm btn-secondary" title="房间设置" onClick={()=>setShowGroupEdit(true)}><Users size={18}/></button>
-            )}
+
+            <div className="flex shrink-0 gap-1 ml-auto border-l border-base-300 pl-2">
+              {viewMode !== 'image' && (
+                <button className="btn btn-xs md:btn-sm btn-ghost text-error" title="清空对话" onClick={() => { if (!confirm("确定清空会话？")) return; if (viewMode === 'group' && selectedRoomId) { api.roomMessages.clear(selectedRoomId).then(() => { setRoomMessages([]); alert("已清空"); }); } else { api.messages.clear(viewMode==='char'?selectedCharId:undefined).then(()=>{setMessages([]); alert("已清空");}); } }}><Eraser size={16}/></button>
+              )}
+              {(viewMode === 'char' || viewMode === 'group') && (selectedCharId || selectedRoomId) && (
+                <button className="btn btn-xs md:btn-sm btn-ghost text-info" title="总结剧情进展" onClick={async ()=>{ 
+                    if (!activePresetId || !activeModel) return alert("请先选择模型");
+                    try {
+                        setIsTyping(true);
+                        const currentPreset = presets.find(p => p.id === activePresetId)!;
+                        const summaryPreset = presets.find(p => p.id === settings?.summary_preset_id) || currentPreset;
+                        const summaryModel = settings?.summary_model_id || activeModel;
+                        const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
+                        
+                        const sourceMessages = viewMode === 'group' ? roomMessages : messages;
+                        const fragment = await llm.summarizeRecent(sourceMessages as any, summaryModel);
+                        if(!fragment) return alert("没有检测到新剧情。");
+                        
+                        const date = new Date().toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric'});
+                        if (viewMode === 'char' && selectedCharId) {
+                           const char = characters.find(c => c.id === selectedCharId);
+                           const updatedSummary = (char?.summary ? char.summary + "\n\n" : "") + `#### [剧情更新 ${date}]\n${fragment}`;
+                           await api.characters.update(selectedCharId, { summary: updatedSummary });
+                        } else if (viewMode === 'group' && selectedRoomId) {
+                           const room = rooms.find(r => r.id === selectedRoomId);
+                           const updatedSummary = (room?.summary ? room.summary + "\n\n" : "") + `#### [群聊更新 ${date}]\n${fragment}`;
+                           await api.rooms.update(selectedRoomId, { summary: updatedSummary });
+                        }
+                        await loadData(); alert("新进展已追加。");
+                    } catch (e: any) { alert(e.message); } finally { setIsTyping(false); }
+                }}><BookOpen size={16}/></button>
+              )}
+              {viewMode === 'char' && selectedCharId && (
+                <><button className="btn btn-xs md:btn-sm btn-ghost text-warning" title="世界书" onClick={()=>setShowLorebook(true)}><Book size={16}/></button><button className="btn btn-xs md:btn-sm btn-primary" onClick={()=>setShowCharEdit(true)}><Pencil size={16}/></button></>
+              )}
+              {viewMode === 'group' && selectedRoomId && (
+                <button className="btn btn-xs md:btn-sm btn-secondary" title="房间设置" onClick={()=>setShowGroupEdit(true)}><Users size={16}/></button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -511,20 +520,34 @@ function App() {
               <div ref={bottomRef} className="h-20" />
             </div>
 
-            <div className="p-4 bg-base-100 border-t border-base-300">
+            {/* Input Area: 适配安全区与字体大小 */}
+            <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 safe-pb shrink-0">
               <div className="max-w-4xl mx-auto flex flex-col gap-2">
                 {viewMode === 'group' && selectedRoomId && (
-                  <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                    <button onClick={() => sendRoomChat(input || '', null)} disabled={isTyping || !input.trim()} className="btn btn-xs btn-outline whitespace-nowrap rounded-full">发送 (玩家发言)</button>
+                  <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    <button onClick={() => sendRoomChat(input || '', null)} disabled={isTyping || !input.trim()} className="btn btn-sm btn-outline whitespace-nowrap rounded-full">发送 (玩家发言)</button>
                     {characters.filter(c => groupMemberIds.includes(c.id!)).map(m => (
-                      <button key={m.id} onClick={() => sendRoomChat(input || '', m.id!)} disabled={isTyping} className="btn btn-xs btn-secondary whitespace-nowrap rounded-full">@{m.name} 回应</button>
+                      <button key={m.id} onClick={() => sendRoomChat(input || '', m.id!)} disabled={isTyping} className="btn btn-sm btn-secondary whitespace-nowrap rounded-full">@{m.name} 回应</button>
                     ))}
                   </div>
                 )}
-                <div className="flex gap-2 items-end bg-base-200 p-2 rounded-2xl shadow-inner border border-base-300">
-                    <button className="btn btn-circle btn-ghost btn-sm text-accent" onClick={()=>{setGenPrompt(""); setShowGenModal(true)}}><ImageIcon size={20}/></button>
-                  <textarea ref={inputRef} className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-48 resize-none py-2 px-2 focus:outline-none" rows={1} value={input} onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} placeholder={viewMode === 'group' ? "输入并点击上面的 @ 指定角色回答..." : "输入消息..."} onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); if(viewMode === 'char') handleSend();}}} />
-                  {isTyping ? (<button className="btn btn-circle btn-error btn-sm shadow-lg" onClick={stopGeneration}><Square size={16} fill="currentColor"/></button>) : (viewMode === 'char' && <button className="btn btn-circle btn-primary btn-sm shadow-lg" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>)}
+                <div className="flex gap-2 items-end bg-base-200 p-1.5 md:p-2 rounded-2xl shadow-inner border border-base-300">
+                  <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={()=>{setGenPrompt(""); setShowGenModal(true)}}><ImageIcon size={22}/></button>
+                  {/* 使用 text-base 防止 iOS 聚焦放大 */}
+                  <textarea 
+                    ref={inputRef} 
+                    className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-32 md:max-h-48 resize-none py-2 px-1 focus:outline-none text-base leading-relaxed" 
+                    rows={1} 
+                    value={input} 
+                    onChange={e=>{setInput(e.target.value); e.target.style.height='auto'; e.target.style.height=e.target.scrollHeight+'px'}} 
+                    placeholder={viewMode === 'group' ? "输入并点击上面的 @..." : "输入消息..."} 
+                    onKeyDown={e=>{if(e.key==='Enter' && !e.shiftKey){e.preventDefault(); if(viewMode === 'char') handleSend();}}} 
+                  />
+                  {isTyping ? (
+                    <button className="btn btn-circle btn-error btn-sm shadow-lg shrink-0 mb-1" onClick={stopGeneration}><Square size={18} fill="currentColor"/></button>
+                  ) : (
+                    viewMode === 'char' && <button className="btn btn-circle btn-primary btn-sm shadow-lg shrink-0 mb-1" onClick={handleSend} disabled={!input.trim()}><Send size={18}/></button>
+                  )}
                 </div>
               </div>
             </div>
@@ -546,25 +569,21 @@ function App() {
                             <div className="form-control">
                               <label className="label text-xs font-bold">默认生图后端</label>
                               <select className="select select-bordered" value={settings.image_backend || 'huggingface'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
-                                <option value="huggingface">Hugging Face (免费高质模型库)</option>
+                                <option value="huggingface">ComfyUI 本地穿透 (利用 HF 通道)</option>
                                 <option value="openai">OpenAI 兼容端点</option>
                               </select>
                             </div>
                           </div>
                       </section>
                       <section>
-                          <h4 className="text-sm font-black mb-3 text-primary uppercase">生图核心配置 (Hugging Face / OpenAI)</h4>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">生图核心配置</h4>
                           <div className="grid grid-cols-1 gap-4">
                             <div className="p-4 border border-base-300 rounded-xl bg-base-100">
-                              <div className="text-xs font-black mb-3 text-accent">Hugging Face 生图参数</div>
+                              <div className="text-xs font-black mb-3 text-accent">ComfyUI 本地穿透参数</div>
                               <div className="grid grid-cols-1 gap-4">
                                 <div className="form-control">
-                                  <label className="label text-xs font-bold">HF Access Tokens (轮询池)</label>
-                                  <textarea className="textarea textarea-bordered h-20 text-xs font-mono" placeholder="填入以 hf_ 开头的密钥，多个 key 请用英文逗号(,)分隔。触发 429 报错时将自动重试下一个 key。" value={settings.hf_keys || ''} onChange={e=>setSettings({...settings, hf_keys:e.target.value})} />
-                                </div>
-                                <div className="form-control">
-                                  <label className="label text-xs font-bold">HF 模型仓库名</label>
-                                  <input className="input input-bordered input-sm" placeholder="如：black-forest-labs/FLUX.1-schnell" value={settings.hf_model_id || ''} onChange={e=>setSettings({...settings, hf_model_id:e.target.value})} />
+                                  <label className="label text-xs font-bold">Cloudflare Tunnel URL</label>
+                                  <textarea className="textarea textarea-bordered h-12 text-xs font-mono" placeholder="如：https://xxx.trycloudflare.com (替代原来的 HF Key 填入)" value={settings.hf_keys || ''} onChange={e=>setSettings({...settings, hf_keys:e.target.value})} />
                                 </div>
                               </div>
                             </div>
@@ -644,7 +663,7 @@ function App() {
                       </section>
                       <section>
                           <div className="flex justify-between items-end mb-3">
-                              <h4 className="text-sm font-black text-primary uppercase">API 预设库 (用于顶部导航栏切换)</h4>
+                              <h4 className="text-sm font-black text-primary uppercase">API 预设库</h4>
                               <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "New Preset", api_base: "", api_key: "", api_mode: 'chat_completions'}).then(() => loadData())}>+ 新增</button>
                           </div>
                           <div className="overflow-x-auto border border-base-300 rounded-xl mb-4">
@@ -668,7 +687,7 @@ function App() {
                           </div>
                           <div className="form-control">
                                 <label className="label font-bold text-xs">备用模型列表 (手动输入，逗号分隔)</label>
-                                <textarea className="textarea textarea-bordered w-full text-xs h-20" placeholder="当 API 不支持自动获取模型列表时使用，例如：gpt-4o, claude-3-5-sonnet, deepseek-chat" value={settings.model_list || ""} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
+                                <textarea className="textarea textarea-bordered w-full text-xs h-20" placeholder="当 API 不支持自动获取模型列表时使用" value={settings.model_list || ""} onChange={e=>setSettings({...settings, model_list:e.target.value})} />
                           </div>
                       </section>
                       <section>
@@ -783,13 +802,13 @@ function App() {
           <div className="modal modal-open text-base-content">
               <div className="modal-box">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2 text-primary"><Sparkles/> 极速生图</h3>
-                <textarea className="textarea textarea-bordered w-full h-32" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
+                <textarea className="textarea textarea-bordered w-full h-32 text-base" value={genPrompt} onChange={e=>setGenPrompt(e.target.value)} placeholder="描述你想生成的画面细节，支持自然语言..." />
                 <div className="mt-3 flex items-center gap-4 text-xs">
                   <label className="flex items-center gap-2 font-bold cursor-pointer">
                     <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
                     自动扩写词条
                   </label>
-                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : 'Hugging Face'}</b></span>
+                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : 'ComfyUI 本地穿透'}</b></span>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
