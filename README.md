@@ -1,77 +1,48 @@
-# React + TypeScript + Vite
+# SimpleRP Cloud
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个轻量、纯粹、基于 Cloudflare 生态的全栈 AI 角色扮演与多智能体沙箱平台。
 
-Currently, two official plugins are available:
+## ✨ 核心亮点
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- 💬 **双对话模式**：支持沉浸式的「单人角色扮演」与支持多 AI 互动的「剧场群聊」模式。
+- 🧠 **动态记忆**：内置世界书（Lorebook）系统与对话长线记忆自动总结功能。
+- 🎨 **极速生图**：集成独立生图工作台，支持 OpenAI 兼容接口及 ComfyUI 本地内网穿透（Hugging Face 隧道）。
+- ⚡ **Serverless 架构**：纯 Cloudflare 原生应用（Pages + Functions + D1 数据库），前端 React + Vite，轻松实现零成本高可用部署。
 
-## React Compiler
+## 🛠️ 技术栈
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **前端**: React 19, TypeScript, Vite, Tailwind CSS, DaisyUI
+- **后端 & 边缘计算**: Cloudflare Pages Functions
+- **数据库**: Cloudflare D1 (SQLite)
 
-## Expanding the ESLint configuration
+## 🚀 快速开始
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+确保你已安装 Node.js 18+ 与 npm。
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 1. 克隆与安装
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+```bash
+git clone [https://github.com/hdbqx/simplerp-web.git](https://github.com/hdbqx/simplerp-web.git)
+cd simplerp-web
+npm install
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+### 2. 初始化本地数据库
+项目依赖 Cloudflare D1，本地开发前需要先将表结构写入本地 SQLite 模拟环境：
+```bash
+npx wrangler d1 execute simplerp-db --file=./schema.sql
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+### 3. 启动开发服务器
+```bash
+npm run dev
 
+```
+打开浏览器访问终端提示的本地地址（通常为 http://localhost:5173）即可使用。
+## ☁️ 部署指南
+本项目可一键部署至 **Cloudflare Pages**：
+ 1. 在 Cloudflare 面板创建一个新的 D1 数据库，并将其 ID 填入 wrangler.toml 中的 database_id。
+ 2. 运行 npx wrangler d1 execute simplerp-db --file=./schema.sql --remote 初始化线上数据库。
+ 3. 连接你的 GitHub 仓库到 Cloudflare Pages，构建命令填 npm run build，输出目录填 dist，并绑定 D1 数据库。
+**安全提醒**：部署后，请务必在 Cloudflare Pages 的「Settings -> Environment variables」中配置 AUTH_USER 和 AUTH_PASS，以启用网页的基础密码访问保护。
 
-
-当前的剧场皇帝模拟存在以下问题1.那我们是不是另需要一个想导演一样的角色作为统计者，由玩家主动触发，根据新添加的记忆，文书流等进行全局统筹，写入日记，更改世界状态，然后总结变化。2.另外，官员请求，玩家批准请求进入room，这些动作，以及所有的tools调用，应该都被自动写入世界日志。3.还有，后宫一般情况绝对不应该在御前会议发言，但又该有联动。4.世界状态如民心，军队，经济，人口等等应该进行详细的预设。5.删除皇帝人设，玩家才是皇帝。以上问题优先改设定解决，必要则改动代码
