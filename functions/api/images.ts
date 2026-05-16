@@ -1,5 +1,3 @@
-// functions/api/images.ts
-
 type ImageBackend = 'huggingface' | 'openai';
 type ImageAction = 'txt2img' | 'img2img';
 
@@ -7,20 +5,23 @@ interface ImageProxyBody {
   backend: ImageBackend;
   action?: ImageAction;
   model: string;
-  apiKey?: string; // 这里存放 Cloudflare 内网穿透 URL
+  apiKey?: string;
   apiBase?: string;
   payload?: Record<string, unknown>;
+  char_id?: number;
+  room_id?: number;
+  prompt?: string;
 }
 
-// ==========================================
-// ⚙️ ComfyUI Z-Image-Turbo 专用配置
-// ==========================================
+interface Env {
+  IMAGES_BUCKET: R2Bucket;
+  DB: D1Database;
+}
 
-const PROMPT_NODE_ID = "70"; // 对应你工作流中的 CLIPTextEncode
-const SAMPLER_NODE_ID = "69"; // 对应你工作流中的 KSampler[cite: 2]
+const PROMPT_NODE_ID = "70";
+const SAMPLER_NODE_ID = "69";
 
 const getComfyUIWorkflow = (promptText: string) => {
-  // 这里完整引用了你提供的 Z-Image 节点流[cite: 2]
   const workflow: any = {
     "9": {
       "inputs": { "filename_prefix": "z-image-turbo", "images": ["65", 0] },
@@ -56,7 +57,7 @@ const getComfyUIWorkflow = (promptText: string) => {
     },
     "69": {
       "inputs": {
-        "seed": Math.floor(Math.random() * 1000000000000), // 随机种子[cite: 2]
+        "seed": Math.floor(Math.random() * 1000000000000),
         "steps": 8,
         "cfg": 1,
         "sampler_name": "res_multistep",
@@ -70,7 +71,7 @@ const getComfyUIWorkflow = (promptText: string) => {
       "class_type": "KSampler"
     },
     "70": {
-      "inputs": { "text": promptText, "clip": ["62", 0] }, // 注入提示词[cite: 2]
+      "inputs": { "text": promptText, "clip": ["62", 0] },
       "class_type": "CLIPTextEncode"
     }
   };
@@ -78,32 +79,133 @@ const getComfyUIWorkflow = (promptText: string) => {
   return workflow;
 };
 
-// ==========================================
-
 function normalizeBase(input: string): string {
   return (input || '').trim().replace(/\/+$/, '');
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+function generateImageKey(charId?: number, roomId?: number): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  const prefix = roomId ? `rooms/${roomId}` : (charId ? `chars/${charId}` : 'misc');
+  return `${prefix}/${timestamp}-${random}.png`;
 }
 
-export const onRequestPost: PagesFunction = async (context) => {
+async function uploadToR2(bucket: R2Bucket, imageBuffer: ArrayBuffer, key: string): Promise<string> {
+  await bucket.put(key, imageBuffer, {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+  return key;
+}
+
+async function saveImageRecord(db: D1Database, r2Key: string, charId?: number, roomId?: number, prompt?: string): Promise<number> {
+  const { meta } = await db.prepare(
+    "INSERT INTO images (r2_key, char_id, room_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).bind(r2Key, charId || null, roomId || null, prompt || null, Date.now()).run();
+  return meta.last_row_id;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const url = new URL(context.request.url);
+  const key = url.searchParams.get('key');
+  const charId = url.searchParams.get('char_id');
+  const roomId = url.searchParams.get('room_id');
+  
+  if (key) {
+    try {
+      const object = await context.env.IMAGES_BUCKET.get(key);
+      if (!object) {
+        return new Response('Image not found', { status: 404 });
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set('Cache-Control', 'public, max-age=31536000');
+      headers.set('ETag', object.httpEtag);
+
+      return new Response(object.body, { headers });
+    } catch (e: any) {
+      return new Response(`Error: ${e.message}`, { status: 500 });
+    }
+  }
+  
+  if (charId || roomId) {
+    const query = roomId 
+      ? "SELECT * FROM images WHERE room_id = ? ORDER BY created_at DESC"
+      : "SELECT * FROM images WHERE char_id = ? ORDER BY created_at DESC";
+    const bindId = roomId || charId;
+    
+    const { results } = await context.env.DB.prepare(query).bind(bindId).all();
+    return Response.json(results);
+  }
+  
+  const { results } = await context.env.DB.prepare("SELECT * FROM images ORDER BY created_at DESC LIMIT 100").all();
+  return Response.json(results);
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  const url = new URL(context.request.url);
+  const key = url.searchParams.get('key');
+  const imageId = url.searchParams.get('id');
+  const charId = url.searchParams.get('char_id');
+  const roomId = url.searchParams.get('room_id');
+  
+  try {
+    if (imageId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE id = ?").bind(imageId).all();
+      if (results.length > 0) {
+        const r2Key = (results[0] as any).r2_key;
+        await context.env.IMAGES_BUCKET.delete(r2Key);
+        await context.env.DB.prepare("DELETE FROM images WHERE id = ?").bind(imageId).run();
+      }
+      return new Response('Deleted');
+    }
+    
+    if (key) {
+      await context.env.IMAGES_BUCKET.delete(key);
+      await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(key).run();
+      return new Response('Deleted');
+    }
+    
+    if (charId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE char_id = ?").bind(charId).all();
+      for (const row of results as any[]) {
+        await context.env.IMAGES_BUCKET.delete(row.r2_key);
+      }
+      await context.env.DB.prepare("DELETE FROM images WHERE char_id = ?").bind(charId).run();
+      return new Response('Deleted all images for character');
+    }
+    
+    if (roomId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE room_id = ?").bind(roomId).all();
+      for (const row of results as any[]) {
+        await context.env.IMAGES_BUCKET.delete(row.r2_key);
+      }
+      await context.env.DB.prepare("DELETE FROM images WHERE room_id = ?").bind(roomId).run();
+      return new Response('Deleted all images for room');
+    }
+    
+    return new Response('Missing parameters', { status: 400 });
+  } catch (e: any) {
+    return new Response(`Error: ${e.message}`, { status: 500 });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body = (await context.request.json()) as ImageProxyBody;
     const backend: ImageBackend = body.backend || 'openai';
     
-    const rawPrompt = (body.payload as any)?.prompt;
+    const rawPrompt = body.payload?.prompt || body.prompt || '';
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
     if (!prompt) return new Response('Missing prompt', { status: 400 });
 
+    const charId = body.char_id;
+    const roomId = body.room_id;
+
     if (backend === 'huggingface') {
-      const comfyUrl = normalizeBase(body.apiKey || ''); // 从 HF Token 框读取 URL
+      const comfyUrl = normalizeBase(body.apiKey || '');
       if (!comfyUrl || !comfyUrl.startsWith('http')) {
         return new Response('请在系统设置的 HF Access Token 框填入完整的 ComfyUI 穿透 URL', { status: 400 });
       }
@@ -111,7 +213,6 @@ export const onRequestPost: PagesFunction = async (context) => {
       const workflow = getComfyUIWorkflow(prompt);
 
       try {
-        // 1. 提交任务
         const promptRes = await fetch(`${comfyUrl}/prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -123,7 +224,6 @@ export const onRequestPost: PagesFunction = async (context) => {
         const { prompt_id } = await promptRes.json() as any;
         if (!prompt_id) throw new Error("未获取到任务 ID");
 
-        // 2. 轮询状态 (最多等 45 秒)
         let historyData: any = null;
         for (let i = 0; i < 45; i++) {
           await new Promise(r => setTimeout(r, 1000));
@@ -139,7 +239,6 @@ export const onRequestPost: PagesFunction = async (context) => {
 
         if (!historyData) throw new Error("生成超时（显卡可能正在忙）");
 
-        // 3. 提取结果文件名 (从节点 9 提取)[cite: 2]
         const outputs = historyData.outputs["9"];
         if (!outputs || !outputs.images || outputs.images.length === 0) {
           throw new Error("工作流跑完了，但节点 9 没有保存图像");
@@ -147,22 +246,30 @@ export const onRequestPost: PagesFunction = async (context) => {
 
         const { filename, subfolder, type } = outputs.images[0];
 
-        // 4. 下载图片并转 Base64
         const viewUrl = `${comfyUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
         const imgRes = await fetch(viewUrl);
         if (!imgRes.ok) throw new Error("无法从 ComfyUI 下载生成的图片");
 
         const imgBuf = await imgRes.arrayBuffer();
-        const base64Str = arrayBufferToBase64(imgBuf);
         
-        return Response.json({ images: [base64Str], urls: [] });
+        const imageKey = generateImageKey(charId, roomId);
+        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+        
+        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+        
+        return Response.json({ 
+          images: [], 
+          urls: [imageUrl],
+          keys: [imageKey],
+          image_ids: [imageId]
+        });
 
       } catch (err: any) {
          return new Response(JSON.stringify({ error: `ComfyUI 生成失败: ${err.message}` }), { status: 500 });
       }
     }
 
-    // OpenAI 备用逻辑
     if (!body.apiBase) return new Response('Missing apiBase', { status: 400 });
     const res = await fetch(`${normalizeBase(body.apiBase)}/images/generations`, {
       method: 'POST',
@@ -172,7 +279,37 @@ export const onRequestPost: PagesFunction = async (context) => {
     
     if (!res.ok) return new Response(await res.text(), { status: res.status });
     const data: any = await res.json();
-    return Response.json({ images: data.data.map((it: any) => it.b64_json), urls: [] });
+    
+    const urls: string[] = [];
+    const keys: string[] = [];
+    const imageIds: number[] = [];
+    
+    for (const item of data.data) {
+      if (item.b64_json) {
+        const binaryString = atob(item.b64_json);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const imgBuf = bytes.buffer;
+        
+        const imageKey = generateImageKey(charId, roomId);
+        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+        
+        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+        urls.push(imageUrl);
+        keys.push(imageKey);
+        imageIds.push(imageId);
+      }
+    }
+    
+    return Response.json({ 
+      images: [], 
+      urls,
+      keys,
+      image_ids: imageIds
+    });
 
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });

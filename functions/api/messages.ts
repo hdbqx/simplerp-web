@@ -1,14 +1,13 @@
-interface Env { DB: D1Database; }
+interface Env { 
+  DB: D1Database;
+  IMAGES_BUCKET: R2Bucket;
+}
 
-/**
- * GET: 获取消息列表
- */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const charId = url.searchParams.get('char_id');
   const groupId = url.searchParams.get('group_id');
 
-  // 如果提供了 group_id，获取该剧场/群聊的所有消息
   if (groupId && groupId !== 'undefined' && groupId !== 'null') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC"
@@ -16,7 +15,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.json(results);
   } 
   
-  // 如果提供了 char_id，获取该角色的私聊消息（排除属于任何剧场的消息）
   if (charId && charId !== 'undefined' && charId !== 'null') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC"
@@ -27,9 +25,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return Response.json([]);
 };
 
-/**
- * POST: 新增消息
- */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
@@ -44,16 +39,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       body.timestamp
     ).run();
 
-    // 返回新插入记录的 ID，供前端同步状态
     return Response.json({ id: meta.last_row_id });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
 
-/**
- * PUT: 更新消息（编辑内容）
- */
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
@@ -69,9 +60,43 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
   }
 };
 
-/**
- * DELETE: 删除消息
- */
+async function extractAndDeleteImage(db: D1Database, bucket: R2Bucket, messageId: string) {
+  const { results } = await db.prepare("SELECT image FROM messages WHERE id = ?").bind(messageId).all();
+  if (results.length > 0) {
+    const imageUrl = (results[0] as any).image;
+    if (imageUrl && imageUrl.includes('/api/images?key=')) {
+      const match = imageUrl.match(/key=([^&]+)/);
+      if (match) {
+        const r2Key = decodeURIComponent(match[1]);
+        try {
+          await bucket.delete(r2Key);
+          await db.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+        } catch (e) {
+          console.error("Failed to delete image from R2:", e);
+        }
+      }
+    }
+  }
+}
+
+async function deleteImagesForChar(db: D1Database, bucket: R2Bucket, charId: string) {
+  const { results } = await db.prepare("SELECT image FROM messages WHERE char_id = ? AND group_id IS NULL").bind(charId).all();
+  for (const row of results as any[]) {
+    if (row.image && row.image.includes('/api/images?key=')) {
+      const match = row.image.match(/key=([^&]+)/);
+      if (match) {
+        const r2Key = decodeURIComponent(match[1]);
+        try {
+          await bucket.delete(r2Key);
+          await db.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+        } catch (e) {
+          console.error("Failed to delete image from R2:", e);
+        }
+      }
+    }
+  }
+}
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   try {
     const url = new URL(context.request.url);
@@ -80,28 +105,52 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const groupId = url.searchParams.get('group_id');
     const type = url.searchParams.get('type');
 
-    // 1. 特殊操作：清理所有包含生成图片的记录
     if (type === 'all_images') {
+      const { results } = await context.env.DB.prepare("SELECT image FROM messages WHERE image IS NOT NULL AND image != ''").all();
+      for (const row of results as any[]) {
+        if (row.image && row.image.includes('/api/images?key=')) {
+          const match = row.image.match(/key=([^&]+)/);
+          if (match) {
+            const r2Key = decodeURIComponent(match[1]);
+            try {
+              await context.env.IMAGES_BUCKET.delete(r2Key);
+              await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+            } catch (e) {}
+          }
+        }
+      }
       await context.env.DB.prepare(
         "DELETE FROM messages WHERE image IS NOT NULL AND image != ''"
       ).run();
       return new Response("All Images Cleared");
     }
 
-    // 2. 删除单条指定 ID 的消息
     if (id && id !== 'undefined' && id !== 'null') {
+      await extractAndDeleteImage(context.env.DB, context.env.IMAGES_BUCKET, id);
       await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
       return new Response("Single Message Deleted");
     }
 
-    // 3. 清空整个剧场（群聊）的消息
     if (groupId && groupId !== 'undefined' && groupId !== 'null') {
+      const { results } = await context.env.DB.prepare("SELECT image FROM messages WHERE group_id = ?").bind(groupId).all();
+      for (const row of results as any[]) {
+        if (row.image && row.image.includes('/api/images?key=')) {
+          const match = row.image.match(/key=([^&]+)/);
+          if (match) {
+            const r2Key = decodeURIComponent(match[1]);
+            try {
+              await context.env.IMAGES_BUCKET.delete(r2Key);
+              await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+            } catch (e) {}
+          }
+        }
+      }
       await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
       return new Response("Group Messages Cleared");
     }
 
-    // 4. 清空特定角色的私聊消息
     if (charId && charId !== 'undefined' && charId !== 'null') {
+      await deleteImagesForChar(context.env.DB, context.env.IMAGES_BUCKET, charId);
       await context.env.DB.prepare(
         "DELETE FROM messages WHERE char_id = ? AND group_id IS NULL"
       ).bind(charId).run();

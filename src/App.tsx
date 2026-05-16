@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
+import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { ImageStudio } from './components/ImageStudio';
 import ReactMarkdown from 'react-markdown';
@@ -289,13 +289,18 @@ function App() {
         }
       }
 
-      let reqBody: any;
+      let reqBody: any = {
+        char_id: viewMode === 'char' ? selectedCharId : undefined,
+        room_id: viewMode === 'group' ? selectedRoomId : undefined,
+      };
+      
       if (imageBackend === 'huggingface') {
         if (!settings.hf_keys) throw new Error("请在系统设置中配置 ComfyUI 内网穿透 URL");
         reqBody = {
+          ...reqBody,
           backend: 'huggingface',
           model: 'comfyui-local',
-          apiKey: settings.hf_keys, // 借用 apiKey 传递 ComfyUI URL
+          apiKey: settings.hf_keys,
           payload: { prompt: finalPrompt }
         };
       } else {
@@ -303,6 +308,7 @@ function App() {
         const imageModel = settings.image_model_id || activeModel;
         if (!imagePreset || !imageModel) throw new Error("请配置 OpenAI 生图预设和模型");
         reqBody = {
+          ...reqBody,
           backend: 'openai',
           apiBase: imagePreset.api_base,
           apiKey: imagePreset.api_key,
@@ -325,8 +331,16 @@ function App() {
       const imgSrc = (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') || (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
       if (!imgSrc) throw new Error("后端未返回图片");
 
-      const ephemeralMsg: Message = { role: 'assistant', content: '', image: imgSrc, timestamp: Date.now(), char_id: selectedCharId };
-      setMessages(prev => [...prev, ephemeralMsg]);
+      const timestamp = Date.now();
+      const imageMsg: Message = { role: 'assistant', content: '', image: imgSrc, timestamp, char_id: selectedCharId };
+      setMessages(prev => [...prev, imageMsg]);
+      
+      try {
+        const saveRes = await api.messages.add(imageMsg);
+        setMessages(prev => prev.map(m => m.timestamp === timestamp ? { ...m, id: saveRes.id } : m));
+      } catch (saveErr) {
+        console.error("保存图片消息失败:", saveErr);
+      }
     } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsTyping(false); }
   };
 

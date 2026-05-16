@@ -6,3 +6,7 @@ compatibility_date = "2024-12-09"
 binding = "DB"
 database_name = "simplerp-db"
 database_id = "740b4cf9-8916-480a-9b8e-f0c0977a3b0c"
+
+[[r2_buckets]]
+bucket_name = "simplerp-images"
+binding = "IMAGES_BUCKET"
