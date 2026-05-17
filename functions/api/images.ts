@@ -44,7 +44,7 @@ const getComfyUIWorkflow = (promptText: string) => {
       "class_type": "VAEDecode"
     },
     "66": {
-      "inputs": { "unet_name": "z-image-turbo-fp8-e4m3fn.safetensors", "weight_dtype": "default" },
+      "inputs": { "unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default" },
       "class_type": "UNETLoader"
     },
     "67": {

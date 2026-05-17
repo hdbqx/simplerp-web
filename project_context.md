@@ -4,6 +4,8 @@ simplerp-web/
 ├── .git
 ├── .gitignore
 ├── .vscode
+├── .wrangler
+│   └── tmp
 ├── README.md
 ├── dist
 ├── eslint.config.js
@@ -11,7 +13,6 @@ simplerp-web/
 │   ├── _middleware.ts
 │   └── api
 │       ├── characters.ts
-│       ├── groups.ts
 │       ├── images.ts
 │       ├── llm.ts
 │       ├── lorebook.ts
@@ -73,7 +74,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
+*.tsbuildinfo
 ```
 
 
@@ -193,109 +194,80 @@ export default {
 ## File: README.md
 
 ```md
-# React + TypeScript + Vite
+# SimpleRP Cloud
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个轻量、纯粹、基于 Cloudflare 生态的全栈 AI 角色扮演与多智能体沙箱平台。
 
-Currently, two official plugins are available:
+## ✨ 核心亮点
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- 💬 **双对话模式**：支持沉浸式的「单人角色扮演」与支持多 AI 互动的「剧场群聊」模式。
+- 🧠 **动态记忆**：内置世界书（Lorebook）系统与对话长线记忆自动总结功能。
+- 🎨 **极速生图**：集成独立生图工作台，支持 OpenAI 兼容接口及 ComfyUI 本地内网穿透（Hugging Face 隧道）。
+- ⚡ **Serverless 架构**：纯 Cloudflare 原生应用（Pages + Functions + D1 数据库），前端 React + Vite，轻松实现零成本高可用部署。
 
-## React Compiler
+## 🛠️ 技术栈
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **前端**: React 19, TypeScript, Vite, Tailwind CSS, DaisyUI
+- **后端 & 边缘计算**: Cloudflare Pages Functions
+- **数据库**: Cloudflare D1 (SQLite)
 
-## Expanding the ESLint configuration
+## 🚀 快速开始
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+确保你已安装 Node.js 18+ 与 npm。
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 1. 克隆与安装
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+```bash
+git clone [https://github.com/hdbqx/simplerp-web.git](https://github.com/hdbqx/simplerp-web.git)
+cd simplerp-web
+npm install
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+### 2. 初始化本地数据库
+项目依赖 Cloudflare D1，本地开发前需要先将表结构写入本地 SQLite 模拟环境：
+```bash
+npx wrangler d1 execute simplerp-db --file=./schema.sql
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+### 3. 启动开发服务器
+```bash
+npm run dev
+
+```
+打开浏览器访问终端提示的本地地址（通常为 http://localhost:5173）即可使用。
+## ☁️ 部署指南
+本项目可一键部署至 **Cloudflare Pages**：
+ 1. 在 Cloudflare 面板创建一个新的 D1 数据库，并将其 ID 填入 wrangler.toml 中的 database_id。
+ 2. 运行 npx wrangler d1 execute simplerp-db --file=./schema.sql --remote 初始化线上数据库。
+ 3. 连接你的 GitHub 仓库到 Cloudflare Pages，构建命令填 npm run build，输出目录填 dist，并绑定 D1 数据库。
+**安全提醒**：部署后，请务必在 Cloudflare Pages 的「Settings -> Environment variables」中配置 AUTH_USER 和 AUTH_PASS，以启用网页的基础密码访问保护。
 
 
-
-当前的剧场皇帝模拟存在以下问题1.那我们是不是另需要一个想导演一样的角色作为统计者，由玩家主动触发，根据新添加的记忆，文书流等进行全局统筹，写入日记，更改世界状态，然后总结变化。2.另外，官员请求，玩家批准请求进入room，这些动作，以及所有的tools调用，应该都被自动写入世界日志。3.还有，后宫一般情况绝对不应该在御前会议发言，但又该有联动。4.世界状态如民心，军队，经济，人口等等应该进行详细的预设。5.删除皇帝人设，玩家才是皇帝。以上问题优先改设定解决，必要则改动代码
 ```
 
 
 ## File: schema.sql
 
 ```sql
-﻿-- 1. 角色表（增加独立驱动字段）
+﻿-- ============================================
+-- SimpleRP Web - Optimized Database Schema v2.0
+-- ============================================
+
+-- 1. 角色表
 CREATE TABLE IF NOT EXISTS characters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
     first_message TEXT,
     summary TEXT,
-    created_at INTEGER,
-    model_id TEXT,
-    api_base_override TEXT,
-    api_key_override TEXT,
-    api_preset_id INTEGER
+    created_at INTEGER
 );
 
--- 2. 消息表（增加剧场关联）
+-- 2. 消息表（角色私聊）
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
-    group_id INTEGER,
-    role TEXT,
+    role TEXT NOT NULL,
     content TEXT,
     image TEXT,
     timestamp INTEGER
@@ -316,22 +288,7 @@ CREATE TABLE IF NOT EXISTS lorebook (
     is_active INTEGER DEFAULT 1
 );
 
--- 5. 剧场/群聊表
-CREATE TABLE IF NOT EXISTS groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at INTEGER
-);
-
--- 6. 剧场成员关联表
-CREATE TABLE IF NOT EXISTS group_members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER,
-    char_id INTEGER
-);
-
--- 7. API预设表
+-- 5. API预设表
 CREATE TABLE IF NOT EXISTS api_presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -340,476 +297,100 @@ CREATE TABLE IF NOT EXISTS api_presets (
     api_mode TEXT DEFAULT 'chat_completions'
 );
 
--- 8. Rooms（新：沙箱/Agent房间）
+-- 6. 房间表（剧场/群聊）
 CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    mode TEXT DEFAULT 'agents', -- chat | agents | sandbox | log
-    category TEXT,
     description TEXT,
-    rules TEXT,
-    state_json TEXT,
+    summary TEXT,
     created_at INTEGER,
     updated_at INTEGER
 );
 
--- 9. Room members（新：房间成员与轮转顺序）
+-- 7. 房间成员表
 CREATE TABLE IF NOT EXISTS room_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
-    char_id INTEGER NOT NULL,
-    role TEXT DEFAULT 'agent', -- agent | npc | narrator
-    order_index INTEGER DEFAULT 0,
-    is_active INTEGER DEFAULT 1
+    char_id INTEGER NOT NULL
 );
 
--- 10. Room agent config（新：每房间每角色的模型/预设覆盖）
-CREATE TABLE IF NOT EXISTS room_agent_config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER NOT NULL,
-    char_id INTEGER NOT NULL,
-    api_preset_id INTEGER,
-    model_id TEXT,
-    temperature REAL,
-    max_output_tokens INTEGER,
-    tool_policy_json TEXT
-);
-
--- 10b. Room director config（新：导演模型配置）
-CREATE TABLE IF NOT EXISTS room_director_config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER NOT NULL,
-    api_preset_id INTEGER,
-    model_id TEXT,
-    temperature REAL,
-    max_output_tokens INTEGER
-);
-
--- 11. Room turns（新：回合与发言者记录）
-CREATE TABLE IF NOT EXISTS room_turns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER NOT NULL,
-    turn_index INTEGER NOT NULL,
-    speaker_char_id INTEGER,
-    director_plan_json TEXT,
-    created_at INTEGER
-);
-
--- 12. Room messages（新：房间消息流，隔离于旧 messages/group）
+-- 8. 房间消息表
 CREATE TABLE IF NOT EXISTS room_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
     char_id INTEGER,
-    sender_type TEXT, -- user | agent | director | tool
-    role TEXT,        -- user | assistant | system（前端渲染复用）
+    sender_type TEXT,
+    role TEXT,
     content TEXT,
     image TEXT,
     meta_json TEXT,
     timestamp INTEGER
 );
 
--- 13. Room summaries（新：房间长时记忆）
-CREATE TABLE IF NOT EXISTS room_summaries (
+-- 9. 图片管理表
+CREATE TABLE IF NOT EXISTS images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER NOT NULL,
-    summary TEXT,
-    source TEXT DEFAULT 'system',
-    updated_at INTEGER
-);
-
--- 13b. Room state snapshots（新：沙箱状态快照）
-CREATE TABLE IF NOT EXISTS room_state_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id INTEGER NOT NULL,
-    turn_id INTEGER,
-    state_json TEXT,
+    r2_key TEXT NOT NULL UNIQUE,
+    message_id INTEGER,
+    room_message_id INTEGER,
+    char_id INTEGER,
+    room_id INTEGER,
+    prompt TEXT,
     created_at INTEGER
 );
 
--- 14. Global world state（新：全局世界状态）
-CREATE TABLE IF NOT EXISTS world_state (
-    id INTEGER PRIMARY KEY,
-    state_json TEXT,
-    updated_at INTEGER
-);
-
--- 14b. World state snapshots（新：全局状态快照，可回滚）
-CREATE TABLE IF NOT EXISTS world_state_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    state_json TEXT,
-    created_at INTEGER
-);
-
--- 15. Dispatches（新：公文流转，HITL）
-CREATE TABLE IF NOT EXISTS dispatches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_room_id INTEGER,
-    to_room_id INTEGER,
-    abstract TEXT,
-    payload_json TEXT,
-    status TEXT DEFAULT 'pending', -- pending | approved | rejected | rewrite_requested
-    created_at INTEGER,
-    resolved_at INTEGER,
-    resolved_by TEXT
-);
-
+-- ============================================
 -- 初始化默认数据
-INSERT INTO settings (id, config) SELECT 1, '{}' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE id = 1);
-INSERT INTO world_state (id, state_json, updated_at) SELECT 1, '{}', strftime('%s','now')*1000 WHERE NOT EXISTS (SELECT 1 FROM world_state WHERE id = 1);
+-- ============================================
 
--- 皇帝模拟器（预填模板数据；不依赖前端按钮）
--- Characters
+INSERT INTO settings (id, config) 
+SELECT 1, '{}' 
+WHERE NOT EXISTS (SELECT 1 FROM settings WHERE id = 1);
+
+-- 默认角色
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '皇帝',
-       '你是帝国的最高统治者。你要在大局、权术、人心与制度之间做决断。你不轻易暴露全部意图，会用试探、封赏、责罚来驱动官僚体系。',
-       '众卿平身。今日何事？',
-       '',
-       strftime('%s','now')*1000
+SELECT '皇帝', '你是帝国的最高统治者。你要在大局、权术、人心与制度之间做决断。', '众卿平身。今日何事？', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '皇帝');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '中书令',
-       '你掌中书省机务，负责拟制诏令、汇总政务、承接圣意并协调六部。你说话谨慎、条理清晰，擅长把混乱诉求变成可执行的政令。',
-       '臣在。请陛下示下要点，臣即拟旨。',
-       '',
-       strftime('%s','now')*1000
+SELECT '中书令', '你掌中书省机务，负责拟制诏令、汇总政务、承接圣意并协调六部。', '臣在。请陛下示下要点，臣即拟旨。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '中书令');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '吏部尚书','你主管选官、考课、任免。你既讲制度，也懂人情与派系平衡。','臣吏部在此。','',strftime('%s','now')*1000
+SELECT '吏部尚书', '你主管选官、考课、任免。你既讲制度，也懂人情与派系平衡。', '臣吏部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '吏部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '户部尚书','你主管财政、田赋、仓储。你对数字敏感，常以“银子与粮”衡量政策可行性。','臣户部在此。','',strftime('%s','now')*1000
+SELECT '户部尚书', '你主管财政、田赋、仓储。你对数字敏感，常以"银子与粮"衡量政策可行性。', '臣户部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '户部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '礼部尚书','你主管礼制、科举、邦交礼仪。你最在意“名分与秩序”。','臣礼部在此。','',strftime('%s','now')*1000
+SELECT '礼部尚书', '你主管礼制、科举、邦交礼仪。你最在意"名分与秩序"。', '臣礼部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '礼部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '兵部尚书','你主管军政、调兵、边防。你重视情报、兵员、粮草与将领忠诚。','臣兵部在此。','',strftime('%s','now')*1000
+SELECT '兵部尚书', '你主管军政、调兵、边防。你重视情报、兵员、粮草与将领忠诚。', '臣兵部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '兵部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '刑部尚书','你主管刑名、律令、审狱。你强调证据与法度，也懂得用法驭人。','臣刑部在此。','',strftime('%s','now')*1000
+SELECT '刑部尚书', '你主管刑名、律令、审狱。你强调证据与法度，也懂得用法驭人。', '臣刑部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '刑部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '工部尚书','你主管工程、水利、营造与工匠。你关注工期、材料与事故风险。','臣工部在此。','',strftime('%s','now')*1000
+SELECT '工部尚书', '你主管工程、水利、营造与工匠。你关注工期、材料与事故风险。', '臣工部在此。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '工部尚书');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '皇后','你代表后宫秩序与宗庙名分。你温和端方，但对权力与家族利益敏感。','臣妾在。','',strftime('%s','now')*1000
+SELECT '皇后', '你代表后宫秩序与宗庙名分。你温和端方，但对权力与家族利益敏感。', '臣妾在。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '皇后');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '贵妃','你深谙人心与情绪，擅长影响陛下判断与宫廷风向。你有自己的算盘。','妾身参见陛下。','',strftime('%s','now')*1000
+SELECT '贵妃', '你深谙人心与情绪，擅长影响陛下判断与宫廷风向。你有自己的算盘。', '妾身参见陛下。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '贵妃');
 
 INSERT INTO characters (name, description, first_message, summary, created_at)
-SELECT '外邦使臣','你代表外邦利益，善用礼仪、威胁与交易争取筹码。你会试探帝国底线。','使臣奉命来朝。','',strftime('%s','now')*1000
+SELECT '外邦使臣', '你代表外邦利益，善用礼仪、威胁与交易争取筹码。你会试探帝国底线。', '使臣奉命来朝。', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '外邦使臣');
-
--- Rooms (ensure log exists, plus template rooms)
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '世界日志','log','system','全局事件日志','', '', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE mode = 'log');
-
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '御前议政','sandbox','emperor_sim','皇帝御前议政厅：裁决、拍板、定方向。','', '{}', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE name='御前议政' AND category='emperor_sim');
-
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '中书省','agents','emperor_sim','中书省：承旨、拟诏、分派政务。','', '{}', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE name='中书省' AND category='emperor_sim');
-
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '六部','agents','emperor_sim','六部：吏、户、礼、兵、刑、工分别落实政令。','', '{}', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE name='六部' AND category='emperor_sim');
-
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '后宫','agents','emperor_sim','后宫：人情、名分、家族与风向。','', '{}', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE name='后宫' AND category='emperor_sim');
-
-INSERT INTO rooms (name, mode, category, description, rules, state_json, created_at, updated_at)
-SELECT '外邦','agents','emperor_sim','外邦：朝贡、议和、贸易与边境摩擦。','', '{}', strftime('%s','now')*1000, strftime('%s','now')*1000
-WHERE NOT EXISTS (SELECT 1 FROM rooms WHERE name='外邦' AND category='emperor_sim');
-
--- Default rules (only if empty)
-UPDATE rooms
-SET rules = '你是“皇帝模拟器”的主房间。\n- 回合制：玩家发言后，由 Director 选择 1~2 位角色发言。\n- 跨部门流转：请先用 query_world(kind=\"rooms\") 找到目标房间 id，然后 send_dispatch。\n- 状态修改默认走公文(HITL)：update_state 会生成待审批公文。'
-WHERE name='御前议政' AND category='emperor_sim' AND (rules IS NULL OR rules='');
-
-UPDATE rooms
-SET rules = '你是中书省：承旨、拟诏、分派。\n- 收到御前意图后：拟定可执行条目。\n- 用 query_world(kind=\"rooms\") 找到“六部/外邦/后宫”的 room_id，然后 send_dispatch。'
-WHERE name='中书省' AND category='emperor_sim' AND (rules IS NULL OR rules='');
-
-UPDATE rooms
-SET rules = '你是六部：把诏令落地为执行方案、风险与资源需求。\n- 用 commit_memory 记录关键条款。\n- 用 query_world(kind=\"rooms\") 找到“御前议政/中书省”的 room_id，然后 send_dispatch 回报。'
-WHERE name='六部' AND category='emperor_sim' AND (rules IS NULL OR rules='');
-
-UPDATE rooms
-SET rules = '你是后宫：名分、人情、家族、舆论与内廷资源。\n- 用 query_world(kind=\"rooms\") 找到“御前议政/中书省”的 room_id，然后 send_dispatch。'
-WHERE name='后宫' AND category='emperor_sim' AND (rules IS NULL OR rules='');
-
-UPDATE rooms
-SET rules = '你是外邦：朝贡、议和、贸易与边境摩擦。\n- 用 query_world(kind=\"rooms\") 找到“御前议政/中书省”的 room_id，然后 send_dispatch。'
-WHERE name='外邦' AND category='emperor_sim' AND (rules IS NULL OR rules='');
-
--- Members (guarded)
--- 御前议政
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇帝' LIMIT 1),
-       'agent', 0, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇帝' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='中书令' LIMIT 1),
-       'agent', 1, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='中书令' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='吏部尚书' LIMIT 1),
-       'agent', 2, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='吏部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='户部尚书' LIMIT 1),
-       'agent', 3, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='户部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1),
-       'agent', 4, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='兵部尚书' LIMIT 1),
-       'agent', 5, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='兵部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='刑部尚书' LIMIT 1),
-       'agent', 6, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='刑部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='工部尚书' LIMIT 1),
-       'agent', 7, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='工部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇后' LIMIT 1),
-       'agent', 8, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇后' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='贵妃' LIMIT 1),
-       'agent', 9, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='贵妃' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='外邦使臣' LIMIT 1),
-       'agent', 10, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='御前议政' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='外邦使臣' LIMIT 1)
-);
-
--- 中书省
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='中书省' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='中书令' LIMIT 1),
-       'agent', 0, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='中书省' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='中书令' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='中书省' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇帝' LIMIT 1),
-       'agent', 1, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='中书省' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇帝' LIMIT 1)
-);
-
--- 六部
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='吏部尚书' LIMIT 1),
-       'agent', 0, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='吏部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='户部尚书' LIMIT 1),
-       'agent', 1, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='户部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1),
-       'agent', 2, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='兵部尚书' LIMIT 1),
-       'agent', 3, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='兵部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='刑部尚书' LIMIT 1),
-       'agent', 4, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='刑部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='工部尚书' LIMIT 1),
-       'agent', 5, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='工部尚书' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='中书令' LIMIT 1),
-       'agent', 6, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='六部' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='中书令' LIMIT 1)
-);
-
--- 后宫
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇后' LIMIT 1),
-       'agent', 0, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇后' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='贵妃' LIMIT 1),
-       'agent', 1, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='贵妃' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇帝' LIMIT 1),
-       'agent', 2, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='后宫' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇帝' LIMIT 1)
-);
-
--- 外邦
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='外邦使臣' LIMIT 1),
-       'agent', 0, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='外邦使臣' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='皇帝' LIMIT 1),
-       'agent', 1, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='皇帝' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='中书令' LIMIT 1),
-       'agent', 2, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='中书令' LIMIT 1)
-);
-INSERT INTO room_members (room_id, char_id, role, order_index, is_active)
-SELECT (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1),
-       (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1),
-       'agent', 3, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM room_members
-  WHERE room_id = (SELECT id FROM rooms WHERE name='外邦' AND category='emperor_sim' LIMIT 1)
-    AND char_id = (SELECT id FROM characters WHERE name='礼部尚书' LIMIT 1)
-);
 
 ```
 
@@ -944,6 +525,10 @@ compatibility_date = "2024-12-09"
 binding = "DB"
 database_name = "simplerp-db"
 database_id = "740b4cf9-8916-480a-9b8e-f0c0977a3b0c"
+
+[[r2_buckets]]
+bucket_name = "simplerp-images"
+binding = "IMAGES_BUCKET"
 ```
 
 
@@ -1073,55 +658,9 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 ```
 
 
-## File: functions\api\groups.ts
-
-```ts
-interface Env { DB: D1Database; }
-export const onRequestGet: PagesFunction<Env> = async (context) => {
-  const url = new URL(context.request.url);
-  const type = url.searchParams.get('type');
-  const groupId = url.searchParams.get('group_id');
-  if (type === 'members' && groupId) {
-    const { results } = await context.env.DB.prepare("SELECT char_id FROM group_members WHERE group_id = ?").bind(groupId).all();
-    return Response.json(results.map((r: any) => r.char_id));
-  }
-  const { results } = await context.env.DB.prepare("SELECT * FROM groups ORDER BY id DESC").all();
-  return Response.json(results);
-};
-export const onRequestPut: PagesFunction<Env> = async (context) => {
-  const body: any = await context.request.json();
-  const { id, name, description, memberIds } = body;
-  await context.env.DB.prepare("UPDATE groups SET name = ?, description = ? WHERE id = ?").bind(name, description, id).run();
-  if (memberIds) {
-    await context.env.DB.prepare("DELETE FROM group_members WHERE group_id = ?").bind(id).run();
-    for (const cid of memberIds) {
-      await context.env.DB.prepare("INSERT INTO group_members (group_id, char_id) VALUES (?, ?)").bind(id, cid).run();
-    }
-  }
-  return new Response("Updated");
-};
-export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const body: any = await context.request.json();
-  const { meta } = await context.env.DB.prepare("INSERT INTO groups (name, description, created_at) VALUES (?, ?, ?)")
-    .bind(body.name, body.description || "", Date.now()).run();
-  return Response.json({ id: meta.last_row_id });
-};
-export const onRequestDelete: PagesFunction<Env> = async (context) => {
-  const id = new URL(context.request.url).searchParams.get('id');
-  if (id) {
-    await context.env.DB.prepare("DELETE FROM groups WHERE id = ?").bind(id).run();
-    await context.env.DB.prepare("DELETE FROM group_members WHERE group_id = ?").bind(id).run();
-  }
-  return new Response("Deleted");
-};
-```
-
-
 ## File: functions\api\images.ts
 
 ```ts
-// functions/api/images.ts
-
 type ImageBackend = 'huggingface' | 'openai';
 type ImageAction = 'txt2img' | 'img2img';
 
@@ -1129,20 +668,23 @@ interface ImageProxyBody {
   backend: ImageBackend;
   action?: ImageAction;
   model: string;
-  apiKey?: string; // 这里存放 Cloudflare 内网穿透 URL
+  apiKey?: string;
   apiBase?: string;
   payload?: Record<string, unknown>;
+  char_id?: number;
+  room_id?: number;
+  prompt?: string;
 }
 
-// ==========================================
-// ⚙️ ComfyUI Z-Image-Turbo 专用配置
-// ==========================================
+interface Env {
+  IMAGES_BUCKET: R2Bucket;
+  DB: D1Database;
+}
 
-const PROMPT_NODE_ID = "70"; // 对应你工作流中的 CLIPTextEncode
-const SAMPLER_NODE_ID = "69"; // 对应你工作流中的 KSampler[cite: 2]
+const PROMPT_NODE_ID = "70";
+const SAMPLER_NODE_ID = "69";
 
 const getComfyUIWorkflow = (promptText: string) => {
-  // 这里完整引用了你提供的 Z-Image 节点流[cite: 2]
   const workflow: any = {
     "9": {
       "inputs": { "filename_prefix": "z-image-turbo", "images": ["65", 0] },
@@ -1178,7 +720,7 @@ const getComfyUIWorkflow = (promptText: string) => {
     },
     "69": {
       "inputs": {
-        "seed": Math.floor(Math.random() * 1000000000000), // 随机种子[cite: 2]
+        "seed": Math.floor(Math.random() * 1000000000000),
         "steps": 8,
         "cfg": 1,
         "sampler_name": "res_multistep",
@@ -1192,7 +734,7 @@ const getComfyUIWorkflow = (promptText: string) => {
       "class_type": "KSampler"
     },
     "70": {
-      "inputs": { "text": promptText, "clip": ["62", 0] }, // 注入提示词[cite: 2]
+      "inputs": { "text": promptText, "clip": ["62", 0] },
       "class_type": "CLIPTextEncode"
     }
   };
@@ -1200,32 +742,133 @@ const getComfyUIWorkflow = (promptText: string) => {
   return workflow;
 };
 
-// ==========================================
-
 function normalizeBase(input: string): string {
   return (input || '').trim().replace(/\/+$/, '');
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+function generateImageKey(charId?: number, roomId?: number): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  const prefix = roomId ? `rooms/${roomId}` : (charId ? `chars/${charId}` : 'misc');
+  return `${prefix}/${timestamp}-${random}.png`;
 }
 
-export const onRequestPost: PagesFunction = async (context) => {
+async function uploadToR2(bucket: R2Bucket, imageBuffer: ArrayBuffer, key: string): Promise<string> {
+  await bucket.put(key, imageBuffer, {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+  return key;
+}
+
+async function saveImageRecord(db: D1Database, r2Key: string, charId?: number, roomId?: number, prompt?: string): Promise<number> {
+  const { meta } = await db.prepare(
+    "INSERT INTO images (r2_key, char_id, room_id, prompt, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).bind(r2Key, charId || null, roomId || null, prompt || null, Date.now()).run();
+  return meta.last_row_id;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const url = new URL(context.request.url);
+  const key = url.searchParams.get('key');
+  const charId = url.searchParams.get('char_id');
+  const roomId = url.searchParams.get('room_id');
+  
+  if (key) {
+    try {
+      const object = await context.env.IMAGES_BUCKET.get(key);
+      if (!object) {
+        return new Response('Image not found', { status: 404 });
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set('Cache-Control', 'public, max-age=31536000');
+      headers.set('ETag', object.httpEtag);
+
+      return new Response(object.body, { headers });
+    } catch (e: any) {
+      return new Response(`Error: ${e.message}`, { status: 500 });
+    }
+  }
+  
+  if (charId || roomId) {
+    const query = roomId 
+      ? "SELECT * FROM images WHERE room_id = ? ORDER BY created_at DESC"
+      : "SELECT * FROM images WHERE char_id = ? ORDER BY created_at DESC";
+    const bindId = roomId || charId;
+    
+    const { results } = await context.env.DB.prepare(query).bind(bindId).all();
+    return Response.json(results);
+  }
+  
+  const { results } = await context.env.DB.prepare("SELECT * FROM images ORDER BY created_at DESC LIMIT 100").all();
+  return Response.json(results);
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  const url = new URL(context.request.url);
+  const key = url.searchParams.get('key');
+  const imageId = url.searchParams.get('id');
+  const charId = url.searchParams.get('char_id');
+  const roomId = url.searchParams.get('room_id');
+  
+  try {
+    if (imageId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE id = ?").bind(imageId).all();
+      if (results.length > 0) {
+        const r2Key = (results[0] as any).r2_key;
+        await context.env.IMAGES_BUCKET.delete(r2Key);
+        await context.env.DB.prepare("DELETE FROM images WHERE id = ?").bind(imageId).run();
+      }
+      return new Response('Deleted');
+    }
+    
+    if (key) {
+      await context.env.IMAGES_BUCKET.delete(key);
+      await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(key).run();
+      return new Response('Deleted');
+    }
+    
+    if (charId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE char_id = ?").bind(charId).all();
+      for (const row of results as any[]) {
+        await context.env.IMAGES_BUCKET.delete(row.r2_key);
+      }
+      await context.env.DB.prepare("DELETE FROM images WHERE char_id = ?").bind(charId).run();
+      return new Response('Deleted all images for character');
+    }
+    
+    if (roomId) {
+      const { results } = await context.env.DB.prepare("SELECT r2_key FROM images WHERE room_id = ?").bind(roomId).all();
+      for (const row of results as any[]) {
+        await context.env.IMAGES_BUCKET.delete(row.r2_key);
+      }
+      await context.env.DB.prepare("DELETE FROM images WHERE room_id = ?").bind(roomId).run();
+      return new Response('Deleted all images for room');
+    }
+    
+    return new Response('Missing parameters', { status: 400 });
+  } catch (e: any) {
+    return new Response(`Error: ${e.message}`, { status: 500 });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body = (await context.request.json()) as ImageProxyBody;
     const backend: ImageBackend = body.backend || 'openai';
     
-    const rawPrompt = (body.payload as any)?.prompt;
+    const rawPrompt = body.payload?.prompt || body.prompt || '';
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
     if (!prompt) return new Response('Missing prompt', { status: 400 });
 
+    const charId = body.char_id;
+    const roomId = body.room_id;
+
     if (backend === 'huggingface') {
-      const comfyUrl = normalizeBase(body.apiKey || ''); // 从 HF Token 框读取 URL
+      const comfyUrl = normalizeBase(body.apiKey || '');
       if (!comfyUrl || !comfyUrl.startsWith('http')) {
         return new Response('请在系统设置的 HF Access Token 框填入完整的 ComfyUI 穿透 URL', { status: 400 });
       }
@@ -1233,7 +876,6 @@ export const onRequestPost: PagesFunction = async (context) => {
       const workflow = getComfyUIWorkflow(prompt);
 
       try {
-        // 1. 提交任务
         const promptRes = await fetch(`${comfyUrl}/prompt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1245,7 +887,6 @@ export const onRequestPost: PagesFunction = async (context) => {
         const { prompt_id } = await promptRes.json() as any;
         if (!prompt_id) throw new Error("未获取到任务 ID");
 
-        // 2. 轮询状态 (最多等 45 秒)
         let historyData: any = null;
         for (let i = 0; i < 45; i++) {
           await new Promise(r => setTimeout(r, 1000));
@@ -1261,7 +902,6 @@ export const onRequestPost: PagesFunction = async (context) => {
 
         if (!historyData) throw new Error("生成超时（显卡可能正在忙）");
 
-        // 3. 提取结果文件名 (从节点 9 提取)[cite: 2]
         const outputs = historyData.outputs["9"];
         if (!outputs || !outputs.images || outputs.images.length === 0) {
           throw new Error("工作流跑完了，但节点 9 没有保存图像");
@@ -1269,22 +909,30 @@ export const onRequestPost: PagesFunction = async (context) => {
 
         const { filename, subfolder, type } = outputs.images[0];
 
-        // 4. 下载图片并转 Base64
         const viewUrl = `${comfyUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
         const imgRes = await fetch(viewUrl);
         if (!imgRes.ok) throw new Error("无法从 ComfyUI 下载生成的图片");
 
         const imgBuf = await imgRes.arrayBuffer();
-        const base64Str = arrayBufferToBase64(imgBuf);
         
-        return Response.json({ images: [base64Str], urls: [] });
+        const imageKey = generateImageKey(charId, roomId);
+        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+        
+        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+        
+        return Response.json({ 
+          images: [], 
+          urls: [imageUrl],
+          keys: [imageKey],
+          image_ids: [imageId]
+        });
 
       } catch (err: any) {
          return new Response(JSON.stringify({ error: `ComfyUI 生成失败: ${err.message}` }), { status: 500 });
       }
     }
 
-    // OpenAI 备用逻辑
     if (!body.apiBase) return new Response('Missing apiBase', { status: 400 });
     const res = await fetch(`${normalizeBase(body.apiBase)}/images/generations`, {
       method: 'POST',
@@ -1294,12 +942,43 @@ export const onRequestPost: PagesFunction = async (context) => {
     
     if (!res.ok) return new Response(await res.text(), { status: res.status });
     const data: any = await res.json();
-    return Response.json({ images: data.data.map((it: any) => it.b64_json), urls: [] });
+    
+    const urls: string[] = [];
+    const keys: string[] = [];
+    const imageIds: number[] = [];
+    
+    for (const item of data.data) {
+      if (item.b64_json) {
+        const binaryString = atob(item.b64_json);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const imgBuf = bytes.buffer;
+        
+        const imageKey = generateImageKey(charId, roomId);
+        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+        
+        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+        urls.push(imageUrl);
+        keys.push(imageKey);
+        imageIds.push(imageId);
+      }
+    }
+    
+    return Response.json({ 
+      images: [], 
+      urls,
+      keys,
+      image_ids: imageIds
+    });
 
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
+
 ```
 
 
@@ -1561,17 +1240,16 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 ## File: functions\api\messages.ts
 
 ```ts
-interface Env { DB: D1Database; }
+interface Env { 
+  DB: D1Database;
+  IMAGES_BUCKET: R2Bucket;
+}
 
-/**
- * GET: 获取消息列表
- */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const charId = url.searchParams.get('char_id');
   const groupId = url.searchParams.get('group_id');
 
-  // 如果提供了 group_id，获取该剧场/群聊的所有消息
   if (groupId && groupId !== 'undefined' && groupId !== 'null') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE group_id = ? ORDER BY timestamp ASC"
@@ -1579,7 +1257,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.json(results);
   } 
   
-  // 如果提供了 char_id，获取该角色的私聊消息（排除属于任何剧场的消息）
   if (charId && charId !== 'undefined' && charId !== 'null') {
     const { results } = await context.env.DB.prepare(
       "SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC"
@@ -1590,9 +1267,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return Response.json([]);
 };
 
-/**
- * POST: 新增消息
- */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
@@ -1607,16 +1281,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       body.timestamp
     ).run();
 
-    // 返回新插入记录的 ID，供前端同步状态
     return Response.json({ id: meta.last_row_id });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
 
-/**
- * PUT: 更新消息（编辑内容）
- */
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
@@ -1632,9 +1302,43 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
   }
 };
 
-/**
- * DELETE: 删除消息
- */
+async function extractAndDeleteImage(db: D1Database, bucket: R2Bucket, messageId: string) {
+  const { results } = await db.prepare("SELECT image FROM messages WHERE id = ?").bind(messageId).all();
+  if (results.length > 0) {
+    const imageUrl = (results[0] as any).image;
+    if (imageUrl && imageUrl.includes('/api/images?key=')) {
+      const match = imageUrl.match(/key=([^&]+)/);
+      if (match) {
+        const r2Key = decodeURIComponent(match[1]);
+        try {
+          await bucket.delete(r2Key);
+          await db.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+        } catch (e) {
+          console.error("Failed to delete image from R2:", e);
+        }
+      }
+    }
+  }
+}
+
+async function deleteImagesForChar(db: D1Database, bucket: R2Bucket, charId: string) {
+  const { results } = await db.prepare("SELECT image FROM messages WHERE char_id = ? AND group_id IS NULL").bind(charId).all();
+  for (const row of results as any[]) {
+    if (row.image && row.image.includes('/api/images?key=')) {
+      const match = row.image.match(/key=([^&]+)/);
+      if (match) {
+        const r2Key = decodeURIComponent(match[1]);
+        try {
+          await bucket.delete(r2Key);
+          await db.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+        } catch (e) {
+          console.error("Failed to delete image from R2:", e);
+        }
+      }
+    }
+  }
+}
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   try {
     const url = new URL(context.request.url);
@@ -1643,28 +1347,52 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const groupId = url.searchParams.get('group_id');
     const type = url.searchParams.get('type');
 
-    // 1. 特殊操作：清理所有包含生成图片的记录
     if (type === 'all_images') {
+      const { results } = await context.env.DB.prepare("SELECT image FROM messages WHERE image IS NOT NULL AND image != ''").all();
+      for (const row of results as any[]) {
+        if (row.image && row.image.includes('/api/images?key=')) {
+          const match = row.image.match(/key=([^&]+)/);
+          if (match) {
+            const r2Key = decodeURIComponent(match[1]);
+            try {
+              await context.env.IMAGES_BUCKET.delete(r2Key);
+              await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+            } catch (e) {}
+          }
+        }
+      }
       await context.env.DB.prepare(
         "DELETE FROM messages WHERE image IS NOT NULL AND image != ''"
       ).run();
       return new Response("All Images Cleared");
     }
 
-    // 2. 删除单条指定 ID 的消息
     if (id && id !== 'undefined' && id !== 'null') {
+      await extractAndDeleteImage(context.env.DB, context.env.IMAGES_BUCKET, id);
       await context.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id).run();
       return new Response("Single Message Deleted");
     }
 
-    // 3. 清空整个剧场（群聊）的消息
     if (groupId && groupId !== 'undefined' && groupId !== 'null') {
+      const { results } = await context.env.DB.prepare("SELECT image FROM messages WHERE group_id = ?").bind(groupId).all();
+      for (const row of results as any[]) {
+        if (row.image && row.image.includes('/api/images?key=')) {
+          const match = row.image.match(/key=([^&]+)/);
+          if (match) {
+            const r2Key = decodeURIComponent(match[1]);
+            try {
+              await context.env.IMAGES_BUCKET.delete(r2Key);
+              await context.env.DB.prepare("DELETE FROM images WHERE r2_key = ?").bind(r2Key).run();
+            } catch (e) {}
+          }
+        }
+      }
       await context.env.DB.prepare("DELETE FROM messages WHERE group_id = ?").bind(groupId).run();
       return new Response("Group Messages Cleared");
     }
 
-    // 4. 清空特定角色的私聊消息
     if (charId && charId !== 'undefined' && charId !== 'null') {
+      await deleteImagesForChar(context.env.DB, context.env.IMAGES_BUCKET, charId);
       await context.env.DB.prepare(
         "DELETE FROM messages WHERE char_id = ? AND group_id IS NULL"
       ).bind(charId).run();
@@ -1676,6 +1404,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
+
 ```
 
 
@@ -2056,7 +1785,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
 ```tsx
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type Group, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
+import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { ImageStudio } from './components/ImageStudio';
 import ReactMarkdown from 'react-markdown';
@@ -2346,13 +2075,18 @@ function App() {
         }
       }
 
-      let reqBody: any;
+      let reqBody: any = {
+        char_id: viewMode === 'char' ? selectedCharId : undefined,
+        room_id: viewMode === 'group' ? selectedRoomId : undefined,
+      };
+      
       if (imageBackend === 'huggingface') {
         if (!settings.hf_keys) throw new Error("请在系统设置中配置 ComfyUI 内网穿透 URL");
         reqBody = {
+          ...reqBody,
           backend: 'huggingface',
           model: 'comfyui-local',
-          apiKey: settings.hf_keys, // 借用 apiKey 传递 ComfyUI URL
+          apiKey: settings.hf_keys,
           payload: { prompt: finalPrompt }
         };
       } else {
@@ -2360,6 +2094,7 @@ function App() {
         const imageModel = settings.image_model_id || activeModel;
         if (!imagePreset || !imageModel) throw new Error("请配置 OpenAI 生图预设和模型");
         reqBody = {
+          ...reqBody,
           backend: 'openai',
           apiBase: imagePreset.api_base,
           apiKey: imagePreset.api_key,
@@ -2382,8 +2117,16 @@ function App() {
       const imgSrc = (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') || (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
       if (!imgSrc) throw new Error("后端未返回图片");
 
-      const ephemeralMsg: Message = { role: 'assistant', content: '', image: imgSrc, timestamp: Date.now(), char_id: selectedCharId };
-      setMessages(prev => [...prev, ephemeralMsg]);
+      const timestamp = Date.now();
+      const imageMsg: Message = { role: 'assistant', content: '', image: imgSrc, timestamp, char_id: selectedCharId };
+      setMessages(prev => [...prev, imageMsg]);
+      
+      try {
+        const saveRes = await api.messages.add(imageMsg);
+        setMessages(prev => prev.map(m => m.timestamp === timestamp ? { ...m, id: saveRes.id } : m));
+      } catch (saveErr) {
+        console.error("保存图片消息失败:", saveErr);
+      }
     } catch (e: any) { alert("生图失败: " + e.message); } finally { setIsTyping(false); }
   };
 
@@ -3267,7 +3010,7 @@ export function ImageStudio({
 ## File: src\lib\db.ts
 
 ```ts
-﻿export type ApiMode = 'chat_completions' | 'responses';
+export type ApiMode = 'chat_completions' | 'responses';
 
 export interface Character {
   id?: number;
@@ -3281,14 +3024,11 @@ export interface Character {
 export interface Message {
   id?: number;
   char_id?: number;
-  group_id?: number;
   role: 'user' | 'assistant' | 'system';
   content: string;
   image?: string;
   timestamp: number;
 }
-
-export interface Group { id?: number; name: string; description: string; }
 
 export interface Room {
   id?: number;
@@ -3296,6 +3036,7 @@ export interface Room {
   description?: string;
   summary?: string;
   created_at?: number;
+  updated_at?: number;
 }
 
 export interface RoomMember {
@@ -3309,6 +3050,8 @@ export interface RoomMessage {
   sender_type?: 'user' | 'agent' | 'system';
   role: 'user' | 'assistant' | 'system';
   content: string;
+  image?: string;
+  meta_json?: string;
   timestamp: number;
 }
 
@@ -3324,19 +3067,14 @@ export interface Settings {
   id?: number;
   user_name?: string;
   image_backend?: 'huggingface' | 'openai';
-  // OpenAI 相关
   image_preset_id?: number;
   image_model_id?: string;
-  // Hugging Face 相关
   hf_keys?: string;
   hf_model_id?: string;
-  // 剧情总结模型
   summary_preset_id?: number;
   summary_model_id?: string;
-  // 提示词扩写/翻译模型（保留此项，非常有用）
   sd_prompt_preset_id?: number;
   sd_prompt_model_id?: string;
-  
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
@@ -3351,6 +3089,17 @@ export interface LorebookEntry {
   isActive: boolean;
 }
 
+export interface ImageRecord {
+  id?: number;
+  r2_key: string;
+  message_id?: number;
+  room_message_id?: number;
+  char_id?: number;
+  room_id?: number;
+  prompt?: string;
+  created_at?: number;
+}
+
 const API = '/api';
 const headers = { 'Content-Type': 'application/json' };
 
@@ -3362,6 +3111,7 @@ export const api = {
     update: (id: number, c: Partial<Character>) => fetch(`${API}/characters`, { method: 'PUT', headers, body: JSON.stringify({ id, ...c }) }),
     delete: (id: number) => fetch(`${API}/characters?id=${id}`, { method: 'DELETE' }),
   },
+  
   rooms: {
     list: () => fetch(`${API}/rooms`).then(r => r.json() as Promise<Room[]>),
     add: (room: Partial<Room>) => fetch(`${API}/rooms`, { method: 'POST', headers, body: JSON.stringify(room) }).then(r => r.json() as Promise<{ id: number }>),
@@ -3370,11 +3120,14 @@ export const api = {
     getMembers: (roomId: number) => fetch(`${API}/rooms?type=members&room_id=${roomId}`).then(r => r.json() as Promise<RoomMember[]>),
     updateMembers: (roomId: number, members: RoomMember[]) => fetch(`${API}/rooms?type=members`, { method: 'PUT', headers, body: JSON.stringify({ room_id: roomId, members }) }),
   },
+  
   roomMessages: {
     list: (roomId: number) => fetch(`${API}/room_messages?room_id=${roomId}`).then(r => r.json() as Promise<RoomMessage[]>),
     add: (m: RoomMessage) => fetch(`${API}/room_messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{ id: number }>),
+    delete: (id: number) => fetch(`${API}/room_messages?id=${id}`, { method: 'DELETE' }),
     clear: (roomId: number) => fetch(`${API}/room_messages?room_id=${roomId}`, { method: 'DELETE' }),
   },
+  
   roomChat: {
     send: (body: { room_id: number; user_input?: string; speaker_char_id: number; fallback_preset_id?: number; fallback_model_id?: string; }) =>
       fetch(`${API}/room_chat`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
@@ -3382,31 +3135,49 @@ export const api = {
         return r.json();
       }),
   },
+  
   presets: {
     list: () => fetch(`${API}/presets`).then(r => r.json() as Promise<ApiPreset[]>),
     add: (p: ApiPreset) => fetch(`${API}/presets`, { method: 'POST', headers, body: JSON.stringify(p) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
+  
   messages: {
-    list: (charId?: number, groupId?: number) => fetch(`${API}/messages?char_id=${charId}`).then(r => r.json() as Promise<Message[]>),
+    list: (charId?: number) => fetch(`${API}/messages?char_id=${charId}`).then(r => r.json() as Promise<Message[]>),
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, content: string) => fetch(`${API}/messages`, { method: 'PUT', headers, body: JSON.stringify({ id, content }) }),
     delete: (id: number) => fetch(`${API}/messages?id=${id}`, { method: 'DELETE' }),
     clear: (charId?: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' }),
     clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' })
   },
+  
   settings: {
     get: () => fetch(`${API}/settings`).then(r => r.json() as Promise<Settings>),
     update: (s: Settings) => fetch(`${API}/settings`, { method: 'POST', headers, body: JSON.stringify(s) })
   },
+  
   lorebook: {
     list: (charId: number) => fetch(`${API}/lorebook?char_id=${charId}`).then(r => r.json() as Promise<LorebookEntry[]>),
     add: (l: LorebookEntry) => fetch(`${API}/lorebook`, { method: 'POST', headers, body: JSON.stringify(l) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, l: Partial<LorebookEntry>) => fetch(`${API}/lorebook`, { method: 'PUT', headers, body: JSON.stringify({ id, ...l }) }),
     delete: (id: number) => fetch(`${API}/lorebook?id=${id}`, { method: 'DELETE' }),
+  },
+  
+  images: {
+    get: (key: string) => fetch(`${API}/images?key=${encodeURIComponent(key)}`),
+    list: (charId?: number, roomId?: number) => fetch(`${API}/images?${charId ? `char_id=${charId}` : `room_id=${roomId}`}`).then(r => r.json() as Promise<ImageRecord[]>),
+    delete: (id?: number, key?: string, charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (id) params.set('id', String(id));
+      if (key) params.set('key', key);
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/images?${params}`, { method: 'DELETE' });
+    },
   }
 };
+
 ```
 
 
