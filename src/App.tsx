@@ -8,6 +8,7 @@ import {
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
   BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy
 } from 'lucide-react';
+import { replaceVariables } from './lib/variables';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
@@ -524,7 +525,16 @@ function App() {
                     <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                       {viewMode === 'char' && editingMsgId === m.id ? (
                           <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
-                      ) : <div className="prose prose-sm break-words"><ReactMarkdown rehypePlugins={[rehypeRaw]}>{m.content}</ReactMarkdown></div>}
+                      ) : <div className="prose prose-sm break-words">
+  <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+    {replaceVariables(
+      m.content, 
+      settings || {}, 
+      viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
+    )}
+  </ReactMarkdown>
+</div>
+}
                     </div>
                   )}
                 </div>
