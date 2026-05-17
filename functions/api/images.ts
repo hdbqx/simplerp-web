@@ -225,7 +225,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         if (!prompt_id) throw new Error("未获取到任务 ID");
 
         let historyData: any = null;
-        for (let i = 0; i < 45; i++) {
+        for (let i = 0; i < 125; i++) {
           await new Promise(r => setTimeout(r, 1000));
           const histRes = await fetch(`${comfyUrl}/history/${prompt_id}`);
           if (histRes.ok) {
