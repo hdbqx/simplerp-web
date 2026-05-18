@@ -2,9 +2,6 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { ImageStudio } from './components/ImageStudio';
-import { VariableManager } from './components/variables/VariableManager';
-import { LorebookManager } from './components/lorebook/LorebookManager';
-import { SnapshotManager } from './components/snapshots/SnapshotManager';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
@@ -185,7 +182,7 @@ function App() {
   const createSnapshot = async () => {
     const name = prompt('快照名称:', `快照 ${new Date().toLocaleString()}`);
     if (!name) return;
-    const description = prompt('快照描述:');
+    const description = prompt('快照描述:') || undefined;
     await api.snapshots.create({ char_id: selectedCharId, name, description });
     await loadCharData();
   };
@@ -588,28 +585,25 @@ function App() {
           </div>
         </div>
 
-        {viewMode === 'image' ? (
+        {viewMode === 'image' && (
           <ImageStudio settings={settings} presets={presets} activePresetId={activePresetId} activeModel={activeModel} manualModels={manualModels} getPresetMode={getPresetMode} fetchPresetModels={fetchPresetModels} presetModelsMap={presetModelsMap} presetModelsLoading={presetModelsLoading} />
-        ) : viewMode === 'variables' ? (
-          <VariableManager charId={selectedCharId} roomId={selectedRoomId} />
-        ) : viewMode === 'lorebook' ? (
-          <LorebookManager charId={selectedCharId} roomId={selectedRoomId} />
-        ) : viewMode === 'snapshots' ? (
-          <SnapshotManager 
-            charId={selectedCharId} 
-            roomId={selectedRoomId} 
-            onRestore={async () => {
-              // Reload data after restore
-              await loadData();
-              if (selectedCharId) {
-                await api.messages.list(selectedCharId).then(setMessages);
-              } else if (selectedRoomId) {
-                await api.roomMessages.list(selectedRoomId).then(setRoomMessages);
-              }
-            }} 
-          />
-        ) : (
-          <>
+        )}
+        {viewMode === 'char' && !selectedCharId && (
+          <div className="flex-1 flex items-center justify-center opacity-60">
+            <div className="text-center">
+              <Pencil size={48} className="mx-auto mb-4 opacity-30" />
+              <p>请在左侧选择一个角色开始对话</p>
+            </div>
+          </div>
+        )}
+        {viewMode === 'group' && !selectedRoomId && (
+          <div className="flex-1 flex items-center justify-center opacity-60">
+            <div className="text-center">
+              <Users size={48} className="mx-auto mb-4 opacity-30" />
+              <p>请在左侧选择一个房间开始群聊</p>
+            </div>
+          </div>
+        )}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
               {(viewMode === 'group' ? (roomMessages as any) : (messages as any)).map((m: any, idx: number) => {
                 const isUser = m.role === 'user' || m.sender_type === 'user';
@@ -1004,20 +998,20 @@ function App() {
                             <input type="checkbox"/>
                             <div className="collapse-title text-sm font-bold flex justify-between items-center pr-12">
                                 <span>{e.keywords}</span>
-                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${e.is_active ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{e.is_active ? 'Active' : 'Inactive'}</span>
+                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${(e as any).is_active ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{(e as any).is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                             <div className="collapse-content space-y-2">
                                 <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebookV2.update(e.id!, {content: evt.target.value})} />
                                 <div className="flex gap-2 items-center">
                                     <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebookV2.update(e.id!, {keywords: evt.target.value})} />
-                                    <input type="number" className="input input-bordered input-sm w-20 text-xs" defaultValue={e.priority} onBlur={(evt)=>api.lorebookV2.update(e.id!, {priority: parseInt(evt.target.value) || 0})} placeholder="优先级" />
-                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.is_active} onChange={(evt) => {const val = evt.target.checked; api.lorebookV2.update(e.id!, { is_active: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, is_active: val} : item));});}} /></div>
+                                    <input type="number" className="input input-bordered input-sm w-20 text-xs" defaultValue={(e as any).priority || 0} onBlur={(evt)=>api.lorebookV2.update(e.id!, {priority: parseInt(evt.target.value) || 0})} placeholder="优先级" />
+                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={Boolean((e as any).is_active)} onChange={(evt) => {const val = evt.target.checked; api.lorebookV2.update(e.id!, { is_active: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, is_active: val} : item));});}} /></div>
                                     <button className="btn btn-sm btn-error" onClick={()=>api.lorebookV2.delete(e.id!).then(()=>loadLorebookEntries())}><Trash2 size={14}/></button>
                                 </div>
                             </div>
                         </div>
                     ))}
-                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebookV2.add({char_id:selectedCharId, name:"新词条", keywords:"新词条", content:"", is_active:true}).then(()=>loadLorebookEntries())}>+ 添加新设定</button>
+                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebookV2.add({char_id:selectedCharId, name:"新词条", keywords:"新词条", content:"", priority:0, position:'before_system', probability:1.0, is_active:true, use_once:false, cooldown_messages:0}).then(()=>loadLorebookEntries())}>+ 添加新设定</button>
                   </div>
               </div>
           </div>
