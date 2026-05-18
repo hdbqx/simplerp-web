@@ -44,13 +44,25 @@ export function LorebookManager({ charId, roomId }: Props) {
     };
     if (charId) newEntry.char_id = charId;
     if (roomId) newEntry.room_id = roomId;
-    const result = await api.lorebookV2.add(newEntry as LorebookV2Entry);
+    await api.lorebookV2.add(newEntry as LorebookV2Entry);
     await loadData();
   };
 
   const handleMigrate = async () => {
     if (confirm('要从旧世界书迁移数据吗？这会复制所有条目。')) {
       if (charId) await api.lorebookV2.migrateFromV1(charId);
+      await loadData();
+    }
+  };
+
+  const handleUpdate = async (id: number, updates: Partial<LorebookV2Entry>) => {
+    await api.lorebookV2.update(id, updates);
+    await loadData();
+  };
+
+  const handleDelete = async (id: number) => {
+    if (confirm('确定删除？')) {
+      await api.lorebookV2.delete(id);
       await loadData();
     }
   };
@@ -113,31 +125,22 @@ export function LorebookManager({ charId, roomId }: Props) {
         ) : (
           filteredEntries.map(entry => (
             <LorebookEntryCard
-              key={entry.id}
+              key={entry.id || `temp-${Math.random()}`}
               entry={entry}
               onEdit={setEditingEntry}
-              onUpdate={async (id, updates) => {
-                await api.lorebookV2.update(id, updates);
-                await loadData();
-              }}
-              onDelete={async (id) => {
-                if (confirm('确定删除？')) {
-                  await api.lorebookV2.delete(id);
-                  await loadData();
-                }
-              }}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
             />
           ))
         )}
       </div>
 
-      {showEditor && editingEntry && (
+      {showEditor && editingEntry && editingEntry.id && (
         <LorebookEntryEditor
           entry={editingEntry}
           onClose={() => { setShowEditor(false); setEditingEntry(null); }}
           onSave={async (updates) => {
-            if (editingEntry.id) await api.lorebookV2.update(editingEntry.id, updates);
-            await loadData();
+            await handleUpdate(editingEntry.id!, updates);
             setShowEditor(false);
             setEditingEntry(null);
           }}
@@ -160,6 +163,18 @@ function LorebookEntryCard({
 }) {
   const [expanded, setExpanded] = useState(false);
 
+  const handleEdit = () => {
+    if (entry.id) {
+      onEdit(entry);
+    }
+  };
+
+  const handleDeleteClick = () => {
+    if (entry.id) {
+      onDelete(entry.id);
+    }
+  };
+
   return (
     <div className={`card bg-base-100 border ${entry.is_active ? 'border-base-content/10' : 'border-error/30 opacity-60'}`}>
       <div className="card-body p-4">
@@ -177,14 +192,12 @@ function LorebookEntryCard({
             )}
           </div>
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm" onClick={() => onEdit(entry)}>
+            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
               <Edit size={16} />
             </button>
-            {entry.id && (
-              <button className="btn btn-ghost btn-sm text-error" onClick={() => onDelete(entry.id)}>
-                <Trash2 size={16} />
-              </button>
-            )}
+            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
+              <Trash2 size={16} />
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
               {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
@@ -283,7 +296,7 @@ function LorebookEntryEditor({
                 type="number"
                 className="input input-bordered"
                 value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) })}
+                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
               />
             </div>
             <div className="form-control">
@@ -295,7 +308,7 @@ function LorebookEntryEditor({
                 min="0"
                 max="1"
                 value={form.probability}
-                onChange={(e) => setForm({ ...form, probability: parseFloat(e.target.value) })}
+                onChange={(e) => setForm({ ...form, probability: parseFloat(e.target.value) || 1.0 })}
               />
             </div>
           </div>
@@ -320,7 +333,7 @@ function LorebookEntryEditor({
                 className="input input-bordered"
                 min="0"
                 value={form.cooldown_messages}
-                onChange={(e) => setForm({ ...form, cooldown_messages: parseInt(e.target.value) })}
+                onChange={(e) => setForm({ ...form, cooldown_messages: parseInt(e.target.value) || 0 })}
               />
             </div>
           </div>

@@ -51,7 +51,7 @@ export function VariableManager({ charId, roomId }: Props) {
     };
     if (charId) newVar.char_id = charId;
     if (roomId) newVar.room_id = roomId;
-    const result = await api.variables.add(newVar as Variable);
+    await api.variables.add(newVar as Variable);
     await loadData();
   };
 
@@ -65,10 +65,6 @@ export function VariableManager({ charId, roomId }: Props) {
       await api.variables.delete(id);
       await loadData();
     }
-  };
-
-  const handleTriggerThought = async () => {
-    alert('思考功能需要对话历史，会在对话时自动触发');
   };
 
   if (loading) return <div className="p-4">加载中...</div>;
@@ -98,7 +94,7 @@ export function VariableManager({ charId, roomId }: Props) {
         ) : (
           variables.map(v => (
             <VariableCard
-              key={v.id}
+              key={v.id || `temp-${Math.random()}`}
               variable={v}
               stages={stages.get(v.id!) || []}
               onEdit={setEditingVariable}
@@ -184,6 +180,16 @@ function VariableCard({
     }
   };
 
+  const handleEdit = () => {
+    onEdit(variable);
+  };
+
+  const handleDeleteClick = () => {
+    if (variable.id) {
+      onDelete(variable.id);
+    }
+  };
+
   return (
     <div className="card bg-base-100 border border-base-content/10">
       <div className="card-body p-4">
@@ -193,10 +199,10 @@ function VariableCard({
             <p className="text-sm opacity-60 font-mono">{variable.key}</p>
           </div>
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm" onClick={() => onEdit(variable)}>
+            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
               <Edit size={16} />
             </button>
-            <button className="btn btn-ghost btn-sm text-error" onClick={() => variable.id && onDelete(variable.id)}>
+            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
               <Trash2 size={16} />
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
