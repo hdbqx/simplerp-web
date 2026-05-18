@@ -139,6 +139,7 @@ function App() {
     loadCharData();
   }, [showCharEdit, selectedCharId, charEditTab]);
 
+  // 在 src/App.tsx 中，找到 loadCharData 函数并替换为：
   const loadCharData = async () => {
     try {
       const [vars, snaps] = await Promise.all([
@@ -147,6 +148,17 @@ function App() {
       ]);
       setCharVariables(vars);
       setCharSnapshots(snaps);
+      
+      // 【核心修复】创建变量后，立即同步更新给对话引擎所在的全局状态！
+      setGlobalVariables(vars);
+      let allStages: VariableStage[] = [];
+      for (const v of vars) {
+        if (v.id) {
+          const st = await api.variableStages.list(v.id);
+          allStages = [...allStages, ...st];
+        }
+      }
+      setGlobalStages(allStages);
     } catch (e) {
       console.error('Failed to load char data', e);
     }

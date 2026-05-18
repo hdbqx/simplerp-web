@@ -1,3 +1,5 @@
+import { D1Database } from '@cloudflare/workers-types';
+
 interface Env {
   DB: D1Database;
 }
@@ -5,47 +7,67 @@ interface Env {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
-    const { id } = body;
+    const id = body.id;
+    if (!id) return new Response('Missing snapshot id', { status: 400 });
 
-    if (!id) return new Response('Missing id', { status: 400 });
-
-    const snapshot = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
+    // 1. 获取快照元数据
+    const snapshot: any = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
     if (!snapshot) return new Response('Snapshot not found', { status: 404 });
 
-    const { results: messages } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-    const { results: variables } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
-
+    // 单人角色存档回滚
     if (snapshot.char_id) {
-      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(Number(snapshot.char_id)).run();
-      for (const msg of messages || []) {
+      // (1) 清空当前角色主聊天记录 (不影响群聊记录)
+      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(snapshot.char_id).run();
+      
+      // (2) 恢复聊天记录
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+      for (const m of msgs || []) {
+        const msg: any = m;
         await context.env.DB.prepare(
-          'INSERT INTO messages (char_id, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(snapshot.char_id, msg.role, msg.content, msg.image, msg.timestamp, id).run();
+          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          snapshot.char_id, 
+          msg.role || 'user', 
+          msg.content || '', 
+          msg.image || null, // 强制防 undefined 崩溃
+          msg.timestamp || Date.now()
+        ).run();
       }
 
-      for (const v of variables || []) {
-        if (v.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
+      // (3) 恢复变量状态
+      const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
+      for (const v of vars || []) {
+        const sv: any = v;
+        if (sv.variable_id) {
+            // 直接更新回原变量 ID
+            await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+                .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
         }
+      }
+    } 
+    // 群聊房间存档回滚
+    else if (snapshot.room_id) {
+      // (1) 清空当前群聊主聊天记录
+      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
+      
+      // (2) 恢复群聊记录
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+      for (const m of msgs || []) {
+        const msg: any = m;
+        await context.env.DB.prepare(
+          'INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(
+          snapshot.room_id, 
+          msg.char_id || null, 
+          msg.role || 'user', 
+          msg.content || '', 
+          msg.image || null, // 强制防 undefined 崩溃
+          msg.timestamp || Date.now()
+        ).run();
       }
     }
 
-    if (snapshot.room_id) {
-      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(Number(snapshot.room_id)).run();
-      for (const msg of messages || []) {
-        await context.env.DB.prepare(
-          'INSERT INTO room_messages (room_id, char_id, sender_type, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(snapshot.room_id, msg.char_id || null, msg.char_id ? 'agent' : 'user', msg.role, msg.content, msg.image, msg.timestamp, id).run();
-      }
-
-      for (const v of variables || []) {
-        if (v.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
-        }
-      }
-    }
-
-    return new Response('Restored');
+    return Response.json({ success: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
