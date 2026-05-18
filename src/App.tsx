@@ -9,13 +9,12 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy,
-  Variable, Camera
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy, Edit
 } from 'lucide-react';
 import { replaceVariables } from './lib/variables';
 
 function App() {
-  const [viewMode, setViewMode] = useState<'char' | 'group' | 'image' | 'variables' | 'lorebook' | 'snapshots'>('char');
+  const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
@@ -47,6 +46,9 @@ function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
+  const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
+  const [charVariables, setCharVariables] = useState<any[]>([]);
+  const [charSnapshots, setCharSnapshots] = useState<any[]>([]);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
@@ -128,6 +130,91 @@ function App() {
     api.rooms.getMembers(selectedRoomId).then(m => setRoomMembersDraft(m as any));
   }, [showGroupEdit, selectedRoomId]);
 
+  useEffect(() => {
+    if (!showCharEdit || !selectedCharId) return;
+    loadCharData();
+  }, [showCharEdit, selectedCharId, charEditTab]);
+
+  const loadCharData = async () => {
+    try {
+      const [vars, snaps] = await Promise.all([
+        api.variables.list(selectedCharId, undefined),
+        api.snapshots.list(selectedCharId, undefined)
+      ]);
+      setCharVariables(vars);
+      setCharSnapshots(snaps);
+    } catch (e) {
+      console.error('Failed to load char data', e);
+    }
+  };
+
+  const addVariable = async () => {
+    const newVar = {
+      name: '新变量',
+      key: 'new_var',
+      type: 'number' as const,
+      value: 0,
+      char_id: selectedCharId,
+      is_persistent: true,
+      is_visible: true
+    };
+    await api.variables.add(newVar);
+    await loadCharData();
+  };
+
+  const editVariable = async (variable: any) => {
+    const name = prompt('变量名称:', variable.name);
+    if (!name) return;
+    const key = prompt('变量键:', variable.key);
+    if (!key) return;
+    await api.variables.update(variable.id!, { name, key });
+    await loadCharData();
+  };
+
+  const updateVariableValue = async (id: number, value: any) => {
+    await api.variables.update(id, { value });
+    await loadCharData();
+  };
+
+  const deleteVariable = async (id: number) => {
+    if (!confirm('确定删除此变量？')) return;
+    await api.variables.delete(id);
+    await loadCharData();
+  };
+
+  const createSnapshot = async () => {
+    const name = prompt('快照名称:', `快照 ${new Date().toLocaleString()}`);
+    if (!name) return;
+    const description = prompt('快照描述:');
+    await api.snapshots.create({ char_id: selectedCharId, name, description });
+    await loadCharData();
+  };
+
+  const viewSnapshot = (snapshot: any) => {
+    alert(`快照内容:\n名称: ${snapshot.name}\n创建时间: ${new Date(snapshot.created_at).toLocaleString()}`);
+  };
+
+  const restoreSnapshot = async (snapshot: any) => {
+    if (!confirm(`确定回滚到快照 "${snapshot.name}"？当前进度将丢失。`)) return;
+    await api.snapshots.restore(snapshot.id!);
+    await loadCharData();
+    setMessages([]);
+    await api.messages.list(selectedCharId).then(setMessages);
+    alert('快照已恢复');
+  };
+
+  const deleteSnapshot = async (id: number) => {
+    if (!confirm('确定删除此快照？')) return;
+    await api.snapshots.delete(id);
+    await loadCharData();
+  };
+
+  const loadLorebookEntries = async () => {
+    if (!selectedCharId) return;
+    const entries = await api.lorebookV2.list(selectedCharId, undefined);
+    setLorebookEntries(entries as any);
+  };
+
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
       setIsFetchingModels(true);
       const llm = new LLMClient(base, key, mode);
@@ -169,7 +256,7 @@ function App() {
     setRoomMessages([]);
     if (viewMode === 'char' && selectedCharId) {
       api.messages.list(selectedCharId).then(setMessages);
-      api.lorebook.list(selectedCharId).then(setLorebookEntries);
+      loadLorebookEntries();
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
         setRoomMembers(m);
@@ -397,11 +484,6 @@ function App() {
         <button className={`tab flex-1 transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('image')}>生图</button>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'variables' ? 'btn-active' : ''}`} onClick={() => setViewMode('variables')}><Variable size={16} /><span className="ml-1">变量</span></button>
-        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'lorebook' ? 'btn-active' : ''}`} onClick={() => setViewMode('lorebook')}><Book size={16} /><span className="ml-1">世界书</span></button>
-        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'snapshots' ? 'btn-active' : ''}`} onClick={() => setViewMode('snapshots')}><Camera size={16} /><span className="ml-1">快照</span></button>
-      </div>
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
@@ -757,12 +839,102 @@ function App() {
 
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">角色档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+              <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
+                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">
+                    <div className="flex items-center gap-2">
+                      <span>角色档案</span>
+                      <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="tabs tabs-boxed">
+                      <button className={`tab ${charEditTab === 'basic' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('basic')}>基础设定</button>
+                      <button className={`tab ${charEditTab === 'variables' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('variables')}>变量管理</button>
+                      <button className={`tab ${charEditTab === 'snapshots' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('snapshots')}>历史快照</button>
+                    </div>
+                    <div className="p-6">
+                      {charEditTab === 'basic' && (
+                        <div className="space-y-6">
+                          <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
+                          <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
+                          <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+                        </div>
+                      )}
+                      {charEditTab === 'variables' && (
+                        <div className="space-y-3">
+                          {charVariables.map(v => (
+                            <div key={v.id} className="card bg-base-100 border border-base-content/10 p-4">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <span className="font-bold">{v.name}</span>
+                                  <span className="text-xs opacity-60 font-mono ml-2">{v.key}</span>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button className="btn btn-ghost btn-xs" onClick={() => editVariable(v)}><Edit size={14} /></button>
+                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteVariable(v.id!)}><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              {v.type === 'number' || v.type === 'range' ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    className="input input-bordered input-sm w-24"
+                                    value={v.value}
+                                    onChange={(e) => updateVariableValue(v.id!, parseFloat(e.target.value))}
+                                    step={v.step || 1}
+                                    min={v.min_value}
+                                    max={v.max_value}
+                                  />
+                                  {v.min_value !== undefined && v.max_value !== undefined && (
+                                    <div className="flex-1">
+                                      <progress className="progress progress-primary w-full" value={((v.value - v.min_value) / (v.max_value - v.min_value)) * 100} max="100" />
+                                    </div>
+                                  )}
+                                </div>
+                              ) : v.type === 'boolean' ? (
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="toggle toggle-primary"
+                                    checked={Boolean(v.value)}
+                                    onChange={(e) => updateVariableValue(v.id!, e.target.checked)}
+                                  />
+                                  <span>{v.value ? '是' : '否'}</span>
+                                </label>
+                              ) : (
+                                <textarea
+                                  className="textarea textarea-bordered text-sm"
+                                  value={v.value}
+                                  onChange={(e) => updateVariableValue(v.id!, e.target.value)}
+                                />
+                              )}
+                            </div>
+                          ))}
+                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={addVariable}>+ 添加变量</button>
+                        </div>
+                      )}
+                      {charEditTab === 'snapshots' && (
+                        <div className="space-y-3">
+                          {charSnapshots.map(s => (
+                            <div key={s.id} className="card bg-base-100 border border-base-content/10 p-4">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <span className="font-bold">{s.name}</span>
+                                  <span className="text-xs opacity-60 ml-2">{new Date(s.created_at!).toLocaleString()}</span>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button className="btn btn-ghost btn-xs" onClick={() => viewSnapshot(s)}>查看</button>
+                                  <button className="btn btn-ghost btn-xs" onClick={() => restoreSnapshot(s)}>回滚</button>
+                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteSnapshot(s.id!)}><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              {s.description && <p className="text-sm opacity-70">{s.description}</p>}
+                            </div>
+                          ))}
+                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={createSnapshot}>+ 创建快照</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="p-4 border-t bg-base-200 flex justify-end"><button className="btn btn-primary" onClick={async ()=>{await api.characters.update(selectedCharId, characters.find(c=>c.id===selectedCharId)!); setShowCharEdit(false); loadData();}}>确认保存</button></div>
               </div>
@@ -832,19 +1004,20 @@ function App() {
                             <input type="checkbox"/>
                             <div className="collapse-title text-sm font-bold flex justify-between items-center pr-12">
                                 <span>{e.keywords}</span>
-                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${e.isActive ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{e.isActive ? 'Active' : 'Inactive'}</span>
+                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${e.is_active ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{e.is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                             <div className="collapse-content space-y-2">
-                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebook.update(e.id!, {content: evt.target.value})} />
+                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebookV2.update(e.id!, {content: evt.target.value})} />
                                 <div className="flex gap-2 items-center">
-                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebook.update(e.id!, {keywords: evt.target.value})} />
-                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.isActive} onChange={(evt) => {const val = evt.target.checked; api.lorebook.update(e.id!, { isActive: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, isActive: val} : item));});}} /></div>
-                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebook.delete(e.id!).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}><Trash2 size={14}/></button>
+                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebookV2.update(e.id!, {keywords: evt.target.value})} />
+                                    <input type="number" className="input input-bordered input-sm w-20 text-xs" defaultValue={e.priority} onBlur={(evt)=>api.lorebookV2.update(e.id!, {priority: parseInt(evt.target.value) || 0})} placeholder="优先级" />
+                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.is_active} onChange={(evt) => {const val = evt.target.checked; api.lorebookV2.update(e.id!, { is_active: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, is_active: val} : item));});}} /></div>
+                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebookV2.delete(e.id!).then(()=>loadLorebookEntries())}><Trash2 size={14}/></button>
                                 </div>
                             </div>
                         </div>
                     ))}
-                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebook.add({char_id:selectedCharId, keywords:"新词条", content:"", isActive:true}).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}>+ 添加新设定</button>
+                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebookV2.add({char_id:selectedCharId, name:"新词条", keywords:"新词条", content:"", is_active:true}).then(()=>loadLorebookEntries())}>+ 添加新设定</button>
                   </div>
               </div>
           </div>

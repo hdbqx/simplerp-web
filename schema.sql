@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     image TEXT,
     timestamp INTEGER,
-    snapshot_id INTEGER,
-    branch_id TEXT
+    snapshot_id INTEGER
 );
 
 -- 3. 全局设置
@@ -30,16 +29,7 @@ CREATE TABLE IF NOT EXISTS settings (
     config TEXT
 );
 
--- 4. 世界书（保持向后兼容）
-CREATE TABLE IF NOT EXISTS lorebook (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    char_id INTEGER,
-    keywords TEXT,
-    content TEXT,
-    is_active INTEGER DEFAULT 1
-);
-
--- 5. API预设表
+-- 4. API预设表
 CREATE TABLE IF NOT EXISTS api_presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -48,7 +38,7 @@ CREATE TABLE IF NOT EXISTS api_presets (
     api_mode TEXT DEFAULT 'chat_completions'
 );
 
--- 6. 房间表（剧场/群聊）
+-- 5. 房间表（剧场/群聊）
 CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -58,14 +48,14 @@ CREATE TABLE IF NOT EXISTS rooms (
     updated_at INTEGER
 );
 
--- 7. 房间成员表
+-- 6. 房间成员表
 CREATE TABLE IF NOT EXISTS room_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
     char_id INTEGER NOT NULL
 );
 
--- 8. 房间消息表
+-- 7. 房间消息表
 CREATE TABLE IF NOT EXISTS room_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
@@ -76,11 +66,10 @@ CREATE TABLE IF NOT EXISTS room_messages (
     image TEXT,
     meta_json TEXT,
     timestamp INTEGER,
-    snapshot_id INTEGER,
-    branch_id TEXT
+    snapshot_id INTEGER
 );
 
--- 9. 图片管理表
+-- 8. 图片管理表
 CREATE TABLE IF NOT EXISTS images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     r2_key TEXT NOT NULL UNIQUE,
@@ -96,7 +85,7 @@ CREATE TABLE IF NOT EXISTS images (
 -- 新增: v3.0 表结构
 -- ============================================
 
--- 10. 对话变量定义表
+-- 9. 对话变量定义表
 CREATE TABLE IF NOT EXISTS variables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
@@ -115,7 +104,7 @@ CREATE TABLE IF NOT EXISTS variables (
     updated_at INTEGER
 );
 
--- 11. 变量阶段性表现配置表
+-- 10. 变量阶段性表现配置表
 CREATE TABLE IF NOT EXISTS variable_stages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     variable_id INTEGER NOT NULL,
@@ -127,7 +116,7 @@ CREATE TABLE IF NOT EXISTS variable_stages (
     created_at INTEGER
 );
 
--- 12. 变量思考API配置表
+-- 11. 变量思考API配置表
 CREATE TABLE IF NOT EXISTS variable_thought_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
@@ -141,7 +130,7 @@ CREATE TABLE IF NOT EXISTS variable_thought_config (
     created_at INTEGER
 );
 
--- 13. 世界书扩展表（增强版）
+-- 12. 世界书表（增强版，替代旧表）
 CREATE TABLE IF NOT EXISTS lorebook_v2 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
@@ -165,24 +154,23 @@ CREATE TABLE IF NOT EXISTS lorebook_v2 (
     updated_at INTEGER
 );
 
--- 14. 快照主表
+-- 13. 快照表（线性存储，每次对话生成一个快照）
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
     description TEXT,
-    thumbnail TEXT,
-    snapshot_type TEXT DEFAULT 'manual',
-    message_count INTEGER,
+    snapshot_order INTEGER DEFAULT 0,
+    user_message TEXT,
+    ai_response TEXT,
     created_at INTEGER
 );
 
--- 15. 快照消息数据
+-- 14. 快照消息数据
 CREATE TABLE IF NOT EXISTS snapshot_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
-    original_message_id INTEGER,
     char_id INTEGER,
     room_id INTEGER,
     role TEXT NOT NULL,
@@ -192,7 +180,7 @@ CREATE TABLE IF NOT EXISTS snapshot_messages (
     order_index INTEGER
 );
 
--- 16. 快照变量数据
+-- 15. 快照变量数据
 CREATE TABLE IF NOT EXISTS snapshot_variables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
@@ -202,22 +190,7 @@ CREATE TABLE IF NOT EXISTS snapshot_variables (
     type TEXT
 );
 
--- 17. 自动快照规则表
-CREATE TABLE IF NOT EXISTS auto_snapshot_rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    char_id INTEGER,
-    room_id INTEGER,
-    name TEXT NOT NULL,
-    rule_type TEXT NOT NULL,
-    interval_minutes INTEGER,
-    turn_count INTEGER,
-    variable_key TEXT,
-    keep_count INTEGER DEFAULT 10,
-    is_active INTEGER DEFAULT 1,
-    created_at INTEGER
-);
-
--- 18. 消息编辑历史表
+-- 16. 消息编辑历史表
 CREATE TABLE IF NOT EXISTS message_edits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,
@@ -227,6 +200,28 @@ CREATE TABLE IF NOT EXISTS message_edits (
     new_content TEXT,
     edited_at INTEGER
 );
+
+-- ============================================
+-- 删除旧表（如果存在）
+-- ============================================
+DROP TABLE IF EXISTS lorebook;
+DROP TABLE IF EXISTS auto_snapshot_rules;
+
+-- ============================================
+-- 创建索引
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_messages_char_id ON messages(char_id);
+CREATE INDEX IF NOT EXISTS idx_messages_snapshot_id ON messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_variables_char_id ON variables(char_id);
+CREATE INDEX IF NOT EXISTS idx_variables_room_id ON variables(room_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_char_id ON lorebook_v2(char_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_room_id ON lorebook_v2(room_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_char_id ON snapshots(char_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_room_id ON snapshots(room_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_order ON snapshots(char_id, snapshot_order);
+CREATE INDEX IF NOT EXISTS idx_snapshot_messages_snapshot_id ON snapshot_messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_variables_snapshot_id ON snapshot_variables(snapshot_id);
 
 -- ============================================
 -- 初始化默认数据
