@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
+import { api, type Message, type Character, type Settings, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage, type Variable, type VariableStage, type VariableThoughtConfig } from './lib/db';
 import { LLMClient } from './lib/llm';
+import { VariableEngine } from './lib/variable-engine';
+import { LorebookEngine } from './lib/lorebook-engine';
+import { replaceVariables as replaceBuiltInVariables } from './lib/variables';
 import { ImageStudio } from './components/ImageStudio';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -8,7 +11,6 @@ import {
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
   BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy, Edit
 } from 'lucide-react';
-import { replaceVariables } from './lib/variables';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
@@ -32,6 +34,12 @@ function App() {
   const [settings, setSettings] = useState<Settings>();
   const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
+  // 【新增】全局变量与思考引擎状态
+  const [globalVariables, setGlobalVariables] = useState<Variable[]>([]);
+  const [globalStages, setGlobalStages] = useState<VariableStage[]>([]);
+  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
+  const [turnCount, setTurnCount] = useState(0);
+
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -118,7 +126,6 @@ function App() {
     fetchPresetModels(settings?.image_preset_id);
     fetchPresetModels(settings?.summary_preset_id);
     fetchPresetModels(settings?.sd_prompt_preset_id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSettings]);
 
   useEffect(() => {
@@ -248,12 +255,28 @@ function App() {
       if(settings) await api.settings.update({ ...settings, active_model_id: modelId });
   };
 
+  // 【核心修改】在此处装载全量变量数据、引擎配置和世界书
   useEffect(() => {
     setMessages([]);
     setRoomMessages([]);
     if (viewMode === 'char' && selectedCharId) {
       api.messages.list(selectedCharId).then(setMessages);
       loadLorebookEntries();
+      
+      api.variables.list(selectedCharId).then(async vars => {
+        setGlobalVariables(vars);
+        let allStages: VariableStage[] = [];
+        for (const v of vars) {
+          if (v.id) {
+            const st = await api.variableStages.list(v.id);
+            allStages = [...allStages, ...st];
+          }
+        }
+        setGlobalStages(allStages);
+      });
+      api.variableThoughtConfig.get(selectedCharId).then(setThoughtConfig);
+      setTurnCount(0); // 重置会话计数器
+
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
         setRoomMembers(m);
@@ -319,24 +342,53 @@ function App() {
     alert('房间配置已保存');
   };
 
+  // 【核心修改】重写单人 AI 触发逻辑，集成引擎装配
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
-    if (!activePresetId || !activeModel) { return alert("请先在顶部导航栏选择 API 预设和模型！"); }
+    if (!activePresetId || !activeModel) return alert("请先在顶部导航栏选择 API 预设和模型！");
     const currentPreset = presets.find(p => p.id === activePresetId);
-    if (!currentPreset) { return alert("无效的 API 预设"); }
+    if (!currentPreset) return alert("无效的 API 预设");
+
+    // 1. 初始化引擎
+    const varEngine = new VariableEngine(globalVariables, globalStages);
+    const loreEngine = new LorebookEngine(lorebookEntries);
+    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
+
+    // 2. 世界书动态扫描与注入组装
+    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, {}, {});
+    const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
+
+    // 3. 获取变量阶段的心理/行为暗示
+    const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
+
+    // 4. 构建防串戏与人设基础的 System Prompt
+    let basePrompt = char.description;
+    if (char.summary) basePrompt += `\n\n[个人长期记忆]:\n${char.summary}`;
+    if (stagePrompts) basePrompt += `\n\n[当前状态与心理防线]:\n${stagePrompts}`;
+
+    // 5. 宏替换：先替换自定义变量（来自 VariableEngine），再替换内置系统变量 (如 {{user}}, {{time}})
+    const rawSystemContent = 
+      (lorebookInjections.beforeSystem ? lorebookInjections.beforeSystem + '\n---\n' : '') +
+      basePrompt +
+      (lorebookInjections.afterSystem ? '\n---\n' + lorebookInjections.afterSystem : '');
+      
+    const fullSystemContent = replaceBuiltInVariables(
+      varEngine.replaceVariables(rawSystemContent, settings, char),
+      settings, char
+    );
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
     let fullContent = "";
 
     try {
-      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, lorebookEntries, undefined, controller);
+      // 传入组装好的完整 System Prompt
+      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, fullSystemContent, undefined, controller);
       for await (const chunk of stream) {
         fullContent += chunk;
         setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, content: fullContent } : m));
@@ -348,6 +400,25 @@ function App() {
           try {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
+
+            // 【核心修改】触发后台自动分析更新变量机制
+            setTurnCount(prev => {
+              const nextCount = prev + 1;
+              if (thoughtConfig?.is_auto_update && thoughtConfig.update_interval && nextCount >= thoughtConfig.update_interval) {
+                // 静默触发分析
+                api.variableThoughtConfig.triggerThought({
+                  char_id: char.id,
+                  history: currentHistory.slice(-10), // 取近10条用于分析
+                  user_input: textOverride
+                }).then(() => {
+                  // 分析完成后静默刷新前端变量展示状态
+                  api.variables.list(char.id).then(setGlobalVariables);
+                }).catch(console.error);
+                return 0; // 重置计数器
+              }
+              return nextCount;
+            });
+
           } catch (dbErr) { }
       } else {
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
@@ -512,12 +583,10 @@ function App() {
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
-    // 使用 fixed inset-0 彻底锁死外层框架，防止移动端滚动溢出
     <div className="drawer md:drawer-open fixed inset-0 w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
         
-        {/* 针对移动端优化的 Navbar */}
         <div className="bg-base-100 border-b border-base-300 safe-pt z-20 shrink-0">
           <div className="navbar min-h-[3rem] px-2 md:px-4">
             <div className="flex-none md:hidden">
@@ -528,7 +597,6 @@ function App() {
             </div>
           </div>
           
-          {/* 功能栏：移动端允许横向滑动，不再强制隐藏 */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-3 pb-2 w-full">
             <select className="select select-bordered select-xs md:select-sm shrink-0" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
@@ -658,7 +726,7 @@ function App() {
                       ) : (
                         <div className="prose prose-sm break-words">
                           <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                            {replaceVariables(
+                            {replaceBuiltInVariables(
                               m.content, 
                               settings || {}, 
                               viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
@@ -675,7 +743,6 @@ function App() {
               <div ref={bottomRef} className="h-20" />
             </div>
 
-            {/* Input Area: 适配安全区与字体大小 */}
             <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 safe-pb shrink-0">
               <div className="max-w-4xl mx-auto flex flex-col gap-2">
                 {viewMode === 'group' && selectedRoomId && (
@@ -688,7 +755,6 @@ function App() {
                 )}
                 <div className="flex gap-2 items-end bg-base-200 p-1.5 md:p-2 rounded-2xl shadow-inner border border-base-300">
                   <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={()=>{setGenPrompt(""); setShowGenModal(true)}}><ImageIcon size={22}/></button>
-                  {/* 使用 text-base 防止 iOS 聚焦放大 */}
                   <textarea 
                     ref={inputRef} 
                     className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-32 md:max-h-48 resize-none py-2 px-1 focus:outline-none text-base leading-relaxed" 

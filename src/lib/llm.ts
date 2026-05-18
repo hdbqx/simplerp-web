@@ -1,5 +1,4 @@
-﻿import type { Character, Settings, Message, LorebookEntry, ApiMode } from './db';
-import { replaceVariables } from './variables';
+﻿import type { Character, Settings, Message, ApiMode } from './db';
 
 export class LLMClient {
   private apiBase: string;
@@ -66,21 +65,6 @@ export class LLMClient {
     }
   }
 
-  private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
-  if (!entries || entries.length === 0) return '';
-    const contextText = (currentInput + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
-    const hits = entries.filter((e: LorebookEntry) => {
-      if (!e.isActive || !e.keywords) return false;
-      if (e.keywords.trim() === '*') return true;
-      return e.keywords.split(/[,，\n]/).some((k: string) => {
-        const trimmedK = k.trim().toLowerCase();
-        return trimmedK.length > 0 && contextText.includes(trimmedK);
-      });
-    });
-    if (hits.length === 0) return '';
-    return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
-  }
-
   private extractStreamText(payload: any): string {
     if (!payload) return '';
 
@@ -144,7 +128,7 @@ export class LLMClient {
     userInputs: string,
     settings: Settings,
     modelName: string,
-    lorebookEntries: LorebookEntry[] = [],
+    systemContent: string, // [修改] 直接接收外部组装好的完整 System Prompt
     groupCtx?: any,
     controller?: AbortController,
   ) {
@@ -156,15 +140,6 @@ export class LLMClient {
     const isGroupMode = !!groupCtx;
     const stopMarker = '惟';
     const playerDisplayName = settings.user_name || 'User';
-
-    let basePrompt = char.description + (char.summary ? `\n\n[Long-term Memory Archive]:\n${char.summary}` : '');
-    const lorebookInjection = this.scanLorebook(userInputs, history, lorebookEntries);
-
-    if (isGroupMode) {
-      basePrompt = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]。必须以 "${stopMarker}" 结束回复。\n${basePrompt}`;
-    }
-
-    const fullSystemContent = replaceVariables(basePrompt + lorebookInjection, settings, char);
 
     const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
     history.forEach((m: Message) => {
@@ -180,8 +155,8 @@ export class LLMClient {
       chatMessages.push({
         role: 'user',
         content: isGroupMode
-          ? `(Input: ${playerDisplayName}) -> ${replaceVariables(userInputs, settings, char)}`
-          : replaceVariables(userInputs, settings, char),
+          ? `(Input: ${playerDisplayName}) -> ${userInputs}`
+          : userInputs,
       });
     }
 
@@ -196,7 +171,7 @@ export class LLMClient {
           apiKey: this.apiKey,
           mode: this.mode,
           model: modelName,
-          systemContent: fullSystemContent,
+          systemContent: systemContent, // 使用传入的完整 Prompt
           chatMessages,
           temperature: settings.temperature || 0.8,
           stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],

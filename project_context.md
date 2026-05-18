@@ -1,29 +1,34 @@
 # Project Structure
 
 simplerp-web/
-├── .git
 ├── .gitignore
-├── .vscode
 ├── .wrangler
-│   └── tmp
 ├── README.md
-├── dist
 ├── eslint.config.js
 ├── functions
 │   ├── _middleware.ts
 │   └── api
+│       ├── auto-snapshot-rules.ts
+│       ├── branches.ts
 │       ├── characters.ts
 │       ├── images.ts
 │       ├── llm.ts
+│       ├── lorebook-v2.ts
 │       ├── lorebook.ts
 │       ├── messages.ts
 │       ├── presets.ts
 │       ├── room_chat.ts
 │       ├── room_messages.ts
 │       ├── rooms.ts
-│       └── settings.ts
+│       ├── settings.ts
+│       ├── snapshots-branch.ts
+│       ├── snapshots-restore.ts
+│       ├── snapshots.ts
+│       ├── variables-stages.ts
+│       ├── variables-thought-config.ts
+│       ├── variables-thought.ts
+│       └── variables.ts
 ├── index.html
-├── node_modules
 ├── package.json
 ├── postcss.config.js
 ├── public
@@ -32,11 +37,19 @@ simplerp-web/
 │   ├── App.tsx
 │   ├── assets
 │   ├── components
-│   │   └── ImageStudio.tsx
+│   │   ├── ImageStudio.tsx
+│   │   ├── lorebook
+│   │   │   └── LorebookManager.tsx
+│   │   ├── snapshots
+│   │   │   └── SnapshotManager.tsx
+│   │   └── variables
+│   │       └── VariableManager.tsx
 │   ├── index.css
 │   ├── lib
 │   │   ├── db.ts
 │   │   ├── llm.ts
+│   │   ├── lorebook-engine.ts
+│   │   ├── variable-engine.ts
 │   │   └── variables.ts
 │   └── main.tsx
 ├── tailwind.config.js
@@ -249,8 +262,8 @@ npm run dev
 ## File: schema.sql
 
 ```sql
-﻿-- ============================================
--- SimpleRP Web - Optimized Database Schema v2.0
+-- ============================================
+-- SimpleRP Web - Optimized Database Schema v3.0
 -- ============================================
 
 -- 1. 角色表
@@ -270,7 +283,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT,
     image TEXT,
-    timestamp INTEGER
+    timestamp INTEGER,
+    snapshot_id INTEGER
 );
 
 -- 3. 全局设置
@@ -279,16 +293,7 @@ CREATE TABLE IF NOT EXISTS settings (
     config TEXT
 );
 
--- 4. 世界书
-CREATE TABLE IF NOT EXISTS lorebook (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    char_id INTEGER,
-    keywords TEXT,
-    content TEXT,
-    is_active INTEGER DEFAULT 1
-);
-
--- 5. API预设表
+-- 4. API预设表
 CREATE TABLE IF NOT EXISTS api_presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -297,7 +302,7 @@ CREATE TABLE IF NOT EXISTS api_presets (
     api_mode TEXT DEFAULT 'chat_completions'
 );
 
--- 6. 房间表（剧场/群聊）
+-- 5. 房间表（剧场/群聊）
 CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -307,14 +312,14 @@ CREATE TABLE IF NOT EXISTS rooms (
     updated_at INTEGER
 );
 
--- 7. 房间成员表
+-- 6. 房间成员表
 CREATE TABLE IF NOT EXISTS room_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
     char_id INTEGER NOT NULL
 );
 
--- 8. 房间消息表
+-- 7. 房间消息表
 CREATE TABLE IF NOT EXISTS room_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
@@ -324,10 +329,11 @@ CREATE TABLE IF NOT EXISTS room_messages (
     content TEXT,
     image TEXT,
     meta_json TEXT,
-    timestamp INTEGER
+    timestamp INTEGER,
+    snapshot_id INTEGER
 );
 
--- 9. 图片管理表
+-- 8. 图片管理表
 CREATE TABLE IF NOT EXISTS images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     r2_key TEXT NOT NULL UNIQUE,
@@ -338,6 +344,148 @@ CREATE TABLE IF NOT EXISTS images (
     prompt TEXT,
     created_at INTEGER
 );
+
+-- ============================================
+-- 新增: v3.0 表结构
+-- ============================================
+
+-- 9. 对话变量定义表
+CREATE TABLE IF NOT EXISTS variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    type TEXT NOT NULL,
+    value TEXT,
+    min_value REAL,
+    max_value REAL,
+    step REAL,
+    is_persistent INTEGER DEFAULT 1,
+    is_visible INTEGER DEFAULT 1,
+    description TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 10. 变量阶段性表现配置表
+CREATE TABLE IF NOT EXISTS variable_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variable_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    condition TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    stage_prompt TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER
+);
+
+-- 11. 变量思考API配置表
+CREATE TABLE IF NOT EXISTS variable_thought_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    preset_id INTEGER,
+    model TEXT,
+    thought_prompt TEXT,
+    update_condition TEXT,
+    update_interval INTEGER,
+    is_auto_update INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
+-- 12. 世界书表（增强版，替代旧表）
+CREATE TABLE IF NOT EXISTS lorebook_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    keywords TEXT,
+    regex_pattern TEXT,
+    content TEXT NOT NULL,
+    trigger_condition TEXT,
+    priority INTEGER DEFAULT 0,
+    category TEXT,
+    position TEXT DEFAULT 'before_system',
+    insertion_depth INTEGER,
+    parent_id INTEGER,
+    probability REAL DEFAULT 1.0,
+    use_once INTEGER DEFAULT 0,
+    cooldown_messages INTEGER DEFAULT 0,
+    last_triggered_at INTEGER,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 13. 快照表（线性存储，每次对话生成一个快照）
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    snapshot_order INTEGER DEFAULT 0,
+    user_message TEXT,
+    ai_response TEXT,
+    created_at INTEGER
+);
+
+-- 14. 快照消息数据
+CREATE TABLE IF NOT EXISTS snapshot_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    char_id INTEGER,
+    room_id INTEGER,
+    role TEXT NOT NULL,
+    content TEXT,
+    image TEXT,
+    timestamp INTEGER,
+    order_index INTEGER
+);
+
+-- 15. 快照变量数据
+CREATE TABLE IF NOT EXISTS snapshot_variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    variable_id INTEGER,
+    key TEXT NOT NULL,
+    value TEXT,
+    type TEXT
+);
+
+-- 16. 消息编辑历史表
+CREATE TABLE IF NOT EXISTS message_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    char_id INTEGER,
+    room_id INTEGER,
+    old_content TEXT,
+    new_content TEXT,
+    edited_at INTEGER
+);
+
+-- ============================================
+-- 删除旧表（如果存在）
+-- ============================================
+DROP TABLE IF EXISTS lorebook;
+DROP TABLE IF EXISTS auto_snapshot_rules;
+
+-- ============================================
+-- 创建索引
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_messages_char_id ON messages(char_id);
+CREATE INDEX IF NOT EXISTS idx_messages_snapshot_id ON messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_variables_char_id ON variables(char_id);
+CREATE INDEX IF NOT EXISTS idx_variables_room_id ON variables(room_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_char_id ON lorebook_v2(char_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_room_id ON lorebook_v2(room_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_char_id ON snapshots(char_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_room_id ON snapshots(room_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_order ON snapshots(char_id, snapshot_order);
+CREATE INDEX IF NOT EXISTS idx_snapshot_messages_snapshot_id ON snapshot_messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_variables_snapshot_id ON snapshot_variables(snapshot_id);
 
 -- ============================================
 -- 初始化默认数据
@@ -578,6 +726,137 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   }
 };
+```
+
+
+## File: functions\api\auto-snapshot-rules.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+
+    let query = 'SELECT * FROM auto_snapshot_rules WHERE 1=1';
+    const params: any[] = [];
+    if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
+    if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
+
+    const { results } = await context.env.DB.prepare(query).bind(...params).all();
+    return Response.json(results?.map(r => ({ ...r, is_active: r.is_active === 1 })) || []);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { meta } = await context.env.DB.prepare(
+      'INSERT INTO auto_snapshot_rules (char_id, room_id, name, rule_type, interval_minutes, turn_count, variable_key, keep_count, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      body.char_id || null,
+      body.room_id || null,
+      body.name,
+      body.rule_type,
+      body.interval_minutes || null,
+      body.turn_count || null,
+      body.variable_key || null,
+      body.keep_count || 10,
+      body.is_active !== false ? 1 : 0,
+      Date.now()
+    ).run();
+    return Response.json({ id: meta.last_row_id });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id, ...updates } = body;
+
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const setFields: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
+    if (updates.rule_type !== undefined) { setFields.push('rule_type = ?'); params.push(updates.rule_type); }
+    if (updates.interval_minutes !== undefined) { setFields.push('interval_minutes = ?'); params.push(updates.interval_minutes); }
+    if (updates.turn_count !== undefined) { setFields.push('turn_count = ?'); params.push(updates.turn_count); }
+    if (updates.variable_key !== undefined) { setFields.push('variable_key = ?'); params.push(updates.variable_key); }
+    if (updates.keep_count !== undefined) { setFields.push('keep_count = ?'); params.push(updates.keep_count); }
+    if (updates.is_active !== undefined) { setFields.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
+
+    params.push(id);
+
+    await context.env.DB.prepare(`UPDATE auto_snapshot_rules SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+    return new Response('Updated');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    if (!id) return new Response('Missing id', { status: 400 });
+    await context.env.DB.prepare('DELETE FROM auto_snapshot_rules WHERE id = ?').bind(Number(id)).run();
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\branches.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+
+    const mockBranches = [
+      { id: 'main', name: '主线', snapshot_id: null, created_at: Date.now() - 86400000 }
+    ];
+    return Response.json(mockBranches);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    return new Response('Switched');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
 ```
 
 
@@ -1148,6 +1427,144 @@ export const onRequestPost: PagesFunction = async (context) => {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+};
+
+```
+
+
+## File: functions\api\lorebook-v2.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+
+    let query = 'SELECT * FROM lorebook_v2 WHERE 1=1';
+    const params: any[] = [];
+    if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
+    if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
+    query += ' ORDER BY priority DESC, created_at DESC';
+
+    const { results } = await context.env.DB.prepare(query).bind(...params).all();
+    return Response.json(results?.map(r => ({ ...r, is_active: r.is_active === 1, use_once: r.use_once === 1 })) || []);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const action = url.searchParams.get('action');
+    const charId = url.searchParams.get('char_id');
+
+    if (action === 'migrate' && charId) {
+      const { results } = await context.env.DB.prepare('SELECT * FROM lorebook WHERE char_id = ?').bind(Number(charId)).all();
+      for (const entry of results || []) {
+        await context.env.DB.prepare(
+          'INSERT INTO lorebook_v2 (char_id, name, keywords, content, priority, position, probability, use_once, cooldown_messages, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          Number(charId),
+          entry.keywords?.substring(0, 50) || '未命名条目',
+          entry.keywords,
+          entry.content,
+          0,
+          'before_system',
+          1.0,
+          0,
+          0,
+          entry.is_active,
+          Date.now(),
+          Date.now()
+        ).run();
+      }
+      return new Response('Migrated');
+    }
+
+    const body: any = await context.request.json();
+    const now = Date.now();
+    const { meta } = await context.env.DB.prepare(
+      'INSERT INTO lorebook_v2 (char_id, room_id, name, keywords, regex_pattern, content, trigger_condition, priority, category, position, insertion_depth, parent_id, probability, use_once, cooldown_messages, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      body.char_id || null,
+      body.room_id || null,
+      body.name,
+      body.keywords || null,
+      body.regex_pattern || null,
+      body.content,
+      body.trigger_condition || null,
+      body.priority || 0,
+      body.category || null,
+      body.position || 'before_system',
+      body.insertion_depth || null,
+      body.parent_id || null,
+      body.probability ?? 1.0,
+      body.use_once ? 1 : 0,
+      body.cooldown_messages || 0,
+      body.is_active !== false ? 1 : 0,
+      now,
+      now
+    ).run();
+
+    return Response.json({ id: meta.last_row_id });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id, ...updates } = body;
+
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const setFields: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
+    if (updates.keywords !== undefined) { setFields.push('keywords = ?'); params.push(updates.keywords); }
+    if (updates.regex_pattern !== undefined) { setFields.push('regex_pattern = ?'); params.push(updates.regex_pattern); }
+    if (updates.content !== undefined) { setFields.push('content = ?'); params.push(updates.content); }
+    if (updates.trigger_condition !== undefined) { setFields.push('trigger_condition = ?'); params.push(updates.trigger_condition); }
+    if (updates.priority !== undefined) { setFields.push('priority = ?'); params.push(updates.priority); }
+    if (updates.category !== undefined) { setFields.push('category = ?'); params.push(updates.category); }
+    if (updates.position !== undefined) { setFields.push('position = ?'); params.push(updates.position); }
+    if (updates.insertion_depth !== undefined) { setFields.push('insertion_depth = ?'); params.push(updates.insertion_depth); }
+    if (updates.parent_id !== undefined) { setFields.push('parent_id = ?'); params.push(updates.parent_id); }
+    if (updates.probability !== undefined) { setFields.push('probability = ?'); params.push(updates.probability); }
+    if (updates.use_once !== undefined) { setFields.push('use_once = ?'); params.push(updates.use_once ? 1 : 0); }
+    if (updates.cooldown_messages !== undefined) { setFields.push('cooldown_messages = ?'); params.push(updates.cooldown_messages); }
+    if (updates.last_triggered_at !== undefined) { setFields.push('last_triggered_at = ?'); params.push(updates.last_triggered_at); }
+    if (updates.is_active !== undefined) { setFields.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
+
+    setFields.push('updated_at = ?');
+    params.push(Date.now());
+    params.push(id);
+
+    await context.env.DB.prepare(`UPDATE lorebook_v2 SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+    return new Response('Updated');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    if (!id) return new Response('Missing id', { status: 400 });
+    await context.env.DB.prepare('DELETE FROM lorebook_v2 WHERE id = ?').bind(Number(id)).run();
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 };
 
@@ -1781,6 +2198,692 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 ```
 
 
+## File: functions\api\snapshots-branch.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { snapshot_id, name } = body;
+    const branchId = `branch_${snapshot_id}_${Date.now()}`;
+
+    return Response.json({ branch_id: branchId });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\snapshots-restore.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id } = body;
+
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const snapshot = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
+    if (!snapshot) return new Response('Snapshot not found', { status: 404 });
+
+    const { results: messages } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+    const { results: variables } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
+
+    if (snapshot.char_id) {
+      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(Number(snapshot.char_id)).run();
+      for (const msg of messages || []) {
+        await context.env.DB.prepare(
+          'INSERT INTO messages (char_id, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(snapshot.char_id, msg.role, msg.content, msg.image, msg.timestamp, id).run();
+      }
+
+      for (const v of variables || []) {
+        if (v.variable_id) {
+          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
+        }
+      }
+    }
+
+    if (snapshot.room_id) {
+      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(Number(snapshot.room_id)).run();
+      for (const msg of messages || []) {
+        await context.env.DB.prepare(
+          'INSERT INTO room_messages (room_id, char_id, sender_type, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(snapshot.room_id, msg.char_id || null, msg.char_id ? 'agent' : 'user', msg.role, msg.content, msg.image, msg.timestamp, id).run();
+      }
+
+      for (const v of variables || []) {
+        if (v.variable_id) {
+          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
+        }
+      }
+    }
+
+    return new Response('Restored');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\snapshots.ts
+
+```ts
+import { D1Database } from '@cloudflare/workers-types';
+
+export interface Env {
+  DB: D1Database;
+}
+
+export interface SnapshotData {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  description?: string;
+  snapshot_order?: number;
+  user_message?: string;
+  ai_response?: string;
+  created_at?: number;
+}
+
+export interface SnapshotMessageData {
+  snapshot_id: number;
+  char_id?: number;
+  room_id?: number;
+  role: string;
+  content: string;
+  image?: string;
+  timestamp?: number;
+  order_index: number;
+}
+
+export interface SnapshotVariableData {
+  snapshot_id: number;
+  variable_id?: number;
+  key: string;
+  value: string;
+  type?: string;
+}
+
+export async function listSnapshots(db: D1Database, charId?: number, roomId?: number) {
+  let query = 'SELECT * FROM snapshots WHERE 1=1';
+  const params: any[] = [];
+  
+  if (charId) {
+    query += ' AND char_id = ?';
+    params.push(charId);
+  }
+  if (roomId) {
+    query += ' AND room_id = ?';
+    params.push(roomId);
+  }
+  
+  query += ' ORDER BY snapshot_order ASC';
+  
+  const { results } = await db.prepare(query).bind(...params).all();
+  return results;
+}
+
+export async function getSnapshot(db: D1Database, id: number) {
+  const { results } = await db.prepare('SELECT * FROM snapshots WHERE id = ?').bind(id).all();
+  return results[0] || null;
+}
+
+export async function createSnapshot(db: D1Database, data: SnapshotData) {
+  const now = Date.now();
+  
+  const maxOrderResult = await db.prepare(
+    'SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE char_id = ?'
+  ).bind(data.char_id).first();
+  
+  const snapshotOrder = (maxOrderResult?.max_order || 0) + 1;
+  
+  const { results } = await db.prepare(`
+    INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, user_message, ai_response, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    data.char_id,
+    data.room_id,
+    data.name,
+    data.description,
+    snapshotOrder,
+    data.user_message,
+    data.ai_response,
+    now
+  ).run();
+  
+  return { id: results.lastInsertRowid, ...data, snapshot_order: snapshotOrder, created_at: now };
+}
+
+export async function updateSnapshot(db: D1Database, id: number, updates: Partial<SnapshotData>) {
+  const setClause = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values = Object.values(updates);
+  
+  await db.prepare(`UPDATE snapshots SET ${setClause} WHERE id = ?`)
+    .bind(...values, id).run();
+  
+  return getSnapshot(db, id);
+}
+
+export async function deleteSnapshot(db: D1Database, id: number) {
+  const snapshot = await getSnapshot(db, id);
+  if (!snapshot) return false;
+  
+  await db.transaction(async (tx) => {
+    await tx.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(id).run();
+    await tx.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(id).run();
+    
+    const { results } = await tx.prepare(
+      'SELECT snapshot_order FROM snapshots WHERE id = ?'
+    ).bind(id).first();
+    
+    const orderToDelete = results?.snapshot_order;
+    
+    await tx.prepare('DELETE FROM snapshots WHERE id = ?').bind(id).run();
+    
+    if (orderToDelete !== undefined) {
+      await tx.prepare(
+        'UPDATE snapshots SET snapshot_order = snapshot_order - 1 WHERE snapshot_order > ?'
+      ).bind(orderToDelete).run();
+    }
+  });
+  
+  return true;
+}
+
+export async function restoreSnapshot(db: D1Database, id: number) {
+  const snapshot = await getSnapshot(db, id);
+  if (!snapshot) return false;
+  
+  const charId = snapshot.char_id;
+  
+  await db.transaction(async (tx) => {
+    await tx.prepare('DELETE FROM messages WHERE char_id = ?').bind(charId).run();
+    
+    const { results: messages } = await tx.prepare(
+      'SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC'
+    ).bind(id).all();
+    
+    for (const msg of messages) {
+      await tx.prepare(`
+        INSERT INTO messages (char_id, role, content, image, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(charId, msg.role, msg.content, msg.image, msg.timestamp).run();
+    }
+    
+    await tx.prepare('DELETE FROM variables WHERE char_id = ?').bind(charId).run();
+    
+    const { results: variables } = await tx.prepare(
+      'SELECT * FROM snapshot_variables WHERE snapshot_id = ?'
+    ).bind(id).all();
+    
+    for (const v of variables) {
+      await tx.prepare(`
+        INSERT INTO variables (char_id, name, key, type, value)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(charId, v.key, v.key, v.type, v.value).run();
+    }
+    
+    const orderToRestore = snapshot.snapshot_order;
+    await tx.prepare(
+      'DELETE FROM snapshots WHERE char_id = ? AND snapshot_order > ?'
+    ).bind(charId, orderToRestore).run();
+  });
+  
+  return true;
+}
+
+export async function addSnapshotMessages(db: D1Database, messages: SnapshotMessageData[]) {
+  for (const msg of messages) {
+    await db.prepare(`
+      INSERT INTO snapshot_messages (snapshot_id, char_id, room_id, role, content, image, timestamp, order_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      msg.snapshot_id,
+      msg.char_id,
+      msg.room_id,
+      msg.role,
+      msg.content,
+      msg.image,
+      msg.timestamp,
+      msg.order_index
+    ).run();
+  }
+}
+
+export async function addSnapshotVariables(db: D1Database, variables: SnapshotVariableData[]) {
+  for (const v of variables) {
+    await db.prepare(`
+      INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(
+      v.snapshot_id,
+      v.variable_id,
+      v.key,
+      v.value,
+      v.type
+    ).run();
+  }
+}
+
+export async function getSnapshotMessages(db: D1Database, snapshotId: number) {
+  const { results } = await db.prepare(
+    'SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC'
+  ).bind(snapshotId).all();
+  return results;
+}
+
+export async function getSnapshotVariables(db: D1Database, snapshotId: number) {
+  const { results } = await db.prepare(
+    'SELECT * FROM snapshot_variables WHERE snapshot_id = ?'
+  ).bind(snapshotId).all();
+  return results;
+}
+
+```
+
+
+## File: functions\api\variables-stages.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const variableId = url.searchParams.get('variable_id');
+
+    if (!variableId) return new Response('Missing variable_id', { status: 400 });
+
+    const { results } = await context.env.DB.prepare('SELECT * FROM variable_stages WHERE variable_id = ? ORDER BY priority DESC').bind(Number(variableId)).all();
+    return Response.json(results?.map(r => ({ ...r, is_active: r.is_active === 1 })) || []);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { meta } = await context.env.DB.prepare(
+      'INSERT INTO variable_stages (variable_id, name, condition, priority, stage_prompt, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      body.variable_id,
+      body.name,
+      body.condition,
+      body.priority || 0,
+      body.stage_prompt || null,
+      body.is_active !== false ? 1 : 0,
+      Date.now()
+    ).run();
+    return Response.json({ id: meta.last_row_id });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id, ...updates } = body;
+
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const setFields: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
+    if (updates.condition !== undefined) { setFields.push('condition = ?'); params.push(updates.condition); }
+    if (updates.priority !== undefined) { setFields.push('priority = ?'); params.push(updates.priority); }
+    if (updates.stage_prompt !== undefined) { setFields.push('stage_prompt = ?'); params.push(updates.stage_prompt); }
+    if (updates.is_active !== undefined) { setFields.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
+
+    params.push(id);
+
+    await context.env.DB.prepare(`UPDATE variable_stages SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+    return new Response('Updated');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    if (!id) return new Response('Missing id', { status: 400 });
+    await context.env.DB.prepare('DELETE FROM variable_stages WHERE id = ?').bind(Number(id)).run();
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\variables-thought-config.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+
+    let query = 'SELECT * FROM variable_thought_config WHERE 1=1';
+    const params: any[] = [];
+    if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
+    if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
+
+    const result = await context.env.DB.prepare(query).bind(...params).first();
+    if (!result) return Response.json(null);
+    return Response.json({ ...result, is_auto_update: result.is_auto_update === 1 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+
+    await context.env.DB.prepare('DELETE FROM variable_thought_config WHERE char_id = ? OR room_id = ?').bind(body.char_id || null, body.room_id || null).run();
+
+    const { meta } = await context.env.DB.prepare(
+      'INSERT INTO variable_thought_config (char_id, room_id, preset_id, model, thought_prompt, update_condition, update_interval, is_auto_update, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      body.char_id || null,
+      body.room_id || null,
+      body.preset_id || null,
+      body.model || null,
+      body.thought_prompt || null,
+      body.update_condition || null,
+      body.update_interval || null,
+      body.is_auto_update ? 1 : 0,
+      Date.now()
+    ).run();
+    return Response.json({ id: meta.last_row_id });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\variables-thought.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { char_id, room_id, history, user_input } = body;
+
+    let config: any = null;
+    if (char_id) {
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE char_id = ?').bind(Number(char_id)).first();
+    }
+    if (!config && room_id) {
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE room_id = ?').bind(Number(room_id)).first();
+    }
+
+    if (!config) return new Response('No thought config found', { status: 400 });
+
+    const variables: any[] = [];
+    if (char_id) {
+      const { results } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(Number(char_id)).all();
+      variables.push(...(results || []));
+    }
+    if (room_id) {
+      const { results } = await context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(Number(room_id)).all();
+      variables.push(...(results || []));
+    }
+
+    if (variables.length === 0) return Response.json({ updates: [] });
+
+    let preset: any = null;
+    if (config.preset_id) {
+      preset = await context.env.DB.prepare('SELECT * FROM api_presets WHERE id = ?').bind(config.preset_id).first();
+    }
+
+    let thoughtPrompt = config.thought_prompt || `你是一个剧情分析师。请分析最近的对话，根据角色的反应和对话内容，更新相关的变量值。
+
+变量定义：
+{VARIABLES}
+
+最近对话：
+{HISTORY}
+
+请只返回一个JSON，格式为：
+{
+  "updates": [
+    { "key": "变量key", "value": 新值, "reason": "原因" }
+  ]
+}`;
+
+    const varsStr = variables.map(v => `- ${v.name} (${v.key}): ${v.description || '无描述'}`).join('\n');
+    const historyStr = (history || []).slice(-20).map((m: any) => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`).join('\n');
+
+    thoughtPrompt = thoughtPrompt.replace('{VARIABLES}', varsStr).replace('{HISTORY}', historyStr);
+    if (user_input) {
+      thoughtPrompt += `\n\n用户最新输入：${user_input}`;
+    }
+
+    if (!preset) {
+      return new Response('No API preset configured', { status: 400 });
+    }
+
+    const model = config.model;
+    if (!model) return new Response('No model configured', { status: 400 });
+
+    const normalizedBase = (preset.api_base || '').trim().replace(/\/+$/, '');
+    const trimmedKey = (preset.api_key || '').trim();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (trimmedKey) { headers['Authorization'] = `Bearer ${trimmedKey}`; }
+
+    const mode = preset.api_mode === 'responses' ? 'responses' : 'chat_completions';
+
+    let resultContent = '';
+    if (mode === 'responses') {
+      const res = await fetch(`${normalizedBase}/responses`, {
+        method: 'POST', headers, body: JSON.stringify({
+          model,
+          input: [{ role: 'user', content: thoughtPrompt }],
+          temperature: 0.7
+        })
+      });
+      const data = await res.json();
+      resultContent = data.output_text || data.output?.[0]?.content?.[0]?.text || '';
+    } else {
+      const res = await fetch(`${normalizedBase}/chat/completions`, {
+        method: 'POST', headers, body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: thoughtPrompt }],
+          temperature: 0.7
+        })
+      });
+      const data = await res.json();
+      resultContent = data.choices?.[0]?.message?.content || '';
+    }
+
+    let updates: any[] = [];
+    try {
+      const jsonMatch = resultContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        updates = parsed.updates || [];
+      }
+    } catch (e) {
+      console.warn('Failed to parse thought response');
+    }
+
+    for (const update of updates) {
+      const variable = variables.find(v => v.key === update.key);
+      if (variable) {
+        await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+          .bind(JSON.stringify(update.value), Date.now(), variable.id).run();
+      }
+    }
+
+    return Response.json({ updates });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
+## File: functions\api\variables.ts
+
+```ts
+interface Env {
+  DB: D1Database;
+}
+
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+
+    if (id) {
+      const result = await context.env.DB.prepare('SELECT * FROM variables WHERE id = ?').bind(Number(id)).first();
+      if (!result) return new Response('Not found', { status: 404 });
+      return Response.json({ ...result, value: result.value ? JSON.parse(result.value) : null });
+    }
+
+    let query = 'SELECT * FROM variables WHERE 1=1';
+    const params: any[] = [];
+    if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
+    if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
+    if (!charId && !roomId) { query += ' AND char_id IS NULL AND room_id IS NULL'; }
+    query += ' ORDER BY created_at DESC';
+
+    const { results } = await context.env.DB.prepare(query).bind(...params).all();
+    return Response.json(results?.map(r => ({ ...r, value: r.value ? JSON.parse(r.value) : null })) || []);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const action = url.searchParams.get('action');
+
+    if (action === 'bulk') {
+      const { updates } = await context.request.json();
+      for (const update of updates) {
+        await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+          .bind(JSON.stringify(update.value), Date.now(), update.id).run();
+      }
+      return new Response('OK');
+    }
+
+    const body: any = await context.request.json();
+    const now = Date.now();
+    const { meta } = await context.env.DB.prepare(
+      'INSERT INTO variables (char_id, room_id, name, key, type, value, min_value, max_value, step, is_persistent, is_visible, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      body.char_id || null,
+      body.room_id || null,
+      body.name,
+      body.key,
+      body.type,
+      body.value !== undefined ? JSON.stringify(body.value) : null,
+      body.min_value || null,
+      body.max_value || null,
+      body.step || null,
+      body.is_persistent !== false ? 1 : 0,
+      body.is_visible !== false ? 1 : 0,
+      body.description || null,
+      now,
+      now
+    ).run();
+
+    return Response.json({ id: meta.last_row_id });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id, ...updates } = body;
+
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const setFields: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
+    if (updates.key !== undefined) { setFields.push('key = ?'); params.push(updates.key); }
+    if (updates.type !== undefined) { setFields.push('type = ?'); params.push(updates.type); }
+    if (updates.value !== undefined) { setFields.push('value = ?'); params.push(JSON.stringify(updates.value)); }
+    if (updates.min_value !== undefined) { setFields.push('min_value = ?'); params.push(updates.min_value); }
+    if (updates.max_value !== undefined) { setFields.push('max_value = ?'); params.push(updates.max_value); }
+    if (updates.step !== undefined) { setFields.push('step = ?'); params.push(updates.step); }
+    if (updates.is_persistent !== undefined) { setFields.push('is_persistent = ?'); params.push(updates.is_persistent ? 1 : 0); }
+    if (updates.is_visible !== undefined) { setFields.push('is_visible = ?'); params.push(updates.is_visible ? 1 : 0); }
+    if (updates.description !== undefined) { setFields.push('description = ?'); params.push(updates.description); }
+
+    setFields.push('updated_at = ?');
+    params.push(Date.now());
+
+    params.push(id);
+
+    await context.env.DB.prepare(`UPDATE variables SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+    return new Response('Updated');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    await context.env.DB.prepare('DELETE FROM variable_stages WHERE variable_id = ?').bind(Number(id)).run();
+    await context.env.DB.prepare('DELETE FROM variables WHERE id = ?').bind(Number(id)).run();
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+};
+
+```
+
+
 ## File: src\App.tsx
 
 ```tsx
@@ -1792,7 +2895,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy, Edit
 } from 'lucide-react';
 import { replaceVariables } from './lib/variables';
 
@@ -1816,7 +2919,7 @@ function App() {
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [settings, setSettings] = useState<Settings>();
-  const [lorebookEntries, setLorebookEntries] = useState<LorebookEntry[]>([]);
+  const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -1829,6 +2932,9 @@ function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
+  const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
+  const [charVariables, setCharVariables] = useState<any[]>([]);
+  const [charSnapshots, setCharSnapshots] = useState<any[]>([]);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
@@ -1910,6 +3016,91 @@ function App() {
     api.rooms.getMembers(selectedRoomId).then(m => setRoomMembersDraft(m as any));
   }, [showGroupEdit, selectedRoomId]);
 
+  useEffect(() => {
+    if (!showCharEdit || !selectedCharId) return;
+    loadCharData();
+  }, [showCharEdit, selectedCharId, charEditTab]);
+
+  const loadCharData = async () => {
+    try {
+      const [vars, snaps] = await Promise.all([
+        api.variables.list(selectedCharId, undefined),
+        api.snapshots.list(selectedCharId, undefined)
+      ]);
+      setCharVariables(vars);
+      setCharSnapshots(snaps);
+    } catch (e) {
+      console.error('Failed to load char data', e);
+    }
+  };
+
+  const addVariable = async () => {
+    const newVar = {
+      name: '新变量',
+      key: 'new_var',
+      type: 'number' as const,
+      value: 0,
+      char_id: selectedCharId,
+      is_persistent: true,
+      is_visible: true
+    };
+    await api.variables.add(newVar);
+    await loadCharData();
+  };
+
+  const editVariable = async (variable: any) => {
+    const name = prompt('变量名称:', variable.name);
+    if (!name) return;
+    const key = prompt('变量键:', variable.key);
+    if (!key) return;
+    await api.variables.update(variable.id!, { name, key });
+    await loadCharData();
+  };
+
+  const updateVariableValue = async (id: number, value: any) => {
+    await api.variables.update(id, { value });
+    await loadCharData();
+  };
+
+  const deleteVariable = async (id: number) => {
+    if (!confirm('确定删除此变量？')) return;
+    await api.variables.delete(id);
+    await loadCharData();
+  };
+
+  const createSnapshot = async () => {
+    const name = prompt('快照名称:', `快照 ${new Date().toLocaleString()}`);
+    if (!name) return;
+    const description = prompt('快照描述:') || undefined;
+    await api.snapshots.create({ char_id: selectedCharId, name, description });
+    await loadCharData();
+  };
+
+  const viewSnapshot = (snapshot: any) => {
+    alert(`快照内容:\n名称: ${snapshot.name}\n创建时间: ${new Date(snapshot.created_at).toLocaleString()}`);
+  };
+
+  const restoreSnapshot = async (snapshot: any) => {
+    if (!confirm(`确定回滚到快照 "${snapshot.name}"？当前进度将丢失。`)) return;
+    await api.snapshots.restore(snapshot.id!);
+    await loadCharData();
+    setMessages([]);
+    await api.messages.list(selectedCharId).then(setMessages);
+    alert('快照已恢复');
+  };
+
+  const deleteSnapshot = async (id: number) => {
+    if (!confirm('确定删除此快照？')) return;
+    await api.snapshots.delete(id);
+    await loadCharData();
+  };
+
+  const loadLorebookEntries = async () => {
+    if (!selectedCharId) return;
+    const entries = await api.lorebookV2.list(selectedCharId, undefined);
+    setLorebookEntries(entries as any);
+  };
+
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
       setIsFetchingModels(true);
       const llm = new LLMClient(base, key, mode);
@@ -1951,7 +3142,7 @@ function App() {
     setRoomMessages([]);
     if (viewMode === 'char' && selectedCharId) {
       api.messages.list(selectedCharId).then(setMessages);
-      api.lorebook.list(selectedCharId).then(setLorebookEntries);
+      loadLorebookEntries();
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
         setRoomMembers(m);
@@ -2178,6 +3369,7 @@ function App() {
         <button className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('group')}>剧场</button>
         <button className={`tab flex-1 transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('image')}>生图</button>
       </div>
+
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
@@ -2282,9 +3474,26 @@ function App() {
           </div>
         </div>
 
-        {viewMode === 'image' ? (
+        {viewMode === 'image' && (
           <ImageStudio settings={settings} presets={presets} activePresetId={activePresetId} activeModel={activeModel} manualModels={manualModels} getPresetMode={getPresetMode} fetchPresetModels={fetchPresetModels} presetModelsMap={presetModelsMap} presetModelsLoading={presetModelsLoading} />
-        ) : (
+        )}
+        {viewMode === 'char' && !selectedCharId && (
+          <div className="flex-1 flex items-center justify-center opacity-60">
+            <div className="text-center">
+              <Pencil size={48} className="mx-auto mb-4 opacity-30" />
+              <p>请在左侧选择一个角色开始对话</p>
+            </div>
+          </div>
+        )}
+        {viewMode === 'group' && !selectedRoomId && (
+          <div className="flex-1 flex items-center justify-center opacity-60">
+            <div className="text-center">
+              <Users size={48} className="mx-auto mb-4 opacity-30" />
+              <p>请在左侧选择一个房间开始群聊</p>
+            </div>
+          </div>
+        )}
+        {(selectedCharId && viewMode === 'char') || (selectedRoomId && viewMode === 'group') ? (
           <>
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
               {(viewMode === 'group' ? (roomMessages as any) : (messages as any)).map((m: any, idx: number) => {
@@ -2305,22 +3514,47 @@ function App() {
                   {m.image ? (
                     <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
                       <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                      {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
+                      {!m.id && (
+                        <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                          <button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { 
+                            try { 
+                              const res = await api.messages.add(m); 
+                              setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); 
+                              alert("已保存"); 
+                            } catch (err) { 
+                              alert("保存失败"); 
+                            } 
+                          }}>
+                            <Save size={12}/>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                       {viewMode === 'char' && editingMsgId === m.id ? (
-                          <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
-                      ) : <div className="prose prose-sm break-words">
-  <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-    {replaceVariables(
-      m.content, 
-      settings || {}, 
-      viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
-    )}
-  </ReactMarkdown>
-</div>
-}
+                        <div className="flex flex-col gap-2 min-w-[200px]">
+                          <textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/>
+                          <div className="flex justify-end gap-1">
+                            <button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button>
+                            <button className="btn btn-xs btn-primary" onClick={async ()=>{
+                              await api.messages.update(m.id!, editContent); 
+                              setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); 
+                              setEditingMsgId(null);
+                            }}>保存</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="prose prose-sm break-words">
+                          <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                            {replaceVariables(
+                              m.content, 
+                              settings || {}, 
+                              viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
+                            )}
+                          </ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2362,7 +3596,7 @@ function App() {
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>
@@ -2515,12 +3749,102 @@ function App() {
 
       {showCharEdit && selectedCharId && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-2xl h-[85vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">角色档案<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                      <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
-                      <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+              <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
+                  <div className="p-6 border-b flex justify-between bg-base-200 font-bold items-center">
+                    <div className="flex items-center gap-2">
+                      <span>角色档案</span>
+                      <button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowCharEdit(false)}><X/></button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="tabs tabs-boxed">
+                      <button className={`tab ${charEditTab === 'basic' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('basic')}>基础设定</button>
+                      <button className={`tab ${charEditTab === 'variables' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('variables')}>变量管理</button>
+                      <button className={`tab ${charEditTab === 'snapshots' ? 'tab-active' : ''}`} onClick={() => setCharEditTab('snapshots')}>历史快照</button>
+                    </div>
+                    <div className="p-6">
+                      {charEditTab === 'basic' && (
+                        <div className="space-y-6">
+                          <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
+                          <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
+                          <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+                        </div>
+                      )}
+                      {charEditTab === 'variables' && (
+                        <div className="space-y-3">
+                          {charVariables.map(v => (
+                            <div key={v.id} className="card bg-base-100 border border-base-content/10 p-4">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <span className="font-bold">{v.name}</span>
+                                  <span className="text-xs opacity-60 font-mono ml-2">{v.key}</span>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button className="btn btn-ghost btn-xs" onClick={() => editVariable(v)}><Edit size={14} /></button>
+                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteVariable(v.id!)}><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              {v.type === 'number' || v.type === 'range' ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    className="input input-bordered input-sm w-24"
+                                    value={v.value}
+                                    onChange={(e) => updateVariableValue(v.id!, parseFloat(e.target.value))}
+                                    step={v.step || 1}
+                                    min={v.min_value}
+                                    max={v.max_value}
+                                  />
+                                  {v.min_value !== undefined && v.max_value !== undefined && (
+                                    <div className="flex-1">
+                                      <progress className="progress progress-primary w-full" value={((v.value - v.min_value) / (v.max_value - v.min_value)) * 100} max="100" />
+                                    </div>
+                                  )}
+                                </div>
+                              ) : v.type === 'boolean' ? (
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="toggle toggle-primary"
+                                    checked={Boolean(v.value)}
+                                    onChange={(e) => updateVariableValue(v.id!, e.target.checked)}
+                                  />
+                                  <span>{v.value ? '是' : '否'}</span>
+                                </label>
+                              ) : (
+                                <textarea
+                                  className="textarea textarea-bordered text-sm"
+                                  value={v.value}
+                                  onChange={(e) => updateVariableValue(v.id!, e.target.value)}
+                                />
+                              )}
+                            </div>
+                          ))}
+                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={addVariable}>+ 添加变量</button>
+                        </div>
+                      )}
+                      {charEditTab === 'snapshots' && (
+                        <div className="space-y-3">
+                          {charSnapshots.map(s => (
+                            <div key={s.id} className="card bg-base-100 border border-base-content/10 p-4">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <span className="font-bold">{s.name}</span>
+                                  <span className="text-xs opacity-60 ml-2">{new Date(s.created_at!).toLocaleString()}</span>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button className="btn btn-ghost btn-xs" onClick={() => viewSnapshot(s)}>查看</button>
+                                  <button className="btn btn-ghost btn-xs" onClick={() => restoreSnapshot(s)}>回滚</button>
+                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteSnapshot(s.id!)}><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              {s.description && <p className="text-sm opacity-70">{s.description}</p>}
+                            </div>
+                          ))}
+                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={createSnapshot}>+ 创建快照</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="p-4 border-t bg-base-200 flex justify-end"><button className="btn btn-primary" onClick={async ()=>{await api.characters.update(selectedCharId, characters.find(c=>c.id===selectedCharId)!); setShowCharEdit(false); loadData();}}>确认保存</button></div>
               </div>
@@ -2590,19 +3914,20 @@ function App() {
                             <input type="checkbox"/>
                             <div className="collapse-title text-sm font-bold flex justify-between items-center pr-12">
                                 <span>{e.keywords}</span>
-                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${e.isActive ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{e.isActive ? 'Active' : 'Inactive'}</span>
+                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${(e as any).is_active ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{(e as any).is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                             <div className="collapse-content space-y-2">
-                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebook.update(e.id!, {content: evt.target.value})} />
+                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebookV2.update(e.id!, {content: evt.target.value})} />
                                 <div className="flex gap-2 items-center">
-                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebook.update(e.id!, {keywords: evt.target.value})} />
-                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={e.isActive} onChange={(evt) => {const val = evt.target.checked; api.lorebook.update(e.id!, { isActive: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, isActive: val} : item));});}} /></div>
-                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebook.delete(e.id!).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}><Trash2 size={14}/></button>
+                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebookV2.update(e.id!, {keywords: evt.target.value})} />
+                                    <input type="number" className="input input-bordered input-sm w-20 text-xs" defaultValue={(e as any).priority || 0} onBlur={(evt)=>api.lorebookV2.update(e.id!, {priority: parseInt(evt.target.value) || 0})} placeholder="优先级" />
+                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={Boolean((e as any).is_active)} onChange={(evt) => {const val = evt.target.checked; api.lorebookV2.update(e.id!, { is_active: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, is_active: val} : item));});}} /></div>
+                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebookV2.delete(e.id!).then(()=>loadLorebookEntries())}><Trash2 size={14}/></button>
                                 </div>
                             </div>
                         </div>
                     ))}
-                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebook.add({char_id:selectedCharId, keywords:"新词条", content:"", isActive:true}).then(()=>api.lorebook.list(selectedCharId).then(setLorebookEntries))}>+ 添加新设定</button>
+                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebookV2.add({char_id:selectedCharId, name:"新词条", keywords:"新词条", content:"", priority:0, position:'before_system', probability:1.0, is_active:true, use_once:false, cooldown_messages:0}).then(()=>loadLorebookEntries())}>+ 添加新设定</button>
                   </div>
               </div>
           </div>
@@ -3018,10 +4343,1178 @@ export function ImageStudio({
 ```
 
 
+## File: src\components\lorebook\LorebookManager.tsx
+
+```tsx
+import { useState, useEffect } from 'react';
+import { Plus, Edit, Trash2, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import type { LorebookV2Entry } from '../../lib/db';
+import { api } from '../../lib/db';
+
+interface Props {
+  charId?: number;
+  roomId?: number;
+}
+
+export function LorebookManager({ charId, roomId }: Props) {
+  const [entries, setEntries] = useState<LorebookV2Entry[]>([]);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<LorebookV2Entry | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, [charId, roomId]);
+
+  const loadData = async () => {
+    try {
+      const data = await api.lorebookV2.list(charId, roomId);
+      setEntries(data);
+    } catch (e) {
+      console.error('Failed to load lorebook', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddEntry = async () => {
+    const newEntry: Partial<LorebookV2Entry> = {
+      name: '新条目',
+      content: '',
+      priority: 0,
+      position: 'before_system',
+      probability: 1.0,
+      use_once: false,
+      cooldown_messages: 0,
+      is_active: true
+    };
+    if (charId) newEntry.char_id = charId;
+    if (roomId) newEntry.room_id = roomId;
+    await api.lorebookV2.add(newEntry as LorebookV2Entry);
+    await loadData();
+  };
+
+  const handleMigrate = async () => {
+    if (confirm('要从旧世界书迁移数据吗？这会复制所有条目。')) {
+      if (charId) await api.lorebookV2.migrateFromV1(charId);
+      await loadData();
+    }
+  };
+
+  const handleUpdate = async (id: number, updates: Partial<LorebookV2Entry>) => {
+    await api.lorebookV2.update(id, updates);
+    await loadData();
+  };
+
+  const handleDelete = async (id: number) => {
+    if (confirm('确定删除？')) {
+      await api.lorebookV2.delete(id);
+      await loadData();
+    }
+  };
+
+  const categories = Array.from(new Set(entries.map(e => e.category).filter(Boolean)));
+  const filteredEntries = entries.filter(e => {
+    const matchesSearch = !searchTerm || e.name.toLowerCase().includes(searchTerm.toLowerCase()) || e.keywords?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = !filterCategory || e.category === filterCategory;
+    return matchesSearch && matchesCategory;
+  });
+
+  if (loading) return <div className="p-4">加载中...</div>;
+
+  return (
+    <div className="flex flex-col h-full bg-base-200">
+      <div className="p-4 border-b border-base-content/10">
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="font-bold text-lg">世界书 v2</h2>
+          <div className="flex gap-2">
+            {charId && (
+              <button className="btn btn-sm btn-outline" onClick={handleMigrate}>迁移旧数据</button>
+            )}
+            <button className="btn btn-sm btn-primary" onClick={handleAddEntry}>
+              <Plus size={16} className="mr-1" /> 新增条目
+            </button>
+          </div>
+        </div>
+
+        <div className="flex gap-2 flex-wrap">
+          <div className="form-control flex-1 min-w-48">
+            <div className="input-group">
+              <Search size={16} className="opacity-60" />
+              <input
+                type="text"
+                className="input input-bordered input-sm"
+                placeholder="搜索..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+          {categories.length > 0 && (
+            <select
+              className="select select-bordered select-sm"
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+            >
+              <option value="">所有分类</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {filteredEntries.length === 0 ? (
+          <div className="text-center opacity-60 py-8">
+            {searchTerm || filterCategory ? '没有匹配的条目' : '还没有条目，点击上方按钮创建'}
+          </div>
+        ) : (
+          filteredEntries.map(entry => (
+            <LorebookEntryCard
+              key={entry.id || `temp-${Math.random()}`}
+              entry={entry}
+              onEdit={setEditingEntry}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
+            />
+          ))
+        )}
+      </div>
+
+      {showEditor && editingEntry && editingEntry.id && (
+        <LorebookEntryEditor
+          entry={editingEntry}
+          onClose={() => { setShowEditor(false); setEditingEntry(null); }}
+          onSave={async (updates) => {
+            await handleUpdate(editingEntry.id!, updates);
+            setShowEditor(false);
+            setEditingEntry(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LorebookEntryCard({
+  entry,
+  onEdit,
+  onUpdate,
+  onDelete
+}: {
+  entry: LorebookV2Entry;
+  onEdit: (e: LorebookV2Entry) => void;
+  onUpdate: (id: number, updates: Partial<LorebookV2Entry>) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const handleEdit = () => {
+    if (entry.id) {
+      onEdit(entry);
+    }
+  };
+
+  const handleDeleteClick = () => {
+    if (entry.id) {
+      onDelete(entry.id);
+    }
+  };
+
+  return (
+    <div className={`card bg-base-100 border ${entry.is_active ? 'border-base-content/10' : 'border-error/30 opacity-60'}`}>
+      <div className="card-body p-4">
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold">{entry.name}</h3>
+              {entry.category && (
+                <span className="badge badge-outline badge-sm">{entry.category}</span>
+              )}
+              <span className="badge badge-sm opacity-60">优先级: {entry.priority}</span>
+            </div>
+            {entry.keywords && (
+              <p className="text-sm opacity-60 font-mono mt-1">{entry.keywords}</p>
+            )}
+          </div>
+          <div className="flex gap-1">
+            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
+              <Edit size={16} />
+            </button>
+            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
+              <Trash2 size={16} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
+              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </div>
+        </div>
+
+        {expanded && (
+          <div className="mt-4 pt-4 border-t border-base-content/10 space-y-3">
+            <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
+              {entry.content}
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs opacity-70">
+              {entry.regex_pattern && <span className="badge badge-ghost">正则匹配</span>}
+              {entry.trigger_condition && <span className="badge badge-ghost">条件触发</span>}
+              {entry.probability < 1 && <span className="badge badge-ghost">{(entry.probability * 100).toFixed(0)}% 概率</span>}
+              {entry.use_once && <span className="badge badge-ghost">仅一次</span>}
+              {entry.cooldown_messages > 0 && <span className="badge badge-ghost">冷却 {entry.cooldown_messages} 条</span>}
+              <span className="badge badge-ghost">位置: {entry.position}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LorebookEntryEditor({
+  entry,
+  onClose,
+  onSave
+}: {
+  entry: LorebookV2Entry;
+  onClose: () => void;
+  onSave: (updates: Partial<LorebookV2Entry>) => void;
+}) {
+  const [form, setForm] = useState(entry);
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-4xl max-h-[90vh] overflow-y-auto">
+        <h3 className="font-bold text-lg mb-4">编辑条目</h3>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-control">
+              <label className="label font-bold text-sm">名称</label>
+              <input
+                className="input input-bordered"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="form-control">
+              <label className="label font-bold text-sm">分类</label>
+              <input
+                className="input input-bordered"
+                value={form.category ?? ''}
+                onChange={(e) => setForm({ ...form, category: e.target.value || undefined })}
+                placeholder="可选"
+              />
+            </div>
+          </div>
+
+          <div className="form-control">
+            <label className="label font-bold text-sm">关键词（逗号分隔）</label>
+            <input
+              className="input input-bordered font-mono"
+              value={form.keywords ?? ''}
+              onChange={(e) => setForm({ ...form, keywords: e.target.value || undefined })}
+              placeholder="* 表示始终触发"
+            />
+          </div>
+
+          <div className="form-control">
+            <label className="label font-bold text-sm">正则匹配</label>
+            <input
+              className="input input-bordered font-mono"
+              value={form.regex_pattern ?? ''}
+              onChange={(e) => setForm({ ...form, regex_pattern: e.target.value || undefined })}
+              placeholder="可选"
+            />
+          </div>
+
+          <div className="form-control">
+            <label className="label font-bold text-sm">内容</label>
+            <textarea
+              className="textarea textarea-bordered h-48"
+              value={form.content}
+              onChange={(e) => setForm({ ...form, content: e.target.value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-control">
+              <label className="label font-bold text-sm">优先级</label>
+              <input
+                type="number"
+                className="input input-bordered"
+                value={form.priority}
+                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+              />
+            </div>
+            <div className="form-control">
+              <label className="label font-bold text-sm">触发概率</label>
+              <input
+                type="number"
+                className="input input-bordered"
+                step="0.01"
+                min="0"
+                max="1"
+                value={form.probability}
+                onChange={(e) => setForm({ ...form, probability: parseFloat(e.target.value) || 1.0 })}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-control">
+              <label className="label font-bold text-sm">注入位置</label>
+              <select
+                className="select select-bordered"
+                value={form.position}
+                onChange={(e) => setForm({ ...form, position: e.target.value as any })}
+              >
+                <option value="before_system">在系统提示词前</option>
+                <option value="after_system">在系统提示词后</option>
+                <option value="last">最后</option>
+              </select>
+            </div>
+            <div className="form-control">
+              <label className="label font-bold text-sm">冷却（消息数）</label>
+              <input
+                type="number"
+                className="input input-bordered"
+                min="0"
+                value={form.cooldown_messages}
+                onChange={(e) => setForm({ ...form, cooldown_messages: parseInt(e.target.value) || 0 })}
+              />
+            </div>
+          </div>
+
+          <div className="form-control">
+            <label className="label font-bold text-sm">触发条件（JavaScript 表达式）</label>
+            <textarea
+              className="textarea textarea-bordered font-mono text-sm h-24"
+              value={form.trigger_condition ?? ''}
+              onChange={(e) => setForm({ ...form, trigger_condition: e.target.value || undefined })}
+              placeholder="例如: variables.affection > 50"
+            />
+          </div>
+
+          <div className="flex gap-4 flex-wrap">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+              />
+              <span className="text-sm">启用</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={form.use_once}
+                onChange={(e) => setForm({ ...form, use_once: e.target.checked })}
+              />
+              <span className="text-sm">仅触发一次</span>
+            </label>
+          </div>
+        </div>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
+
+
+## File: src\components\snapshots\SnapshotManager.tsx
+
+```tsx
+import { useState, useEffect } from 'react';
+import { Plus, History, RotateCcw, GitBranch, Calendar, Clock, X, Trash2 } from 'lucide-react';
+import type { Snapshot, SnapshotMessage, SnapshotVariable, BranchInfo, AutoSnapshotRule } from '../../lib/db';
+import { api } from '../../lib/db';
+
+interface Props {
+  charId?: number;
+  roomId?: number;
+  onRestore?: () => void;
+}
+
+export function SnapshotManager({ charId, roomId, onRestore }: Props) {
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [rules, setRules] = useState<AutoSnapshotRule[]>([]);
+  const [showViewer, setShowViewer] = useState(false);
+  const [viewingSnapshot, setViewingSnapshot] = useState<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] } | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, [charId, roomId]);
+
+  const loadData = async () => {
+    try {
+      const [s, b, r] = await Promise.all([
+        api.snapshots.list(charId, roomId),
+        api.branches.list(charId, roomId),
+        api.autoSnapshotRules.list(charId, roomId)
+      ]);
+      setSnapshots(s);
+      setBranches(b);
+      setRules(r);
+    } catch (e) {
+      console.error('Failed to load snapshots', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateSnapshot = async (name: string, description?: string) => {
+    await api.snapshots.create({ char_id: charId, room_id: roomId, name, description });
+    await loadData();
+  };
+
+  const handleRestore = async (snapshot: Snapshot) => {
+    if (confirm(`确定要恢复到快照 "${snapshot.name}" 吗？当前进度将会丢失。`)) {
+      if (snapshot.id) await api.snapshots.restore(snapshot.id);
+      await loadData();
+      onRestore?.();
+    }
+  };
+
+  const handleView = async (snapshot: Snapshot) => {
+    if (snapshot.id) {
+      const data = await api.snapshots.get(snapshot.id);
+      setViewingSnapshot(data);
+      setShowViewer(true);
+    }
+  };
+
+  const handleDelete = async (snapshot: Snapshot) => {
+    if (confirm(`确定要删除快照 "${snapshot.name}" 吗？`)) {
+      if (snapshot.id) await api.snapshots.delete(snapshot.id);
+      await loadData();
+    }
+  };
+
+  if (loading) return <div className="p-4">加载中...</div>;
+
+  return (
+    <div className="flex flex-col h-full bg-base-200">
+      <div className="p-4 border-b border-base-content/10">
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="font-bold text-lg">快照管理</h2>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => setShowCreateDialog(true)}
+          >
+            <Plus size={16} className="mr-1" /> 创建快照
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="mb-6">
+          <h3 className="font-bold mb-3 flex items-center gap-2">
+            <History size={16} /> 快照
+          </h3>
+          <div className="space-y-2">
+            {snapshots.length === 0 ? (
+              <div className="text-center opacity-60 py-4">还没有快照</div>
+            ) : (
+              snapshots.map(s => (
+                <div key={s.id} className="card bg-base-100 border border-base-content/10">
+                  <div className="card-body p-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold">{s.name}</h4>
+                        <div className="flex items-center gap-2 text-xs opacity-60 mt-1">
+                          <Calendar size={12} />
+                          {new Date(s.created_at!).toLocaleString()}
+                          <span className="badge badge-sm">{s.snapshot_type}</span>
+                          {s.message_count && <span className="badge badge-sm">{s.message_count} 条消息</span>}
+                        </div>
+                        {s.description && <p className="text-sm opacity-70 mt-1">{s.description}</p>}
+                      </div>
+                      <div className="flex gap-1">
+                        <button className="btn btn-ghost btn-sm" onClick={() => handleView(s)}>查看</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => handleRestore(s)}><RotateCcw size={14} /></button>
+                        <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDelete(s)}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-bold mb-3 flex items-center gap-2">
+            <GitBranch size={16} /> 分支
+          </h3>
+          <div className="space-y-2">
+            {branches.map(b => (
+              <div key={b.id} className="card bg-base-100 border border-base-content/10">
+                <div className="card-body p-4 flex justify-between items-center">
+                  <div>
+                    <h4 className="font-bold">{b.name}</h4>
+                    <div className="text-xs opacity-60">
+                      {new Date(b.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm">切换</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {showViewer && viewingSnapshot && (
+        <SnapshotViewer
+          snapshot={viewingSnapshot.snapshot}
+          messages={viewingSnapshot.messages}
+          variables={viewingSnapshot.variables}
+          onClose={() => { setShowViewer(false); setViewingSnapshot(null); }}
+          onRestore={() => handleRestore(viewingSnapshot.snapshot)}
+        />
+      )}
+
+      {showCreateDialog && (
+        <CreateSnapshotDialog
+          onClose={() => setShowCreateDialog(false)}
+          onCreate={async (name, desc) => {
+            await handleCreateSnapshot(name, desc);
+            setShowCreateDialog(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SnapshotViewer({
+  snapshot,
+  messages,
+  variables,
+  onClose,
+  onRestore
+}: {
+  snapshot: Snapshot;
+  messages: SnapshotMessage[];
+  variables: SnapshotVariable[];
+  onClose: () => void;
+  onRestore: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'messages' | 'variables'>('messages');
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center border-b border-base-content/10 pb-4 mb-4">
+          <h3 className="font-bold text-lg">{snapshot.name}</h3>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="tabs tabs-boxed mb-4">
+          <button className={`tab ${activeTab === 'messages' ? 'tab-active' : ''}`} onClick={() => setActiveTab('messages')}>
+            消息 ({messages.length})
+          </button>
+          <button className={`tab ${activeTab === 'variables' ? 'tab-active' : ''}`} onClick={() => setActiveTab('variables')}>
+            变量 ({variables.length})
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === 'messages' ? (
+            <div className="space-y-3">
+              {messages.map((m, i) => (
+                <div key={i} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                  <div className="chat-bubble text-sm">{m.content}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {variables.map((v, i) => (
+                <div key={i} className="card bg-base-200 p-3">
+                  <div className="flex justify-between">
+                    <span className="font-bold">{v.key}</span>
+                    <span className="font-mono">{JSON.stringify(v.value)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-action pt-4 border-t border-base-content/10 mt-4">
+          <button className="btn" onClick={onClose}>关闭</button>
+          <button className="btn btn-primary" onClick={onRestore}>恢复此快照</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateSnapshotDialog({
+  onClose,
+  onCreate
+}: {
+  onClose: () => void;
+  onCreate: (name: string, description?: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+
+  const defaultName = `快照 ${new Date().toLocaleString()}`;
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box">
+        <h3 className="font-bold text-lg mb-4">创建快照</h3>
+        <div className="space-y-4">
+          <div className="form-control">
+            <label className="label font-bold text-sm">名称</label>
+            <input
+              className="input input-bordered"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={defaultName}
+            />
+          </div>
+          <div className="form-control">
+            <label className="label font-bold text-sm">描述</label>
+            <textarea
+              className="textarea textarea-bordered"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="可选"
+            />
+          </div>
+        </div>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={() => onCreate(name || defaultName, description)}>创建</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
+
+
+## File: src\components\variables\VariableManager.tsx
+
+```tsx
+import { useState, useEffect } from 'react';
+import { Plus, Edit, Trash2, Settings, ChevronDown, ChevronUp } from 'lucide-react';
+import type { Variable, VariableStage, VariableThoughtConfig } from '../../lib/db';
+import { api } from '../../lib/db';
+
+interface Props {
+  charId?: number;
+  roomId?: number;
+}
+
+export function VariableManager({ charId, roomId }: Props) {
+  const [variables, setVariables] = useState<Variable[]>([]);
+  const [stages, setStages] = useState<Map<number, VariableStage[]>>(new Map());
+  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editingVariable, setEditingVariable] = useState<Variable | null>(null);
+  const [showThoughtConfig, setShowThoughtConfig] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, [charId, roomId]);
+
+  const loadData = async () => {
+    try {
+      const vars = await api.variables.list(charId, roomId);
+      setVariables(vars);
+      for (const v of vars) {
+        if (v.id) {
+          const st = await api.variableStages.list(v.id);
+          setStages(prev => new Map(prev).set(v.id!, st));
+        }
+      }
+      const config = await api.variableThoughtConfig.get(charId, roomId);
+      setThoughtConfig(config);
+    } catch (e) {
+      console.error('Failed to load variables', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddVariable = async () => {
+    const newVar: Partial<Variable> = {
+      name: '新变量',
+      key: 'new_var',
+      type: 'number',
+      value: 0,
+      is_persistent: true,
+      is_visible: true
+    };
+    if (charId) newVar.char_id = charId;
+    if (roomId) newVar.room_id = roomId;
+    await api.variables.add(newVar as Variable);
+    await loadData();
+  };
+
+  const handleUpdateVariable = async (id: number, updates: Partial<Variable>) => {
+    await api.variables.update(id, updates);
+    await loadData();
+  };
+
+  const handleDeleteVariable = async (id: number) => {
+    if (confirm('确定要删除这个变量吗？')) {
+      await api.variables.delete(id);
+      await loadData();
+    }
+  };
+
+  if (loading) return <div className="p-4">加载中...</div>;
+
+  return (
+    <div className="flex flex-col h-full bg-base-200">
+      <div className="p-4 border-b border-base-content/10 flex justify-between items-center">
+        <h2 className="font-bold text-lg">变量管理</h2>
+        <div className="flex gap-2">
+          <button
+            className="btn btn-sm btn-outline"
+            onClick={() => setShowThoughtConfig(true)}
+          >
+            <Settings size={16} className="mr-1" /> 思考配置
+          </button>
+          <button className="btn btn-sm btn-primary" onClick={handleAddVariable}>
+            <Plus size={16} className="mr-1" /> 新增变量
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {variables.length === 0 ? (
+          <div className="text-center opacity-60 py-8">
+            还没有变量，点击上方按钮创建一个
+          </div>
+        ) : (
+          variables.map(v => (
+            <VariableCard
+              key={v.id || `temp-${Math.random()}`}
+              variable={v}
+              stages={stages.get(v.id!) || []}
+              onEdit={setEditingVariable}
+              onUpdate={handleUpdateVariable}
+              onDelete={handleDeleteVariable}
+            />
+          ))
+        )}
+      </div>
+
+      {showEditor && editingVariable && (
+        <VariableEditor
+          variable={editingVariable}
+          stages={stages.get(editingVariable.id!) || []}
+          onClose={() => { setShowEditor(false); setEditingVariable(null); }}
+          onSave={async (updates) => {
+            if (editingVariable.id) await handleUpdateVariable(editingVariable.id, updates);
+            setShowEditor(false);
+            setEditingVariable(null);
+          }}
+        />
+      )}
+
+      {showThoughtConfig && (
+        <ThoughtConfigModal
+          charId={charId}
+          roomId={roomId}
+          config={thoughtConfig}
+          onClose={() => setShowThoughtConfig(false)}
+          onSave={async (config) => {
+            await api.variableThoughtConfig.save(config);
+            await loadData();
+            setShowThoughtConfig(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function VariableCard({
+  variable,
+  stages,
+  onEdit,
+  onUpdate,
+  onDelete
+}: {
+  variable: Variable;
+  stages: VariableStage[];
+  onEdit: (v: Variable) => void;
+  onUpdate: (id: number, updates: Partial<Variable>) => void;
+  onDelete: (id: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [tempValue, setTempValue] = useState(variable.value);
+  const [isEditingValue, setIsEditingValue] = useState(false);
+
+  const getPercentage = () => {
+    if (variable.min_value !== undefined && variable.max_value !== undefined) {
+      const range = variable.max_value - variable.min_value;
+      if (range > 0) {
+        return Math.min(100, Math.max(0, ((variable.value - variable.min_value) / range) * 100));
+      }
+    }
+    return undefined;
+  };
+
+  const activeStage = stages.find(s => {
+    try {
+      const func = new Function('v', `return ${s.condition};`);
+      return func(variable.value);
+    } catch {
+      return false;
+    }
+  });
+
+  const percentage = getPercentage();
+
+  const handleSaveValue = async () => {
+    if (variable.id) {
+      await onUpdate(variable.id, { value: tempValue });
+      setIsEditingValue(false);
+    }
+  };
+
+  const handleEdit = () => {
+    onEdit(variable);
+  };
+
+  const handleDeleteClick = () => {
+    if (variable.id) {
+      onDelete(variable.id);
+    }
+  };
+
+  return (
+    <div className="card bg-base-100 border border-base-content/10">
+      <div className="card-body p-4">
+        <div className="flex justify-between items-start">
+          <div>
+            <h3 className="font-bold">{variable.name}</h3>
+            <p className="text-sm opacity-60 font-mono">{variable.key}</p>
+          </div>
+          <div className="flex gap-1">
+            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
+              <Edit size={16} />
+            </button>
+            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
+              <Trash2 size={16} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
+              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          {variable.type === 'number' || variable.type === 'range' ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                {isEditingValue ? (
+                  <>
+                    <input
+                      type="number"
+                      className="input input-bordered input-sm w-24"
+                      value={tempValue}
+                      onChange={(e) => setTempValue(parseFloat(e.target.value))}
+                      step={variable.step || 1}
+                      min={variable.min_value}
+                      max={variable.max_value}
+                    />
+                    <button className="btn btn-sm btn-primary" onClick={handleSaveValue}>保存</button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-lg">{variable.value}</span>
+                    <button className="btn btn-ghost btn-xs" onClick={() => setIsEditingValue(true)}>
+                      <Edit size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {percentage !== undefined && (
+                <progress className="progress progress-primary w-full" value={percentage} max="100" />
+              )}
+              <div className="text-xs opacity-60 flex gap-2">
+                {variable.min_value !== undefined && <span>min: {variable.min_value}</span>}
+                {variable.max_value !== undefined && <span>max: {variable.max_value}</span>}
+              </div>
+            </div>
+          ) : variable.type === 'boolean' ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="toggle toggle-primary"
+                checked={Boolean(variable.value)}
+                onChange={(e) => variable.id && onUpdate(variable.id, { value: e.target.checked })}
+              />
+              <span>{variable.value ? '是' : '否'}</span>
+            </div>
+          ) : (
+            <div>
+              {isEditingValue ? (
+                <>
+                  <textarea
+                    className="textarea textarea-bordered w-full text-sm"
+                    value={tempValue}
+                    onChange={(e) => setTempValue(e.target.value)}
+                  />
+                  <button className="btn btn-sm btn-primary mt-2" onClick={handleSaveValue}>保存</button>
+                </>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <span className="font-mono">{variable.value}</span>
+                  <button className="btn btn-ghost btn-xs" onClick={() => setIsEditingValue(true)}>
+                    <Edit size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {activeStage && (
+          <div className="mt-3 p-2 bg-primary/10 rounded-lg border border-primary/20">
+            <span className="text-xs font-bold text-primary">当前阶段：{activeStage.name}</span>
+          </div>
+        )}
+
+        {expanded && (
+          <div className="mt-4 pt-4 border-t border-base-content/10">
+            {variable.description && (
+              <p className="text-sm opacity-70 mb-3">{variable.description}</p>
+            )}
+            {stages.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold">阶段配置</h4>
+                {stages.map(s => (
+                  <div key={s.id} className="text-sm p-2 bg-base-200 rounded">
+                    <div className="font-bold">{s.name}</div>
+                    <div className="font-mono text-xs opacity-70">{s.condition}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VariableEditor({
+  variable,
+  stages,
+  onClose,
+  onSave
+}: {
+  variable: Variable;
+  stages: VariableStage[];
+  onClose: () => void;
+  onSave: (updates: Partial<Variable>) => void;
+}) {
+  const [form, setForm] = useState(variable);
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-2xl">
+        <h3 className="font-bold text-lg mb-4">编辑变量</h3>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="form-control">
+              <label className="label font-bold text-sm">名称</label>
+              <input
+                className="input input-bordered"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="form-control">
+              <label className="label font-bold text-sm">键</label>
+              <input
+                className="input input-bordered font-mono"
+                value={form.key}
+                onChange={(e) => setForm({ ...form, key: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="form-control">
+            <label className="label font-bold text-sm">类型</label>
+            <select
+              className="select select-bordered"
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value as any })}
+            >
+              <option value="number">数字</option>
+              <option value="range">范围</option>
+              <option value="string">字符串</option>
+              <option value="boolean">布尔</option>
+            </select>
+          </div>
+          {(form.type === 'number' || form.type === 'range') && (
+            <div className="grid grid-cols-3 gap-4">
+              <div className="form-control">
+                <label className="label font-bold text-sm">最小值</label>
+                <input
+                  type="number"
+                  className="input input-bordered"
+                  value={form.min_value ?? ''}
+                  onChange={(e) => setForm({ ...form, min_value: e.target.value ? parseFloat(e.target.value) : undefined })}
+                />
+              </div>
+              <div className="form-control">
+                <label className="label font-bold text-sm">最大值</label>
+                <input
+                  type="number"
+                  className="input input-bordered"
+                  value={form.max_value ?? ''}
+                  onChange={(e) => setForm({ ...form, max_value: e.target.value ? parseFloat(e.target.value) : undefined })}
+                />
+              </div>
+              <div className="form-control">
+                <label className="label font-bold text-sm">步长</label>
+                <input
+                  type="number"
+                  className="input input-bordered"
+                  value={form.step ?? ''}
+                  onChange={(e) => setForm({ ...form, step: e.target.value ? parseFloat(e.target.value) : undefined })}
+                />
+              </div>
+            </div>
+          )}
+          <div className="form-control">
+            <label className="label font-bold text-sm">描述</label>
+            <textarea
+              className="textarea textarea-bordered"
+              value={form.description ?? ''}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+          </div>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={form.is_persistent}
+                onChange={(e) => setForm({ ...form, is_persistent: e.target.checked })}
+              />
+              <span className="text-sm">持久化</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={form.is_visible}
+                onChange={(e) => setForm({ ...form, is_visible: e.target.checked })}
+              />
+              <span className="text-sm">可见</span>
+            </label>
+          </div>
+        </div>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThoughtConfigModal({
+  charId,
+  roomId,
+  config,
+  onClose,
+  onSave
+}: {
+  charId?: number;
+  roomId?: number;
+  config: VariableThoughtConfig | null;
+  onClose: () => void;
+  onSave: (config: VariableThoughtConfig) => void;
+}) {
+  const [form, setForm] = useState(config || {
+    char_id: charId,
+    room_id: roomId,
+    is_auto_update: false
+  });
+
+  return (
+    <div className="modal modal-open">
+      <div className="modal-box max-w-2xl">
+        <h3 className="font-bold text-lg mb-4">思考配置</h3>
+        <div className="space-y-4">
+          <div className="form-control">
+            <label className="label font-bold text-sm">自动更新</label>
+            <label className="label cursor-pointer">
+              <span className="text-sm">启用自动变量更新</span>
+              <input
+                type="checkbox"
+                className="toggle toggle-primary"
+                checked={form.is_auto_update}
+                onChange={(e) => setForm({ ...form, is_auto_update: e.target.checked })}
+              />
+            </label>
+          </div>
+          <div className="form-control">
+            <label className="label font-bold text-sm">更新间隔（N条消息后）</label>
+            <input
+              type="number"
+              className="input input-bordered"
+              value={form.update_interval ?? ''}
+              onChange={(e) => setForm({ ...form, update_interval: e.target.value ? parseInt(e.target.value) : undefined })}
+            />
+          </div>
+          <div className="form-control">
+            <label className="label font-bold text-sm">思考提示词</label>
+            <textarea
+              className="textarea textarea-bordered h-48 font-mono text-sm"
+              value={form.thought_prompt ?? ''}
+              onChange={(e) => setForm({ ...form, thought_prompt: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="modal-action">
+          <button className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
+
+
 ## File: src\lib\db.ts
 
 ```ts
 export type ApiMode = 'chat_completions' | 'responses';
+
+export type VariableType = 'number' | 'string' | 'boolean' | 'range';
+export type SnapshotType = 'manual' | 'auto' | 'checkpoint';
+export type LorebookPosition = 'before_system' | 'after_system' | 'last';
+export type RuleType = 'interval' | 'turn_count' | 'variable_change';
 
 export interface Character {
   id?: number;
@@ -3039,6 +5532,8 @@ export interface Message {
   content: string;
   image?: string;
   timestamp: number;
+  snapshot_id?: number;
+  branch_id?: string;
 }
 
 export interface Room {
@@ -3064,6 +5559,8 @@ export interface RoomMessage {
   image?: string;
   meta_json?: string;
   timestamp: number;
+  snapshot_id?: number;
+  branch_id?: string;
 }
 
 export interface ApiPreset {
@@ -3097,7 +5594,9 @@ export interface LorebookEntry {
   char_id: number;
   keywords: string;
   content: string;
-  isActive: boolean;
+  is_active: boolean;
+  priority?: number;
+  isActive?: boolean; // 向后兼容
 }
 
 export interface ImageRecord {
@@ -3109,6 +5608,140 @@ export interface ImageRecord {
   room_id?: number;
   prompt?: string;
   created_at?: number;
+}
+
+// ============================================
+// 新增: v3.0 类型定义
+// ============================================
+
+export interface Variable {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  key: string;
+  type: VariableType;
+  value?: any;
+  min_value?: number;
+  max_value?: number;
+  step?: number;
+  is_persistent: boolean;
+  is_visible: boolean;
+  description?: string;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface VariableStage {
+  id?: number;
+  variable_id: number;
+  name: string;
+  condition: string;
+  priority: number;
+  stage_prompt?: string;
+  is_active: boolean;
+  created_at?: number;
+}
+
+export interface VariableThoughtConfig {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  preset_id?: number;
+  model?: string;
+  thought_prompt?: string;
+  update_condition?: string;
+  update_interval?: number;
+  is_auto_update: boolean;
+  created_at?: number;
+}
+
+export interface LorebookV2Entry {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  keywords?: string;
+  regex_pattern?: string;
+  content: string;
+  trigger_condition?: string;
+  priority: number;
+  category?: string;
+  position: LorebookPosition;
+  insertion_depth?: number;
+  parent_id?: number;
+  probability: number;
+  use_once: boolean;
+  cooldown_messages: number;
+  last_triggered_at?: number;
+  is_active: boolean;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface Snapshot {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  description?: string;
+  thumbnail?: string;
+  snapshot_type: SnapshotType;
+  message_count?: number;
+  created_at?: number;
+}
+
+export interface SnapshotMessage {
+  id?: number;
+  snapshot_id: number;
+  original_message_id?: number;
+  char_id?: number;
+  room_id?: number;
+  role: string;
+  content?: string;
+  image?: string;
+  timestamp?: number;
+  order_index?: number;
+}
+
+export interface SnapshotVariable {
+  id?: number;
+  snapshot_id: number;
+  variable_id?: number;
+  key: string;
+  value?: string;
+  type?: string;
+}
+
+export interface AutoSnapshotRule {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  rule_type: RuleType;
+  interval_minutes?: number;
+  turn_count?: number;
+  variable_key?: string;
+  keep_count: number;
+  is_active: boolean;
+  created_at?: number;
+}
+
+export interface MessageEdit {
+  id?: number;
+  message_id: number;
+  char_id?: number;
+  room_id?: number;
+  old_content?: string;
+  new_content?: string;
+  edited_at?: number;
+}
+
+export interface BranchInfo {
+  id: string;
+  name: string;
+  snapshot_id?: number;
+  created_at: number;
 }
 
 const API = '/api';
@@ -3186,6 +5819,98 @@ export const api = {
       if (roomId) params.set('room_id', String(roomId));
       return fetch(`${API}/images?${params}`, { method: 'DELETE' });
     },
+  },
+
+  // ============================================
+  // 新增: v3.0 API 客户端
+  // ============================================
+
+  variables: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/variables?${params}`).then(r => r.json() as Promise<Variable[]>);
+    },
+    get: (id: number) => fetch(`${API}/variables?id=${id}`).then(r => r.json() as Promise<Variable>),
+    add: (v: Variable) => fetch(`${API}/variables`, { method: 'POST', headers, body: JSON.stringify(v) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, v: Partial<Variable>) => fetch(`${API}/variables`, { method: 'PUT', headers, body: JSON.stringify({ id, ...v }) }),
+    delete: (id: number) => fetch(`${API}/variables?id=${id}`, { method: 'DELETE' }),
+    bulkUpdate: (updates: Array<{ id: number; value: any }>) =>
+      fetch(`${API}/variables?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates }) }),
+  },
+
+  variableStages: {
+    list: (variableId: number) => fetch(`${API}/variables/stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
+    add: (s: VariableStage) => fetch(`${API}/variables/stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables/stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
+    delete: (id: number) => fetch(`${API}/variables/stages?id=${id}`, { method: 'DELETE' }),
+  },
+
+  variableThoughtConfig: {
+    get: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/variables/thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
+    },
+    save: (config: VariableThoughtConfig) => fetch(`${API}/variables/thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
+    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string }) =>
+      fetch(`${API}/variables/thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      }),
+  },
+
+  lorebookV2: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/lorebook-v2?${params}`).then(r => r.json() as Promise<LorebookV2Entry[]>);
+    },
+    add: (entry: LorebookV2Entry) => fetch(`${API}/lorebook-v2`, { method: 'POST', headers, body: JSON.stringify(entry) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, entry: Partial<LorebookV2Entry>) => fetch(`${API}/lorebook-v2`, { method: 'PUT', headers, body: JSON.stringify({ id, ...entry }) }),
+    delete: (id: number) => fetch(`${API}/lorebook-v2?id=${id}`, { method: 'DELETE' }),
+    migrateFromV1: (charId: number) => fetch(`${API}/lorebook-v2?action=migrate&char_id=${charId}`, { method: 'POST' }),
+  },
+
+  snapshots: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/snapshots?${params}`).then(r => r.json() as Promise<Snapshot[]>);
+    },
+    get: (id: number) => fetch(`${API}/snapshots?id=${id}`).then(r => r.json() as Promise<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] }>),
+    create: (body: { char_id?: number; room_id?: number; name: string; description?: string }) =>
+      fetch(`${API}/snapshots`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
+    delete: (id: number) => fetch(`${API}/snapshots?id=${id}`, { method: 'DELETE' }),
+    restore: (id: number) => fetch(`${API}/snapshots/restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }),
+    createBranch: (id: number, name: string) => fetch(`${API}/snapshots/branch`, { method: 'POST', headers, body: JSON.stringify({ snapshot_id: id, name }) }).then(r => r.json() as Promise<{ branch_id: string }>),
+  },
+
+  branches: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/branches?${params}`).then(r => r.json() as Promise<BranchInfo[]>);
+    },
+    switch: (branchId: string) => fetch(`${API}/branches/switch`, { method: 'POST', headers, body: JSON.stringify({ branch_id: branchId }) }),
+    delete: (branchId: string) => fetch(`${API}/branches?branch_id=${encodeURIComponent(branchId)}`, { method: 'DELETE' }),
+  },
+
+  autoSnapshotRules: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/auto-snapshot-rules?${params}`).then(r => r.json() as Promise<AutoSnapshotRule[]>);
+    },
+    add: (rule: AutoSnapshotRule) => fetch(`${API}/auto-snapshot-rules`, { method: 'POST', headers, body: JSON.stringify(rule) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, rule: Partial<AutoSnapshotRule>) => fetch(`${API}/auto-snapshot-rules`, { method: 'PUT', headers, body: JSON.stringify({ id, ...rule }) }),
+    delete: (id: number) => fetch(`${API}/auto-snapshot-rules?id=${id}`, { method: 'DELETE' }),
   }
 };
 
@@ -3441,6 +6166,254 @@ ${facts}
 新进展总结：`;
 
     return await this.createTextCompletion(modelName, '你是精简且客观的剧情总结助手。', prompt, 0.3);
+  }
+}
+
+```
+
+
+## File: src\lib\lorebook-engine.ts
+
+```ts
+import type { LorebookV2Entry, Message } from './db';
+
+export class LorebookEngine {
+  private entries: LorebookV2Entry[];
+  private triggerHistory: Map<number, { count: number; lastTriggered: number }>;
+  private totalMessageCount: number = 0;
+
+  constructor(entries: LorebookV2Entry[] = []) {
+    this.entries = entries;
+    this.triggerHistory = new Map();
+  }
+
+  setEntries(entries: LorebookV2Entry[]) {
+    this.entries = entries;
+  }
+
+  incrementMessageCount() {
+    this.totalMessageCount++;
+  }
+
+  scan(
+    input: string,
+    history: Message[],
+    variables: Record<string, any> = {},
+    context: any = {}
+  ): LorebookV2Entry[] {
+    const triggered: LorebookV2Entry[] = [];
+    const contextText = (input + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
+
+    const activeEntries = this.entries
+      .filter(e => e.is_active)
+      .sort((a, b) => b.priority - a.priority);
+
+    for (const entry of activeEntries) {
+      if (this.shouldTrigger(entry, contextText, history, variables, context)) {
+        triggered.push(entry);
+        this.recordTrigger(entry.id!);
+      }
+    }
+
+    const byParent = new Map<number | null, LorebookV2Entry[]>();
+    for (const entry of triggered) {
+      const parentId = entry.parent_id || null;
+      const children = byParent.get(parentId) || [];
+      children.push(entry);
+      byParent.set(parentId, children);
+    }
+
+    const result: LorebookV2Entry[] = [];
+    const addWithChildren = (entry: LorebookV2Entry, depth = 0) => {
+      if (entry.insertion_depth !== undefined && depth > entry.insertion_depth) return;
+      result.push(entry);
+      const children = byParent.get(entry.id ?? null) || [];
+      for (const child of children) {
+        addWithChildren(child, depth + 1);
+      }
+    };
+
+    for (const entry of byParent.get(null) || []) {
+      addWithChildren(entry);
+    }
+
+    return result;
+  }
+
+  private shouldTrigger(
+    entry: LorebookV2Entry,
+    contextText: string,
+    history: Message[],
+    variables: Record<string, any>,
+    context: any
+  ): boolean {
+    const historyData = this.triggerHistory.get(entry.id!);
+    if (entry.use_once && historyData && historyData.count > 0) return false;
+    if (entry.cooldown_messages > 0 && historyData) {
+      const messagesSince = this.totalMessageCount - historyData.lastTriggered;
+      if (messagesSince < entry.cooldown_messages) return false;
+    }
+    if (entry.probability < 1 && Math.random() > entry.probability) return false;
+
+    let matchesKeywords = false;
+    if (entry.keywords) {
+      if (entry.keywords.trim() === '*') {
+        matchesKeywords = true;
+      } else {
+        const keywords = entry.keywords.split(/[,，\n]/).map(k => k.trim().toLowerCase()).filter(k => k);
+        matchesKeywords = keywords.some(k => contextText.includes(k));
+      }
+    }
+
+    let matchesRegex = false;
+    if (entry.regex_pattern) {
+      try {
+        const regex = new RegExp(entry.regex_pattern, 'i');
+        matchesRegex = regex.test(contextText);
+      } catch {
+        matchesRegex = false;
+      }
+    }
+
+    let matchesCondition = true;
+    if (entry.trigger_condition) {
+      try {
+        const func = new Function('variables', 'history', 'context', `return ${entry.trigger_condition};`);
+        matchesCondition = func(variables, history, context);
+      } catch {
+        matchesCondition = false;
+      }
+    }
+
+    const hasAnyMatch = entry.keywords || entry.regex_pattern ? (matchesKeywords || matchesRegex) : true;
+    return hasAnyMatch && matchesCondition;
+  }
+
+  private recordTrigger(entryId: number) {
+    const existing = this.triggerHistory.get(entryId) || { count: 0, lastTriggered: this.totalMessageCount };
+    this.triggerHistory.set(entryId, {
+      count: existing.count + 1,
+      lastTriggered: this.totalMessageCount
+    });
+  }
+
+  buildInjection(triggered: LorebookV2Entry[]): { beforeSystem: string; afterSystem: string; last: string } {
+    const byPosition = {
+      beforeSystem: [] as string[],
+      afterSystem: [] as string[],
+      last: [] as string[]
+    };
+
+    for (const entry of triggered) {
+      const position = entry.position || 'before_system';
+      const arr = byPosition[position as keyof typeof byPosition] || byPosition.beforeSystem;
+      arr.push(entry.content);
+    }
+
+    return {
+      beforeSystem: byPosition.beforeSystem.join('\n---\n'),
+      afterSystem: byPosition.afterSystem.join('\n---\n'),
+      last: byPosition.last.join('\n---\n')
+    };
+  }
+
+  resetTriggerHistory() {
+    this.triggerHistory.clear();
+    this.totalMessageCount = 0;
+  }
+}
+
+```
+
+
+## File: src\lib\variable-engine.ts
+
+```ts
+import type { Variable, VariableStage } from './db';
+
+export class VariableEngine {
+  private variables: Variable[];
+  private stages: Map<number, VariableStage[]>;
+
+  constructor(variables: Variable[] = [], stages: VariableStage[] = []) {
+    this.variables = variables;
+    this.stages = new Map();
+    for (const stage of stages) {
+      const existing = this.stages.get(stage.variable_id) || [];
+      existing.push(stage);
+      this.stages.set(stage.variable_id, existing);
+    }
+  }
+
+  getVariables(): Variable[] {
+    return this.variables;
+  }
+
+  getVariable(key: string): Variable | undefined {
+    return this.variables.find(v => v.key === key);
+  }
+
+  setVariable(key: string, value: any): Variable | null {
+    const index = this.variables.findIndex(v => v.key === key);
+    if (index === -1) return null;
+    this.variables[index] = { ...this.variables[index], value };
+    return this.variables[index];
+  }
+
+  evaluateCondition(condition: string, value: any): boolean {
+    try {
+      const func = new Function('v', `return ${condition};`);
+      return func(value);
+    } catch {
+      return false;
+    }
+  }
+
+  getActiveStage(variable: Variable): VariableStage | null {
+    const stages = this.stages.get(variable.id!) || [];
+    const activeStages = stages.filter(s => s.is_active).sort((a, b) => b.priority - a.priority);
+    for (const stage of activeStages) {
+      if (this.evaluateCondition(stage.condition, variable.value)) {
+        return stage;
+      }
+    }
+    return null;
+  }
+
+  getActiveStagePrompts(): string[] {
+    const prompts: string[] = [];
+    for (const variable of this.variables) {
+      const stage = this.getActiveStage(variable);
+      if (stage && stage.stage_prompt) {
+        prompts.push(stage.stage_prompt);
+      }
+    }
+    return prompts;
+  }
+
+  replaceVariables(text: string, settings?: any, char?: any): string {
+    if (!text) return text;
+    let result = text;
+    for (const variable of this.variables) {
+      const regex = new RegExp(`\\{\\{${variable.key}\\}\\}`, 'gi');
+      result = result.replace(regex, String(variable.value ?? ''));
+    }
+    return result;
+  }
+
+  getVariableDisplay(variable: Variable): { value: any; percentage?: number; stage?: VariableStage } {
+    const stage = this.getActiveStage(variable);
+    let percentage: number | undefined;
+    if (variable.type === 'number' || variable.type === 'range') {
+      if (variable.min_value !== undefined && variable.max_value !== undefined) {
+        const range = variable.max_value - variable.min_value;
+        if (range > 0) {
+          percentage = ((variable.value - variable.min_value) / range) * 100;
+        }
+      }
+    }
+    const resultStage = stage === null ? undefined : stage;
+    return { value: variable.value, percentage, stage: resultStage };
   }
 }
 
