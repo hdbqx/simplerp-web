@@ -81,6 +81,6 @@ export class VariableEngine {
         }
       }
     }
-    return { value: variable.value, percentage, stage };
+    return { value: variable.value, percentage, stage: stage || undefined };
   }
 }

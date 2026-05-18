@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
-import type { LorebookV2Entry } from '../lib/db';
-import { api } from '../lib/db';
+import type { LorebookV2Entry } from '../../lib/db';
+import { api } from '../../lib/db';
 
 interface Props {
   charId?: number;

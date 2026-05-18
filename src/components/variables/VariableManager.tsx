@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Settings, ChevronDown, ChevronUp } from 'lucide-react';
-import type { Variable, VariableStage, VariableThoughtConfig } from '../lib/db';
-import { api } from '../lib/db';
+import type { Variable, VariableStage, VariableThoughtConfig } from '../../lib/db';
+import { api } from '../../lib/db';
 
 interface Props {
   charId?: number;

@@ -10,7 +10,7 @@ import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
   BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy,
-  Variables, Camera
+  Variable, Camera
 } from 'lucide-react';
 import { replaceVariables } from './lib/variables';
 
@@ -398,7 +398,7 @@ function App() {
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
-        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'variables' ? 'btn-active' : ''}`} onClick={() => setViewMode('variables')}><Variables size={16} /><span className="ml-1">变量</span></button>
+        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'variables' ? 'btn-active' : ''}`} onClick={() => setViewMode('variables')}><Variable size={16} /><span className="ml-1">变量</span></button>
         <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'lorebook' ? 'btn-active' : ''}`} onClick={() => setViewMode('lorebook')}><Book size={16} /><span className="ml-1">世界书</span></button>
         <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'snapshots' ? 'btn-active' : ''}`} onClick={() => setViewMode('snapshots')}><Camera size={16} /><span className="ml-1">快照</span></button>
       </div>
