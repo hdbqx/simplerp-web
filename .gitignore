@@ -6,12 +6,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-
+.kiro
 node_modules
 dist
 dist-ssr
 *.local
-
+project_context.md
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
