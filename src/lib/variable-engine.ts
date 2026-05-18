@@ -81,6 +81,7 @@ export class VariableEngine {
         }
       }
     }
-    return { value: variable.value, percentage, stage: stage || undefined };
+    const resultStage = stage === null ? undefined : stage;
+    return { value: variable.value, percentage, stage: resultStage };
   }
 }

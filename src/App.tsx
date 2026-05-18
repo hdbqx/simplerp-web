@@ -30,7 +30,7 @@ function App() {
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [settings, setSettings] = useState<Settings>();
-  const [lorebookEntries, setLorebookEntries] = useState<LorebookEntry[]>([]);
+  const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -625,21 +625,47 @@ function App() {
                   {m.image ? (
                     <div className="chat-bubble p-1 bg-base-200 border-base-300 shadow-xl overflow-hidden relative group/img">
                       <img src={m.image} className="max-w-xs md:max-w-md rounded-lg"/>
-                      {!m.id && (<div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity"><button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { try { const res = await api.messages.add(m); setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); alert("已保存"); } catch (err) { alert("保存失败"); } }}><Save size={12}/></button></div>)}
+                      {!m.id && (
+                        <div className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                          <button className="btn btn-circle btn-xs btn-primary shadow-lg" title="保存" onClick={async () => { 
+                            try { 
+                              const res = await api.messages.add(m); 
+                              setMessages(prev => prev.map(msg => msg.timestamp === m.timestamp ? { ...msg, id: res.id } : msg)); 
+                              alert("已保存"); 
+                            } catch (err) { 
+                              alert("保存失败"); 
+                            } 
+                          }}>
+                            <Save size={12}/>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className={`chat-bubble shadow-lg border ${isUser ? 'chat-bubble-primary border-primary' : 'bg-base-200 text-base-content border-base-300'}`}>
                       {viewMode === 'char' && editingMsgId === m.id ? (
-                          <div className="flex flex-col gap-2 min-w-[200px]"><textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/><div className="flex justify-end gap-1"><button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button><button className="btn btn-xs btn-primary" onClick={async ()=>{await api.messages.update(m.id!, editContent); setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); setEditingMsgId(null)}}>保存</button></div></div>
-                      ) : <div className="prose prose-sm break-words">
-  <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-    {replaceVariables(
-      m.content, 
-      settings || {}, 
-      viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
-    )}
-  </ReactMarkdown>
-</div>
+                        <div className="flex flex-col gap-2 min-w-[200px]">
+                          <textarea className="textarea textarea-bordered textarea-sm w-full bg-base-100" value={editContent} onChange={e=>setEditContent(e.target.value)}/>
+                          <div className="flex justify-end gap-1">
+                            <button className="btn btn-xs" onClick={()=>setEditingMsgId(null)}>取消</button>
+                            <button className="btn btn-xs btn-primary" onClick={async ()=>{
+                              await api.messages.update(m.id!, editContent); 
+                              setMessages(prev => prev.map(msg=>msg.id===m.id?{...msg, content:editContent}:msg)); 
+                              setEditingMsgId(null);
+                            }}>保存</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="prose prose-sm break-words">
+                          <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                            {replaceVariables(
+                              m.content, 
+                              settings || {}, 
+                              viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
+                            )}
+                          </ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -681,7 +707,7 @@ function App() {
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
       
       <div className="drawer-side z-50"><label htmlFor="my-drawer" className="drawer-overlay"></label><Sidebar /></div>

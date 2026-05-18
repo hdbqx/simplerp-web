@@ -83,7 +83,9 @@ export interface LorebookEntry {
   char_id: number;
   keywords: string;
   content: string;
-  isActive: boolean;
+  is_active: boolean;
+  priority?: number;
+  isActive?: boolean; // 向后兼容
 }
 
 export interface ImageRecord {

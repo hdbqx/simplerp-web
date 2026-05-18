@@ -50,7 +50,7 @@ export class LorebookEngine {
     const addWithChildren = (entry: LorebookV2Entry, depth = 0) => {
       if (entry.insertion_depth !== undefined && depth > entry.insertion_depth) return;
       result.push(entry);
-      const children = byParent.get(entry.id || null) || [];
+      const children = byParent.get(entry.id ?? null) || [];
       for (const child of children) {
         addWithChildren(child, depth + 1);
       }

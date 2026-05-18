@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/imagestudio.tsx","./src/lib/db.ts","./src/lib/llm.ts","./src/lib/variables.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/imagestudio.tsx","./src/components/lorebook/lorebookmanager.tsx","./src/components/snapshots/snapshotmanager.tsx","./src/components/variables/variablemanager.tsx","./src/lib/db.ts","./src/lib/llm.ts","./src/lib/lorebook-engine.ts","./src/lib/variable-engine.ts","./src/lib/variables.ts"],"version":"5.9.3"}
