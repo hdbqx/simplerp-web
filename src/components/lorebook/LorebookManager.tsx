@@ -1,379 +1,432 @@
-import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
-import type { LorebookV2Entry } from '../../lib/db';
-import { api } from '../../lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { LorebookV2Entry, TriggerMode, MatchLogic, LorebookPosition } from '../../lib/db';
 
-interface Props {
+interface LorebookManagerProps {
   charId?: number;
   roomId?: number;
 }
 
-export function LorebookManager({ charId, roomId }: Props) {
+const triggerModeOptions: { value: TriggerMode; label: string; description: string }[] = [
+  { value: 'keyword', label: '关键词触发', description: '当文本中包含指定关键词时触发' },
+  { value: 'regex', label: '正则表达式', description: '使用正则表达式匹配文本' },
+  { value: 'constant', label: '常驻激活', description: '始终激活，无需触发条件' },
+];
+
+const matchLogicOptions: { value: MatchLogic; label: string; description: string }[] = [
+  { value: 'any', label: '任意匹配', description: '任一关键词匹配即触发' },
+  { value: 'all', label: '全部匹配', description: '所有关键词都匹配才触发' },
+  { value: 'not', label: '非匹配', description: '所有关键词都不匹配时触发' },
+  { value: 'expression', label: '表达式', description: '使用自定义表达式组合关键词' },
+];
+
+const positionOptions: { value: LorebookPosition; label: string }[] = [
+  { value: 'before_system', label: '系统提示前' },
+  { value: 'after_system', label: '系统提示后' },
+  { value: 'before_user', label: '用户消息前' },
+  { value: 'after_user', label: '用户消息后' },
+  { value: 'before_ai', label: 'AI回复前' },
+  { value: 'after_ai', label: 'AI回复后' },
+  { value: 'last', label: '最后' },
+];
+
+export function LorebookManager({ charId, roomId }: LorebookManagerProps) {
   const [entries, setEntries] = useState<LorebookV2Entry[]>([]);
-  const [showEditor, setShowEditor] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<LorebookV2Entry | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<LorebookV2Entry>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [charId, roomId]);
-
-  const loadData = async () => {
+  const fetchEntries = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await api.lorebookV2.list(charId, roomId);
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      const res = await fetch(`/api/lorebook-v2?${params}`);
+      const data = await res.json();
       setEntries(data);
     } catch (e) {
-      console.error('Failed to load lorebook', e);
+      console.error('Failed to fetch lorebook entries:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [charId, roomId]);
 
-  const handleAddEntry = async () => {
-    const newEntry: Partial<LorebookV2Entry> = {
-      name: '新条目',
-      content: '',
-      priority: 0,
-      position: 'before_system',
-      probability: 1.0,
-      use_once: false,
-      cooldown_messages: 0,
-      is_active: true
-    };
-    if (charId) newEntry.char_id = charId;
-    if (roomId) newEntry.room_id = roomId;
-    await api.lorebookV2.add(newEntry as LorebookV2Entry);
-    await loadData();
-  };
+  useEffect(() => {
+    fetchEntries();
+  }, [fetchEntries]);
 
-  const handleMigrate = async () => {
-    if (confirm('要从旧世界书迁移数据吗？这会复制所有条目。')) {
-      if (charId) await api.lorebookV2.migrateFromV1(charId);
-      await loadData();
+  const handleCreate = async () => {
+    try {
+      const res = await fetch('/api/lorebook-v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          char_id: charId,
+          room_id: roomId,
+          name: '新条目',
+          content: '',
+          trigger_mode: 'keyword',
+          match_logic: 'any',
+          position: 'before_system',
+          priority: 0,
+          probability: 1.0,
+          use_once: false,
+          cooldown_messages: 0,
+          trigger_count: -1,
+          scan_depth: 2,
+          is_active: true,
+          is_constant: false,
+        }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to create lorebook entry:', e);
     }
   };
 
   const handleUpdate = async (id: number, updates: Partial<LorebookV2Entry>) => {
-    await api.lorebookV2.update(id, updates);
-    await loadData();
+    try {
+      const res = await fetch('/api/lorebook-v2', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to update lorebook entry:', e);
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm('确定删除？')) {
-      await api.lorebookV2.delete(id);
-      await loadData();
+    if (!confirm('确定删除此条目？')) return;
+    try {
+      const res = await fetch(`/api/lorebook-v2?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to delete lorebook entry:', e);
     }
   };
 
-  const categories = Array.from(new Set(entries.map(e => e.category).filter(Boolean)));
-  const filteredEntries = entries.filter(e => {
-    const matchesSearch = !searchTerm || e.name.toLowerCase().includes(searchTerm.toLowerCase()) || e.keywords?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = !filterCategory || e.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
-
-  if (loading) return <div className="p-4">加载中...</div>;
-
-  return (
-    <div className="flex flex-col h-full bg-base-200">
-      <div className="p-4 border-b border-base-content/10">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="font-bold text-lg">世界书 v2</h2>
-          <div className="flex gap-2">
-            {charId && (
-              <button className="btn btn-sm btn-outline" onClick={handleMigrate}>迁移旧数据</button>
-            )}
-            <button className="btn btn-sm btn-primary" onClick={handleAddEntry}>
-              <Plus size={16} className="mr-1" /> 新增条目
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
-          <div className="form-control flex-1 min-w-48">
-            <div className="input-group">
-              <Search size={16} className="opacity-60" />
-              <input
-                type="text"
-                className="input input-bordered input-sm"
-                placeholder="搜索..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          </div>
-          {categories.length > 0 && (
-            <select
-              className="select select-bordered select-sm"
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-            >
-              <option value="">所有分类</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {filteredEntries.length === 0 ? (
-          <div className="text-center opacity-60 py-8">
-            {searchTerm || filterCategory ? '没有匹配的条目' : '还没有条目，点击上方按钮创建'}
-          </div>
-        ) : (
-          filteredEntries.map(entry => (
-            <LorebookEntryCard
-              key={entry.id || `temp-${Math.random()}`}
-              entry={entry}
-              onEdit={setEditingEntry}
-              onUpdate={handleUpdate}
-              onDelete={handleDelete}
-            />
-          ))
-        )}
-      </div>
-
-      {showEditor && editingEntry && editingEntry.id && (
-        <LorebookEntryEditor
-          entry={editingEntry}
-          onClose={() => { setShowEditor(false); setEditingEntry(null); }}
-          onSave={async (updates) => {
-            await handleUpdate(editingEntry.id!, updates);
-            setShowEditor(false);
-            setEditingEntry(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function LorebookEntryCard({
-  entry,
-  onEdit,
-  onUpdate,
-  onDelete
-}: {
-  entry: LorebookV2Entry;
-  onEdit: (e: LorebookV2Entry) => void;
-  onUpdate: (id: number, updates: Partial<LorebookV2Entry>) => void;
-  onDelete: (id: number) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  const handleEdit = () => {
-    if (entry.id) {
-      onEdit(entry);
+  const handleBulkUpdate = async (updates: Array<{ id: number; [key: string]: any }>) => {
+    try {
+      const res = await fetch('/api/lorebook-v2?action=bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to bulk update lorebook entries:', e);
     }
   };
 
-  const handleDeleteClick = () => {
-    if (entry.id) {
-      onDelete(entry.id);
+  const startEdit = (entry: LorebookV2Entry) => {
+    setEditingId(entry.id ?? null);
+    setEditForm({ ...entry });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = async () => {
+    if (editingId) {
+      await handleUpdate(editingId, editForm);
+      cancelEdit();
     }
+  };
+
+  const toggleActive = async (entry: LorebookV2Entry) => {
+    await handleUpdate(entry.id!, { is_active: !entry.is_active });
   };
 
   return (
-    <div className={`card bg-base-100 border ${entry.is_active ? 'border-base-content/10' : 'border-error/30 opacity-60'}`}>
-      <div className="card-body p-4">
-        <div className="flex justify-between items-start">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold">{entry.name}</h3>
-              {entry.category && (
-                <span className="badge badge-outline badge-sm">{entry.category}</span>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">世界书</h3>
+        <button
+          onClick={handleCreate}
+          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          添加条目
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-4">加载中...</div>
+      ) : entries.length === 0 ? (
+        <div className="text-center py-4 text-gray-500">暂无条目</div>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((entry) => (
+            <div key={entry.id} className={`border rounded p-3 ${!entry.is_active ? 'opacity-60' : ''}`}>
+              {editingId === entry.id ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={editForm.name || ''}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="名称"
+                      className="px-2 py-1 border rounded"
+                    />
+                    <select
+                      value={editForm.trigger_mode || 'keyword'}
+                      onChange={(e) => setEditForm({ ...editForm, trigger_mode: e.target.value as TriggerMode })}
+                      className="px-2 py-1 border rounded"
+                    >
+                      {triggerModeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(editForm.trigger_mode === 'keyword' || !editForm.trigger_mode) && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editForm.keywords || ''}
+                        onChange={(e) => setEditForm({ ...editForm, keywords: e.target.value })}
+                        placeholder="关键词（逗号或换行分隔）"
+                        className="w-full px-2 py-1 border rounded"
+                        rows={2}
+                      />
+                      <select
+                        value={editForm.match_logic || 'any'}
+                        onChange={(e) => setEditForm({ ...editForm, match_logic: e.target.value as MatchLogic })}
+                        className="w-full px-2 py-1 border rounded"
+                      >
+                        {matchLogicOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      {editForm.match_logic === 'expression' && (
+                        <input
+                          type="text"
+                          value={editForm.match_expression || ''}
+                          onChange={(e) => setEditForm({ ...editForm, match_expression: e.target.value })}
+                          placeholder="表达式 (如: k0 AND (k1 OR k2))"
+                          className="w-full px-2 py-1 border rounded"
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {editForm.trigger_mode === 'regex' && (
+                    <input
+                      type="text"
+                      value={editForm.regex_pattern || ''}
+                      onChange={(e) => setEditForm({ ...editForm, regex_pattern: e.target.value })}
+                      placeholder="正则表达式"
+                      className="w-full px-2 py-1 border rounded font-mono"
+                    />
+                  )}
+
+                  <textarea
+                    value={editForm.content || ''}
+                    onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                    placeholder="内容"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={4}
+                  />
+
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      {showAdvanced ? '隐藏高级选项' : '显示高级选项'}
+                    </button>
+                  </div>
+
+                  {showAdvanced && (
+                    <div className="space-y-2 border-t pt-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={editForm.position || 'before_system'}
+                          onChange={(e) => setEditForm({ ...editForm, position: e.target.value as LorebookPosition })}
+                          className="px-2 py-1 border rounded"
+                        >
+                          {positionOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          value={editForm.priority ?? 0}
+                          onChange={(e) => setEditForm({ ...editForm, priority: Number(e.target.value) })}
+                          placeholder="优先级"
+                          className="px-2 py-1 border rounded"
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-500">触发概率</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={editForm.probability ?? 1}
+                            onChange={(e) => setEditForm({ ...editForm, probability: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500">扫描深度</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={editForm.scan_depth ?? 2}
+                            onChange={(e) => setEditForm({ ...editForm, scan_depth: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500">冷却消息数</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={editForm.cooldown_messages ?? 0}
+                            onChange={(e) => setEditForm({ ...editForm, cooldown_messages: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={editForm.use_once ?? false}
+                            onChange={(e) => setEditForm({ ...editForm, use_once: e.target.checked })}
+                          />
+                          仅触发一次
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={editForm.is_constant ?? false}
+                            onChange={(e) => setEditForm({ ...editForm, is_constant: e.target.checked })}
+                          />
+                          常驻
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        value={editForm.group_name || ''}
+                        onChange={(e) => setEditForm({ ...editForm, group_name: e.target.value })}
+                        placeholder="分组名称"
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                      <input
+                        type="text"
+                        value={editForm.trigger_condition || ''}
+                        onChange={(e) => setEditForm({ ...editForm, trigger_condition: e.target.value })}
+                        placeholder="触发条件表达式 (如: variables.health > 50)"
+                        className="w-full px-2 py-1 border rounded font-mono text-sm"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveEdit}
+                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={entry.is_active}
+                          onChange={() => toggleActive(entry)}
+                          className="w-4 h-4"
+                        />
+                        <span className="font-medium">{entry.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-gray-100">
+                          {triggerModeOptions.find(t => t.value === entry.trigger_mode)?.label || '关键词'}
+                        </span>
+                        {entry.is_constant && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                            常驻
+                          </span>
+                        )}
+                        {entry.use_once && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
+                            一次性
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        优先级: {entry.priority} | 位置: {positionOptions.find(p => p.value === entry.position)?.label}
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => startEdit(entry)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDelete(entry.id!)}
+                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {entry.trigger_mode === 'keyword' && entry.keywords && (
+                    <div className="text-sm text-gray-600">
+                      关键词: {entry.keywords.split(/[,，\n]/).map(k => k.trim()).filter(k => k).join(', ')}
+                      <span className="ml-2 text-xs text-gray-400">
+                        ({matchLogicOptions.find(m => m.value === entry.match_logic)?.label})
+                      </span>
+                    </div>
+                  )}
+                  
+                  {entry.trigger_mode === 'regex' && entry.regex_pattern && (
+                    <div className="text-sm text-gray-600 font-mono">
+                      正则: {entry.regex_pattern}
+                    </div>
+                  )}
+                  
+                  <div className="text-sm text-gray-700 line-clamp-2">{entry.content}</div>
+                </div>
               )}
-              <span className="badge badge-sm opacity-60">优先级: {entry.priority}</span>
             </div>
-            {entry.keywords && (
-              <p className="text-sm opacity-60 font-mono mt-1">{entry.keywords}</p>
-            )}
-          </div>
-          <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
-              <Edit size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
-              <Trash2 size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
+          ))}
         </div>
-
-        {expanded && (
-          <div className="mt-4 pt-4 border-t border-base-content/10 space-y-3">
-            <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
-              {entry.content}
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs opacity-70">
-              {entry.regex_pattern && <span className="badge badge-ghost">正则匹配</span>}
-              {entry.trigger_condition && <span className="badge badge-ghost">条件触发</span>}
-              {entry.probability < 1 && <span className="badge badge-ghost">{(entry.probability * 100).toFixed(0)}% 概率</span>}
-              {entry.use_once && <span className="badge badge-ghost">仅一次</span>}
-              {entry.cooldown_messages > 0 && <span className="badge badge-ghost">冷却 {entry.cooldown_messages} 条</span>}
-              <span className="badge badge-ghost">位置: {entry.position}</span>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LorebookEntryEditor({
-  entry,
-  onClose,
-  onSave
-}: {
-  entry: LorebookV2Entry;
-  onClose: () => void;
-  onSave: (updates: Partial<LorebookV2Entry>) => void;
-}) {
-  const [form, setForm] = useState(entry);
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-4xl max-h-[90vh] overflow-y-auto">
-        <h3 className="font-bold text-lg mb-4">编辑条目</h3>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">名称</label>
-              <input
-                className="input input-bordered"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">分类</label>
-              <input
-                className="input input-bordered"
-                value={form.category ?? ''}
-                onChange={(e) => setForm({ ...form, category: e.target.value || undefined })}
-                placeholder="可选"
-              />
-            </div>
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">关键词（逗号分隔）</label>
-            <input
-              className="input input-bordered font-mono"
-              value={form.keywords ?? ''}
-              onChange={(e) => setForm({ ...form, keywords: e.target.value || undefined })}
-              placeholder="* 表示始终触发"
-            />
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">正则匹配</label>
-            <input
-              className="input input-bordered font-mono"
-              value={form.regex_pattern ?? ''}
-              onChange={(e) => setForm({ ...form, regex_pattern: e.target.value || undefined })}
-              placeholder="可选"
-            />
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">内容</label>
-            <textarea
-              className="textarea textarea-bordered h-48"
-              value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">优先级</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">触发概率</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                step="0.01"
-                min="0"
-                max="1"
-                value={form.probability}
-                onChange={(e) => setForm({ ...form, probability: parseFloat(e.target.value) || 1.0 })}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">注入位置</label>
-              <select
-                className="select select-bordered"
-                value={form.position}
-                onChange={(e) => setForm({ ...form, position: e.target.value as any })}
-              >
-                <option value="before_system">在系统提示词前</option>
-                <option value="after_system">在系统提示词后</option>
-                <option value="last">最后</option>
-              </select>
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">冷却（消息数）</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                min="0"
-                value={form.cooldown_messages}
-                onChange={(e) => setForm({ ...form, cooldown_messages: parseInt(e.target.value) || 0 })}
-              />
-            </div>
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">触发条件（JavaScript 表达式）</label>
-            <textarea
-              className="textarea textarea-bordered font-mono text-sm h-24"
-              value={form.trigger_condition ?? ''}
-              onChange={(e) => setForm({ ...form, trigger_condition: e.target.value || undefined })}
-              placeholder="例如: variables.affection > 50"
-            />
-          </div>
-
-          <div className="flex gap-4 flex-wrap">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.is_active}
-                onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-              />
-              <span className="text-sm">启用</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.use_once}
-                onChange={(e) => setForm({ ...form, use_once: e.target.checked })}
-              />
-              <span className="text-sm">仅触发一次</span>
-            </label>
-          </div>
-        </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,274 +1,347 @@
-import { useState, useEffect } from 'react';
-import { Plus, History, RotateCcw, GitBranch, Calendar, Clock, X, Trash2 } from 'lucide-react';
-import type { Snapshot, SnapshotMessage, SnapshotVariable, BranchInfo, AutoSnapshotRule } from '../../lib/db';
-import { api } from '../../lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { Snapshot, SnapshotType } from '../../lib/db';
 
-interface Props {
+interface SnapshotManagerProps {
   charId?: number;
   roomId?: number;
-  onRestore?: () => void;
+  onSnapshotRestore?: (snapshot: Snapshot) => void;
 }
 
-export function SnapshotManager({ charId, roomId, onRestore }: Props) {
+const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
+  { value: 'auto', label: '自动' },
+  { value: 'manual', label: '手动' },
+  { value: 'milestone', label: '里程碑' },
+];
+
+export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotManagerProps) {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [rules, setRules] = useState<AutoSnapshotRule[]>([]);
-  const [showViewer, setShowViewer] = useState(false);
-  const [viewingSnapshot, setViewingSnapshot] = useState<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] } | null>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
+  const [editingSnapshot, setEditingSnapshot] = useState<Snapshot | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [charId, roomId]);
-
-  const loadData = async () => {
+  const fetchSnapshots = useCallback(async () => {
+    setLoading(true);
     try {
-      const [s, b, r] = await Promise.all([
-        api.snapshots.list(charId, roomId),
-        api.branches.list(charId, roomId),
-        api.autoSnapshotRules.list(charId, roomId)
-      ]);
-      setSnapshots(s);
-      setBranches(b);
-      setRules(r);
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      const res = await fetch(`/api/snapshots?${params}`);
+      const data = await res.json();
+      setSnapshots(data.sort((a: Snapshot, b: Snapshot) => (b.snapshot_order || 0) - (a.snapshot_order || 0)));
     } catch (e) {
-      console.error('Failed to load snapshots', e);
+      console.error('Failed to fetch snapshots:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [charId, roomId]);
 
-  const handleCreateSnapshot = async (name: string, description?: string) => {
-    await api.snapshots.create({ char_id: charId, room_id: roomId, name, description });
-    await loadData();
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  const handleCreate = async () => {
+    try {
+      const res = await fetch('/api/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          char_id: charId,
+          room_id: roomId,
+          name: `快照 ${new Date().toLocaleString()}`,
+          snapshot_type: 'manual',
+        }),
+      });
+      if (res.ok) {
+        fetchSnapshots();
+      }
+    } catch (e) {
+      console.error('Failed to create snapshot:', e);
+    }
   };
 
   const handleRestore = async (snapshot: Snapshot) => {
-    if (confirm(`确定要恢复到快照 "${snapshot.name}" 吗？当前进度将会丢失。`)) {
-      if (snapshot.id) await api.snapshots.restore(snapshot.id);
-      await loadData();
-      onRestore?.();
+    if (!confirm(`确定恢复到快照 "${snapshot.name}"？这将删除此快照之后的所有快照。`)) return;
+    
+    try {
+      const res = await fetch('/api/snapshots-restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: snapshot.id }),
+      });
+      if (res.ok) {
+        onSnapshotRestore?.(snapshot);
+        fetchSnapshots();
+      }
+    } catch (e) {
+      console.error('Failed to restore snapshot:', e);
     }
   };
 
-  const handleView = async (snapshot: Snapshot) => {
-    if (snapshot.id) {
-      const data = await api.snapshots.get(snapshot.id);
-      setViewingSnapshot(data);
-      setShowViewer(true);
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定删除此快照？')) return;
+    try {
+      const res = await fetch(`/api/snapshots?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchSnapshots();
+        if (selectedSnapshot?.id === id) {
+          setSelectedSnapshot(null);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to delete snapshot:', e);
     }
   };
 
-  const handleDelete = async (snapshot: Snapshot) => {
-    if (confirm(`确定要删除快照 "${snapshot.name}" 吗？`)) {
-      if (snapshot.id) await api.snapshots.delete(snapshot.id);
-      await loadData();
+  const handleUpdate = async (snapshot: Snapshot) => {
+    try {
+      const res = await fetch('/api/snapshots', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      });
+      if (res.ok) {
+        fetchSnapshots();
+        setEditingSnapshot(null);
+      }
+    } catch (e) {
+      console.error('Failed to update snapshot:', e);
     }
   };
 
-  if (loading) return <div className="p-4">加载中...</div>;
+  const handleEdit = (snapshot: Snapshot) => {
+    setEditingSnapshot({ ...snapshot });
+  };
+
+  const handleViewDetail = async (snapshot: Snapshot) => {
+    try {
+      const res = await fetch(`/api/snapshots?id=${snapshot.id}`);
+      const data = await res.json();
+      setSelectedSnapshot(data);
+      setShowDetail(true);
+    } catch (e) {
+      console.error('Failed to fetch snapshot detail:', e);
+    }
+  };
+
+  const formatDate = (timestamp?: number) => {
+    if (!timestamp) return '-';
+    return new Date(timestamp).toLocaleString();
+  };
+
+  const getTypeLabel = (type?: SnapshotType) => {
+    return snapshotTypeOptions.find(t => t.value === type)?.label || type || '未知';
+  };
+
+  const getTypeColor = (type?: SnapshotType) => {
+    switch (type) {
+      case 'auto':
+        return 'bg-blue-100 text-blue-800';
+      case 'manual':
+        return 'bg-green-100 text-green-800';
+      case 'milestone':
+        return 'bg-purple-100 text-purple-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full bg-base-200">
-      <div className="p-4 border-b border-base-content/10">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="font-bold text-lg">快照管理</h2>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => setShowCreateDialog(true)}
-          >
-            <Plus size={16} className="mr-1" /> 创建快照
-          </button>
-        </div>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">快照管理</h3>
+        <button
+          onClick={handleCreate}
+          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          创建快照
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="mb-6">
-          <h3 className="font-bold mb-3 flex items-center gap-2">
-            <History size={16} /> 快照
-          </h3>
-          <div className="space-y-2">
-            {snapshots.length === 0 ? (
-              <div className="text-center opacity-60 py-4">还没有快照</div>
-            ) : (
-              snapshots.map(s => (
-                <div key={s.id} className="card bg-base-100 border border-base-content/10">
-                  <div className="card-body p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-bold">{s.name}</h4>
-                        <div className="flex items-center gap-2 text-xs opacity-60 mt-1">
-                          <Calendar size={12} />
-                          {new Date(s.created_at!).toLocaleString()}
-                          <span className="badge badge-sm">{s.snapshot_type}</span>
-                          {s.message_count && <span className="badge badge-sm">{s.message_count} 条消息</span>}
-                        </div>
-                        {s.description && <p className="text-sm opacity-70 mt-1">{s.description}</p>}
-                      </div>
-                      <div className="flex gap-1">
-                        <button className="btn btn-ghost btn-sm" onClick={() => handleView(s)}>查看</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => handleRestore(s)}><RotateCcw size={14} /></button>
-                        <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDelete(s)}><Trash2 size={14} /></button>
-                      </div>
-                    </div>
+      {loading ? (
+        <div className="text-center py-4">加载中...</div>
+      ) : snapshots.length === 0 ? (
+        <div className="text-center py-4 text-gray-500">暂无快照</div>
+      ) : (
+        <div className="space-y-2">
+          {snapshots.map((snapshot, index) => (
+            <div
+              key={snapshot.id}
+              className={`border rounded p-3 ${selectedSnapshot?.id === snapshot.id ? 'border-blue-500 bg-blue-50' : ''}`}
+            >
+              {editingSnapshot?.id === snapshot.id ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editingSnapshot.name}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, name: e.target.value })}
+                    className="w-full px-2 py-1 border rounded"
+                  />
+                  <textarea
+                    value={editingSnapshot.description || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, description: e.target.value })}
+                    placeholder="描述"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={2}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={editingSnapshot.snapshot_type || 'manual'}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, snapshot_type: e.target.value as SnapshotType })}
+                      className="px-2 py-1 border rounded"
+                    >
+                      {snapshotTypeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={editingSnapshot.user_message || ''}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, user_message: e.target.value })}
+                      placeholder="用户消息"
+                      className="px-2 py-1 border rounded"
+                    />
+                  </div>
+                  <textarea
+                    value={editingSnapshot.ai_response || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, ai_response: e.target.value })}
+                    placeholder="AI回复"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleUpdate(editingSnapshot)}
+                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setEditingSnapshot(null)}
+                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      取消
+                    </button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div>
-          <h3 className="font-bold mb-3 flex items-center gap-2">
-            <GitBranch size={16} /> 分支
-          </h3>
-          <div className="space-y-2">
-            {branches.map(b => (
-              <div key={b.id} className="card bg-base-100 border border-base-content/10">
-                <div className="card-body p-4 flex justify-between items-center">
-                  <div>
-                    <h4 className="font-bold">{b.name}</h4>
-                    <div className="text-xs opacity-60">
-                      {new Date(b.created_at).toLocaleString()}
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{snapshot.name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${getTypeColor(snapshot.snapshot_type)}`}>
+                          {getTypeLabel(snapshot.snapshot_type)}
+                        </span>
+                        <span className="text-xs text-gray-500">#{snapshot.snapshot_order || index + 1}</span>
+                      </div>
+                      <div className="text-sm text-gray-500">{formatDate(snapshot.created_at)}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleViewDetail(snapshot)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        详情
+                      </button>
+                      <button
+                        onClick={() => handleEdit(snapshot)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleRestore(snapshot)}
+                        className="px-2 py-1 text-sm bg-yellow-100 rounded hover:bg-yellow-200"
+                      >
+                        回滚
+                      </button>
+                      <button
+                        onClick={() => handleDelete(snapshot.id!)}
+                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
+                      >
+                        删除
+                      </button>
                     </div>
                   </div>
-                  <button className="btn btn-ghost btn-sm">切换</button>
+                  {snapshot.description && (
+                    <div className="text-sm text-gray-600">{snapshot.description}</div>
+                  )}
+                  {(snapshot.user_message || snapshot.ai_response) && (
+                    <div className="text-sm text-gray-500 space-y-1">
+                      {snapshot.user_message && (
+                        <div className="truncate">
+                          <span className="font-medium">用户:</span> {snapshot.user_message}
+                        </div>
+                      )}
+                      {snapshot.ai_response && (
+                        <div className="truncate">
+                          <span className="font-medium">AI:</span> {snapshot.ai_response.substring(0, 100)}...
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="text-xs text-gray-400">
+                    消息数: {snapshot.message_count || 0}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showDetail && selectedSnapshot && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="text-lg font-semibold">快照详情</h4>
+              <button
+                onClick={() => setShowDetail(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="font-medium">名称</div>
+                <div>{selectedSnapshot.name}</div>
+              </div>
+              {selectedSnapshot.description && (
+                <div>
+                  <div className="font-medium">描述</div>
+                  <div>{selectedSnapshot.description}</div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="font-medium">类型</div>
+                  <div>{getTypeLabel(selectedSnapshot.snapshot_type)}</div>
+                </div>
+                <div>
+                  <div className="font-medium">创建时间</div>
+                  <div>{formatDate(selectedSnapshot.created_at)}</div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {showViewer && viewingSnapshot && (
-        <SnapshotViewer
-          snapshot={viewingSnapshot.snapshot}
-          messages={viewingSnapshot.messages}
-          variables={viewingSnapshot.variables}
-          onClose={() => { setShowViewer(false); setViewingSnapshot(null); }}
-          onRestore={() => handleRestore(viewingSnapshot.snapshot)}
-        />
-      )}
-
-      {showCreateDialog && (
-        <CreateSnapshotDialog
-          onClose={() => setShowCreateDialog(false)}
-          onCreate={async (name, desc) => {
-            await handleCreateSnapshot(name, desc);
-            setShowCreateDialog(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function SnapshotViewer({
-  snapshot,
-  messages,
-  variables,
-  onClose,
-  onRestore
-}: {
-  snapshot: Snapshot;
-  messages: SnapshotMessage[];
-  variables: SnapshotVariable[];
-  onClose: () => void;
-  onRestore: () => void;
-}) {
-  const [activeTab, setActiveTab] = useState<'messages' | 'variables'>('messages');
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center border-b border-base-content/10 pb-4 mb-4">
-          <h3 className="font-bold text-lg">{snapshot.name}</h3>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}><X size={18} /></button>
-        </div>
-
-        <div className="tabs tabs-boxed mb-4">
-          <button className={`tab ${activeTab === 'messages' ? 'tab-active' : ''}`} onClick={() => setActiveTab('messages')}>
-            消息 ({messages.length})
-          </button>
-          <button className={`tab ${activeTab === 'variables' ? 'tab-active' : ''}`} onClick={() => setActiveTab('variables')}>
-            变量 ({variables.length})
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {activeTab === 'messages' ? (
-            <div className="space-y-3">
-              {messages.map((m, i) => (
-                <div key={i} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'}`}>
-                  <div className="chat-bubble text-sm">{m.content}</div>
+              {selectedSnapshot.user_message && (
+                <div>
+                  <div className="font-medium">用户消息</div>
+                  <div className="bg-gray-100 p-2 rounded">{selectedSnapshot.user_message}</div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {variables.map((v, i) => (
-                <div key={i} className="card bg-base-200 p-3">
-                  <div className="flex justify-between">
-                    <span className="font-bold">{v.key}</span>
-                    <span className="font-mono">{JSON.stringify(v.value)}</span>
-                  </div>
+              )}
+              {selectedSnapshot.ai_response && (
+                <div>
+                  <div className="font-medium">AI回复</div>
+                  <div className="bg-gray-100 p-2 rounded whitespace-pre-wrap">{selectedSnapshot.ai_response}</div>
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="modal-action pt-4 border-t border-base-content/10 mt-4">
-          <button className="btn" onClick={onClose}>关闭</button>
-          <button className="btn btn-primary" onClick={onRestore}>恢复此快照</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreateSnapshotDialog({
-  onClose,
-  onCreate
-}: {
-  onClose: () => void;
-  onCreate: (name: string, description?: string) => void;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-
-  const defaultName = `快照 ${new Date().toLocaleString()}`;
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box">
-        <h3 className="font-bold text-lg mb-4">创建快照</h3>
-        <div className="space-y-4">
-          <div className="form-control">
-            <label className="label font-bold text-sm">名称</label>
-            <input
-              className="input input-bordered"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={defaultName}
-            />
-          </div>
-          <div className="form-control">
-            <label className="label font-bold text-sm">描述</label>
-            <textarea
-              className="textarea textarea-bordered"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="可选"
-            />
           </div>
         </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onCreate(name || defaultName, description)}>创建</button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

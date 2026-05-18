@@ -2,7 +2,6 @@
 
 simplerp-web/
 ├── .gitignore
-├── .wrangler
 ├── README.md
 ├── eslint.config.js
 ├── functions
@@ -71,7 +70,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-
+.kiro
 node_modules
 dist
 dist-ssr
@@ -2223,6 +2222,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 ## File: functions\api\snapshots-restore.ts
 
 ```ts
+import { D1Database } from '@cloudflare/workers-types';
+
 interface Env {
   DB: D1Database;
 }
@@ -2230,52 +2231,71 @@ interface Env {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
-    const { id } = body;
+    const id = body.id;
+    if (!id) return new Response('Missing snapshot id', { status: 400 });
 
-    if (!id) return new Response('Missing id', { status: 400 });
-
-    const snapshot = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
+    // 1. 获取快照元数据
+    const snapshot: any = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
     if (!snapshot) return new Response('Snapshot not found', { status: 404 });
 
-    const { results: messages } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-    const { results: variables } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
-
+    // 单人角色存档回滚
     if (snapshot.char_id) {
-      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(Number(snapshot.char_id)).run();
-      for (const msg of messages || []) {
+      // (1) 清空当前角色主聊天记录 (不影响群聊记录)
+      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(snapshot.char_id).run();
+      
+      // (2) 恢复聊天记录
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+      for (const m of msgs || []) {
+        const msg: any = m;
         await context.env.DB.prepare(
-          'INSERT INTO messages (char_id, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(snapshot.char_id, msg.role, msg.content, msg.image, msg.timestamp, id).run();
+          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          snapshot.char_id, 
+          msg.role || 'user', 
+          msg.content || '', 
+          msg.image || null, // 强制防 undefined 崩溃
+          msg.timestamp || Date.now()
+        ).run();
       }
 
-      for (const v of variables || []) {
-        if (v.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
+      // (3) 恢复变量状态
+      const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
+      for (const v of vars || []) {
+        const sv: any = v;
+        if (sv.variable_id) {
+            // 直接更新回原变量 ID
+            await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+                .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
         }
+      }
+    } 
+    // 群聊房间存档回滚
+    else if (snapshot.room_id) {
+      // (1) 清空当前群聊主聊天记录
+      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
+      
+      // (2) 恢复群聊记录
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+      for (const m of msgs || []) {
+        const msg: any = m;
+        await context.env.DB.prepare(
+          'INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(
+          snapshot.room_id, 
+          msg.char_id || null, 
+          msg.role || 'user', 
+          msg.content || '', 
+          msg.image || null, // 强制防 undefined 崩溃
+          msg.timestamp || Date.now()
+        ).run();
       }
     }
 
-    if (snapshot.room_id) {
-      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(Number(snapshot.room_id)).run();
-      for (const msg of messages || []) {
-        await context.env.DB.prepare(
-          'INSERT INTO room_messages (room_id, char_id, sender_type, role, content, image, timestamp, snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(snapshot.room_id, msg.char_id || null, msg.char_id ? 'agent' : 'user', msg.role, msg.content, msg.image, msg.timestamp, id).run();
-      }
-
-      for (const v of variables || []) {
-        if (v.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ? WHERE id = ?').bind(v.value, v.variable_id).run();
-        }
-      }
-    }
-
-    return new Response('Restored');
+    return Response.json({ success: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 };
-
 ```
 
 
@@ -2284,216 +2304,93 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 ```ts
 import { D1Database } from '@cloudflare/workers-types';
 
-export interface Env {
-  DB: D1Database;
-}
+interface Env { DB: D1Database; }
 
-export interface SnapshotData {
-  id?: number;
-  char_id?: number;
-  room_id?: number;
-  name: string;
-  description?: string;
-  snapshot_order?: number;
-  user_message?: string;
-  ai_response?: string;
-  created_at?: number;
-}
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  try {
+    const url = new URL(context.request.url);
+    const charId = url.searchParams.get('char_id');
+    const roomId = url.searchParams.get('room_id');
+    const id = url.searchParams.get('id');
 
-export interface SnapshotMessageData {
-  snapshot_id: number;
-  char_id?: number;
-  room_id?: number;
-  role: string;
-  content: string;
-  image?: string;
-  timestamp?: number;
-  order_index: number;
-}
-
-export interface SnapshotVariableData {
-  snapshot_id: number;
-  variable_id?: number;
-  key: string;
-  value: string;
-  type?: string;
-}
-
-export async function listSnapshots(db: D1Database, charId?: number, roomId?: number) {
-  let query = 'SELECT * FROM snapshots WHERE 1=1';
-  const params: any[] = [];
-  
-  if (charId) {
-    query += ' AND char_id = ?';
-    params.push(charId);
-  }
-  if (roomId) {
-    query += ' AND room_id = ?';
-    params.push(roomId);
-  }
-  
-  query += ' ORDER BY snapshot_order ASC';
-  
-  const { results } = await db.prepare(query).bind(...params).all();
-  return results;
-}
-
-export async function getSnapshot(db: D1Database, id: number) {
-  const { results } = await db.prepare('SELECT * FROM snapshots WHERE id = ?').bind(id).all();
-  return results[0] || null;
-}
-
-export async function createSnapshot(db: D1Database, data: SnapshotData) {
-  const now = Date.now();
-  
-  const maxOrderResult = await db.prepare(
-    'SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE char_id = ?'
-  ).bind(data.char_id).first();
-  
-  const snapshotOrder = (maxOrderResult?.max_order || 0) + 1;
-  
-  const { results } = await db.prepare(`
-    INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, user_message, ai_response, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    data.char_id,
-    data.room_id,
-    data.name,
-    data.description,
-    snapshotOrder,
-    data.user_message,
-    data.ai_response,
-    now
-  ).run();
-  
-  return { id: results.lastInsertRowid, ...data, snapshot_order: snapshotOrder, created_at: now };
-}
-
-export async function updateSnapshot(db: D1Database, id: number, updates: Partial<SnapshotData>) {
-  const setClause = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  const values = Object.values(updates);
-  
-  await db.prepare(`UPDATE snapshots SET ${setClause} WHERE id = ?`)
-    .bind(...values, id).run();
-  
-  return getSnapshot(db, id);
-}
-
-export async function deleteSnapshot(db: D1Database, id: number) {
-  const snapshot = await getSnapshot(db, id);
-  if (!snapshot) return false;
-  
-  await db.transaction(async (tx) => {
-    await tx.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(id).run();
-    await tx.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(id).run();
-    
-    const { results } = await tx.prepare(
-      'SELECT snapshot_order FROM snapshots WHERE id = ?'
-    ).bind(id).first();
-    
-    const orderToDelete = results?.snapshot_order;
-    
-    await tx.prepare('DELETE FROM snapshots WHERE id = ?').bind(id).run();
-    
-    if (orderToDelete !== undefined) {
-      await tx.prepare(
-        'UPDATE snapshots SET snapshot_order = snapshot_order - 1 WHERE snapshot_order > ?'
-      ).bind(orderToDelete).run();
+    if (id) {
+      const snapshot = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
+      const { results: messages } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+      const { results: variables } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
+      return Response.json({ snapshot, messages, variables });
     }
-  });
-  
-  return true;
-}
 
-export async function restoreSnapshot(db: D1Database, id: number) {
-  const snapshot = await getSnapshot(db, id);
-  if (!snapshot) return false;
-  
-  const charId = snapshot.char_id;
-  
-  await db.transaction(async (tx) => {
-    await tx.prepare('DELETE FROM messages WHERE char_id = ?').bind(charId).run();
-    
-    const { results: messages } = await tx.prepare(
-      'SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC'
-    ).bind(id).all();
-    
-    for (const msg of messages) {
-      await tx.prepare(`
-        INSERT INTO messages (char_id, role, content, image, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(charId, msg.role, msg.content, msg.image, msg.timestamp).run();
-    }
-    
-    await tx.prepare('DELETE FROM variables WHERE char_id = ?').bind(charId).run();
-    
-    const { results: variables } = await tx.prepare(
-      'SELECT * FROM snapshot_variables WHERE snapshot_id = ?'
-    ).bind(id).all();
-    
-    for (const v of variables) {
-      await tx.prepare(`
-        INSERT INTO variables (char_id, name, key, type, value)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(charId, v.key, v.key, v.type, v.value).run();
-    }
-    
-    const orderToRestore = snapshot.snapshot_order;
-    await tx.prepare(
-      'DELETE FROM snapshots WHERE char_id = ? AND snapshot_order > ?'
-    ).bind(charId, orderToRestore).run();
-  });
-  
-  return true;
-}
+    let query = 'SELECT * FROM snapshots WHERE 1=1';
+    const params: any[] = [];
+    if (charId && charId !== 'undefined' && charId !== 'null') { query += ' AND char_id = ?'; params.push(Number(charId)); }
+    if (roomId && roomId !== 'undefined' && roomId !== 'null') { query += ' AND room_id = ?'; params.push(Number(roomId)); }
+    query += ' ORDER BY snapshot_order ASC';
 
-export async function addSnapshotMessages(db: D1Database, messages: SnapshotMessageData[]) {
-  for (const msg of messages) {
-    await db.prepare(`
-      INSERT INTO snapshot_messages (snapshot_id, char_id, room_id, role, content, image, timestamp, order_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      msg.snapshot_id,
-      msg.char_id,
-      msg.room_id,
-      msg.role,
-      msg.content,
-      msg.image,
-      msg.timestamp,
-      msg.order_index
-    ).run();
+    const { results } = await context.env.DB.prepare(query).bind(...params).all();
+    return Response.json(results || []);
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
-}
+};
 
-export async function addSnapshotVariables(db: D1Database, variables: SnapshotVariableData[]) {
-  for (const v of variables) {
-    await db.prepare(`
-      INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(
-      v.snapshot_id,
-      v.variable_id,
-      v.key,
-      v.value,
-      v.type
-    ).run();
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const now = Date.now();
+
+    const maxOrderRes = await context.env.DB.prepare('SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE char_id = ? OR room_id = ?')
+      .bind(body.char_id || null, body.room_id || null).first();
+    const snapshotOrder = ((maxOrderRes?.max_order as number) || 0) + 1;
+
+    const { meta } = await context.env.DB.prepare(
+      `INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(body.char_id || null, body.room_id || null, body.name, body.description || null, snapshotOrder, now).run();
+    
+    const snapshotId = meta.last_row_id as number;
+
+    if (body.char_id) {
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC').bind(body.char_id).all();
+      for (let i = 0; i < (msgs?.length || 0); i++) {
+        const m: any = msgs[i];
+        await context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, body.char_id, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
+      }
+      
+      const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(body.char_id).all();
+      for (const v of vars || []) {
+        await context.env.DB.prepare(
+          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+        ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
+      }
+    } else if (body.room_id) {
+      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(body.room_id).all();
+      for (let i = 0; i < (msgs?.length || 0); i++) {
+        const m: any = msgs[i];
+        await context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, body.room_id, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
+      }
+    }
+
+    return Response.json({ id: snapshotId });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
-}
+};
 
-export async function getSnapshotMessages(db: D1Database, snapshotId: number) {
-  const { results } = await db.prepare(
-    'SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC'
-  ).bind(snapshotId).all();
-  return results;
-}
-
-export async function getSnapshotVariables(db: D1Database, snapshotId: number) {
-  const { results } = await db.prepare(
-    'SELECT * FROM snapshot_variables WHERE snapshot_id = ?'
-  ).bind(snapshotId).all();
-  return results;
-}
-
+export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  try {
+    const id = new URL(context.request.url).searchParams.get('id');
+    if (!id) return new Response('Missing id', { status: 400 });
+    await context.env.DB.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(Number(id)).run();
+    await context.env.DB.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).run();
+    await context.env.DB.prepare('DELETE FROM snapshots WHERE id = ?').bind(Number(id)).run();
+    return new Response('Deleted');
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+  }
+};
 ```
 
 
@@ -2762,8 +2659,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 ## File: functions\api\variables.ts
 
 ```ts
+import { D1Database } from '@cloudflare/workers-types';
+
 interface Env {
   DB: D1Database;
+}
+
+// 安全解析函数，防止单一数据格式错误导致整个列表崩溃
+function safeParse(val: any) {
+  if (val == null) return null;
+  try {
+    return typeof val === 'string' ? JSON.parse(val) : val;
+  } catch {
+    return val; // 如果解析失败，直接原样返回
+  }
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -2773,21 +2682,31 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const charId = url.searchParams.get('char_id');
     const roomId = url.searchParams.get('room_id');
 
+    // 获取单条详情
     if (id) {
       const result = await context.env.DB.prepare('SELECT * FROM variables WHERE id = ?').bind(Number(id)).first();
       if (!result) return new Response('Not found', { status: 404 });
-      return Response.json({ ...result, value: result.value ? JSON.parse(result.value) : null });
+      return Response.json({ ...result, value: safeParse(result.value) });
     }
 
+    // 获取列表
     let query = 'SELECT * FROM variables WHERE 1=1';
     const params: any[] = [];
-    if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
-    if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
-    if (!charId && !roomId) { query += ' AND char_id IS NULL AND room_id IS NULL'; }
+    
+    // 过滤可能传过来的字符串 "undefined" 或 "null"
+    if (charId && charId !== 'undefined' && charId !== 'null') { 
+      query += ' AND char_id = ?'; 
+      params.push(Number(charId)); 
+    }
+    if (roomId && roomId !== 'undefined' && roomId !== 'null') { 
+      query += ' AND room_id = ?'; 
+      params.push(Number(roomId)); 
+    }
+    
     query += ' ORDER BY created_at DESC';
 
     const { results } = await context.env.DB.prepare(query).bind(...params).all();
-    return Response.json(results?.map(r => ({ ...r, value: r.value ? JSON.parse(r.value) : null })) || []);
+    return Response.json(results?.map(r => ({ ...r, value: safeParse(r.value) })) || []);
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
@@ -2795,35 +2714,27 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
-    const url = new URL(context.request.url);
-    const action = url.searchParams.get('action');
-
-    if (action === 'bulk') {
-      const { updates } = await context.request.json();
-      for (const update of updates) {
-        await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-          .bind(JSON.stringify(update.value), Date.now(), update.id).run();
-      }
-      return new Response('OK');
-    }
-
     const body: any = await context.request.json();
     const now = Date.now();
+    
+    // 确保 value 在入库前转换为合适的字符串
+    const valStr = typeof body.value === 'object' ? JSON.stringify(body.value) : String(body.value ?? '');
+
     const { meta } = await context.env.DB.prepare(
-      'INSERT INTO variables (char_id, room_id, name, key, type, value, min_value, max_value, step, is_persistent, is_visible, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      `INSERT INTO variables (char_id, room_id, name, key, type, value, is_persistent, is_visible, step, min_value, max_value, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       body.char_id || null,
       body.room_id || null,
-      body.name,
-      body.key,
-      body.type,
-      body.value !== undefined ? JSON.stringify(body.value) : null,
-      body.min_value || null,
-      body.max_value || null,
-      body.step || null,
+      body.name || '新变量',
+      body.key || 'new_var',
+      body.type || 'number', // 默认设为数字型
+      valStr,
       body.is_persistent !== false ? 1 : 0,
       body.is_visible !== false ? 1 : 0,
-      body.description || null,
+      body.step ?? null,
+      body.min_value ?? null,
+      body.max_value ?? null,
       now,
       now
     ).run();
@@ -2837,31 +2748,35 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
-    const { id, ...updates } = body;
-
+    const url = new URL(context.request.url);
+    const id = url.searchParams.get('id');
+    
     if (!id) return new Response('Missing id', { status: 400 });
 
-    const setFields: string[] = [];
+    const updates: string[] = [];
     const params: any[] = [];
 
-    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
-    if (updates.key !== undefined) { setFields.push('key = ?'); params.push(updates.key); }
-    if (updates.type !== undefined) { setFields.push('type = ?'); params.push(updates.type); }
-    if (updates.value !== undefined) { setFields.push('value = ?'); params.push(JSON.stringify(updates.value)); }
-    if (updates.min_value !== undefined) { setFields.push('min_value = ?'); params.push(updates.min_value); }
-    if (updates.max_value !== undefined) { setFields.push('max_value = ?'); params.push(updates.max_value); }
-    if (updates.step !== undefined) { setFields.push('step = ?'); params.push(updates.step); }
-    if (updates.is_persistent !== undefined) { setFields.push('is_persistent = ?'); params.push(updates.is_persistent ? 1 : 0); }
-    if (updates.is_visible !== undefined) { setFields.push('is_visible = ?'); params.push(updates.is_visible ? 1 : 0); }
-    if (updates.description !== undefined) { setFields.push('description = ?'); params.push(updates.description); }
+    const fields = ['name', 'key', 'type', 'is_persistent', 'is_visible', 'step', 'min_value', 'max_value'];
+    for (const f of fields) {
+      if (body[f] !== undefined) {
+        updates.push(`${f} = ?`);
+        params.push(typeof body[f] === 'boolean' ? (body[f] ? 1 : 0) : body[f]);
+      }
+    }
 
-    setFields.push('updated_at = ?');
+    if (body.value !== undefined) {
+      updates.push(`value = ?`);
+      params.push(typeof body.value === 'object' ? JSON.stringify(body.value) : String(body.value));
+    }
+
+    if (updates.length === 0) return Response.json({ success: true });
+
+    updates.push('updated_at = ?');
     params.push(Date.now());
+    params.push(Number(id)); // WHERE id = ?
 
-    params.push(id);
-
-    await context.env.DB.prepare(`UPDATE variables SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
-    return new Response('Updated');
+    await context.env.DB.prepare(`UPDATE variables SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+    return Response.json({ success: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
@@ -2869,18 +2784,18 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   try {
-    const url = new URL(context.request.url);
-    const id = url.searchParams.get('id');
+    const id = new URL(context.request.url).searchParams.get('id');
     if (!id) return new Response('Missing id', { status: 400 });
-
+    
+    // 级联删除相关的阶段(Stages)配置
     await context.env.DB.prepare('DELETE FROM variable_stages WHERE variable_id = ?').bind(Number(id)).run();
     await context.env.DB.prepare('DELETE FROM variables WHERE id = ?').bind(Number(id)).run();
-    return new Response('Deleted');
+    
+    return Response.json({ success: true });
   } catch (e: any) {
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
-
 ```
 
 
@@ -2888,8 +2803,11 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
 ```tsx
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
+import { api, type Message, type Character, type Settings, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage, type Variable, type VariableStage, type VariableThoughtConfig } from './lib/db';
 import { LLMClient } from './lib/llm';
+import { VariableEngine } from './lib/variable-engine';
+import { LorebookEngine } from './lib/lorebook-engine';
+import { replaceVariables as replaceBuiltInVariables } from './lib/variables';
 import { ImageStudio } from './components/ImageStudio';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -2897,7 +2815,6 @@ import {
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
   BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy, Edit
 } from 'lucide-react';
-import { replaceVariables } from './lib/variables';
 
 function App() {
   const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
@@ -2921,6 +2838,12 @@ function App() {
   const [settings, setSettings] = useState<Settings>();
   const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
+  // 【新增】全局变量与思考引擎状态
+  const [globalVariables, setGlobalVariables] = useState<Variable[]>([]);
+  const [globalStages, setGlobalStages] = useState<VariableStage[]>([]);
+  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
+  const [turnCount, setTurnCount] = useState(0);
+
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -3007,7 +2930,6 @@ function App() {
     fetchPresetModels(settings?.image_preset_id);
     fetchPresetModels(settings?.summary_preset_id);
     fetchPresetModels(settings?.sd_prompt_preset_id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSettings]);
 
   useEffect(() => {
@@ -3021,6 +2943,7 @@ function App() {
     loadCharData();
   }, [showCharEdit, selectedCharId, charEditTab]);
 
+  // 在 src/App.tsx 中，找到 loadCharData 函数并替换为：
   const loadCharData = async () => {
     try {
       const [vars, snaps] = await Promise.all([
@@ -3029,6 +2952,17 @@ function App() {
       ]);
       setCharVariables(vars);
       setCharSnapshots(snaps);
+      
+      // 【核心修复】创建变量后，立即同步更新给对话引擎所在的全局状态！
+      setGlobalVariables(vars);
+      let allStages: VariableStage[] = [];
+      for (const v of vars) {
+        if (v.id) {
+          const st = await api.variableStages.list(v.id);
+          allStages = [...allStages, ...st];
+        }
+      }
+      setGlobalStages(allStages);
     } catch (e) {
       console.error('Failed to load char data', e);
     }
@@ -3137,12 +3071,28 @@ function App() {
       if(settings) await api.settings.update({ ...settings, active_model_id: modelId });
   };
 
+  // 【核心修改】在此处装载全量变量数据、引擎配置和世界书
   useEffect(() => {
     setMessages([]);
     setRoomMessages([]);
     if (viewMode === 'char' && selectedCharId) {
       api.messages.list(selectedCharId).then(setMessages);
       loadLorebookEntries();
+      
+      api.variables.list(selectedCharId).then(async vars => {
+        setGlobalVariables(vars);
+        let allStages: VariableStage[] = [];
+        for (const v of vars) {
+          if (v.id) {
+            const st = await api.variableStages.list(v.id);
+            allStages = [...allStages, ...st];
+          }
+        }
+        setGlobalStages(allStages);
+      });
+      api.variableThoughtConfig.get(selectedCharId).then(setThoughtConfig);
+      setTurnCount(0); // 重置会话计数器
+
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
         setRoomMembers(m);
@@ -3208,24 +3158,53 @@ function App() {
     alert('房间配置已保存');
   };
 
+  // 【核心修改】重写单人 AI 触发逻辑，集成引擎装配
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
-    if (!activePresetId || !activeModel) { return alert("请先在顶部导航栏选择 API 预设和模型！"); }
+    if (!activePresetId || !activeModel) return alert("请先在顶部导航栏选择 API 预设和模型！");
     const currentPreset = presets.find(p => p.id === activePresetId);
-    if (!currentPreset) { return alert("无效的 API 预设"); }
+    if (!currentPreset) return alert("无效的 API 预设");
+
+    // 1. 初始化引擎
+    const varEngine = new VariableEngine(globalVariables, globalStages);
+    const loreEngine = new LorebookEngine(lorebookEntries);
+    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
+
+    // 2. 世界书动态扫描与注入组装
+    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, {}, {});
+    const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
+
+    // 3. 获取变量阶段的心理/行为暗示
+    const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
+
+    // 4. 构建防串戏与人设基础的 System Prompt
+    let basePrompt = char.description;
+    if (char.summary) basePrompt += `\n\n[个人长期记忆]:\n${char.summary}`;
+    if (stagePrompts) basePrompt += `\n\n[当前状态与心理防线]:\n${stagePrompts}`;
+
+    // 5. 宏替换：先替换自定义变量（来自 VariableEngine），再替换内置系统变量 (如 {{user}}, {{time}})
+    const rawSystemContent = 
+      (lorebookInjections.beforeSystem ? lorebookInjections.beforeSystem + '\n---\n' : '') +
+      basePrompt +
+      (lorebookInjections.afterSystem ? '\n---\n' + lorebookInjections.afterSystem : '');
+      
+    const fullSystemContent = replaceBuiltInVariables(
+      varEngine.replaceVariables(rawSystemContent, settings, char),
+      settings, char
+    );
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
     let fullContent = "";
 
     try {
-      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, lorebookEntries, undefined, controller);
+      // 传入组装好的完整 System Prompt
+      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, fullSystemContent, undefined, controller);
       for await (const chunk of stream) {
         fullContent += chunk;
         setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, content: fullContent } : m));
@@ -3237,6 +3216,25 @@ function App() {
           try {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
+
+            // 【核心修改】触发后台自动分析更新变量机制
+            setTurnCount(prev => {
+              const nextCount = prev + 1;
+              if (thoughtConfig?.is_auto_update && thoughtConfig.update_interval && nextCount >= thoughtConfig.update_interval) {
+                // 静默触发分析
+                api.variableThoughtConfig.triggerThought({
+                  char_id: char.id,
+                  history: currentHistory.slice(-10), // 取近10条用于分析
+                  user_input: textOverride
+                }).then(() => {
+                  // 分析完成后静默刷新前端变量展示状态
+                  api.variables.list(char.id).then(setGlobalVariables);
+                }).catch(console.error);
+                return 0; // 重置计数器
+              }
+              return nextCount;
+            });
+
           } catch (dbErr) { }
       } else {
           setMessages(prev => prev.filter(m => m.timestamp !== tempTs));
@@ -3401,12 +3399,10 @@ function App() {
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
-    // 使用 fixed inset-0 彻底锁死外层框架，防止移动端滚动溢出
     <div className="drawer md:drawer-open fixed inset-0 w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
         
-        {/* 针对移动端优化的 Navbar */}
         <div className="bg-base-100 border-b border-base-300 safe-pt z-20 shrink-0">
           <div className="navbar min-h-[3rem] px-2 md:px-4">
             <div className="flex-none md:hidden">
@@ -3417,7 +3413,6 @@ function App() {
             </div>
           </div>
           
-          {/* 功能栏：移动端允许横向滑动，不再强制隐藏 */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-3 pb-2 w-full">
             <select className="select select-bordered select-xs md:select-sm shrink-0" value={activePresetId || ""} onChange={(e) => handlePresetChange(e.target.value)}>
                 <option value="" disabled>选择源...</option>
@@ -3547,7 +3542,7 @@ function App() {
                       ) : (
                         <div className="prose prose-sm break-words">
                           <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                            {replaceVariables(
+                            {replaceBuiltInVariables(
                               m.content, 
                               settings || {}, 
                               viewMode === 'char' ? characters.find(c => c.id === selectedCharId) : undefined
@@ -3564,7 +3559,6 @@ function App() {
               <div ref={bottomRef} className="h-20" />
             </div>
 
-            {/* Input Area: 适配安全区与字体大小 */}
             <div className="p-2 md:p-4 bg-base-100 border-t border-base-300 safe-pb shrink-0">
               <div className="max-w-4xl mx-auto flex flex-col gap-2">
                 {viewMode === 'group' && selectedRoomId && (
@@ -3577,7 +3571,6 @@ function App() {
                 )}
                 <div className="flex gap-2 items-end bg-base-200 p-1.5 md:p-2 rounded-2xl shadow-inner border border-base-300">
                   <button className="btn btn-circle btn-ghost btn-sm text-accent shrink-0 mb-1" onClick={()=>{setGenPrompt(""); setShowGenModal(true)}}><ImageIcon size={22}/></button>
-                  {/* 使用 text-base 防止 iOS 聚焦放大 */}
                   <textarea 
                     ref={inputRef} 
                     className="textarea textarea-ghost flex-1 min-h-[2.5rem] max-h-32 md:max-h-48 resize-none py-2 px-1 focus:outline-none text-base leading-relaxed" 
@@ -3957,7 +3950,6 @@ function App() {
 }
 
 export default App;
-
 ```
 
 
@@ -5920,8 +5912,7 @@ export const api = {
 ## File: src\lib\llm.ts
 
 ```ts
-﻿import type { Character, Settings, Message, LorebookEntry, ApiMode } from './db';
-import { replaceVariables } from './variables';
+﻿import type { Character, Settings, Message, ApiMode } from './db';
 
 export class LLMClient {
   private apiBase: string;
@@ -5988,21 +5979,6 @@ export class LLMClient {
     }
   }
 
-  private scanLorebook(currentInput: string, history: Message[], entries: LorebookEntry[]): string {
-  if (!entries || entries.length === 0) return '';
-    const contextText = (currentInput + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
-    const hits = entries.filter((e: LorebookEntry) => {
-      if (!e.isActive || !e.keywords) return false;
-      if (e.keywords.trim() === '*') return true;
-      return e.keywords.split(/[,，\n]/).some((k: string) => {
-        const trimmedK = k.trim().toLowerCase();
-        return trimmedK.length > 0 && contextText.includes(trimmedK);
-      });
-    });
-    if (hits.length === 0) return '';
-    return `\n\n### [WORLD SETTING / CRITICAL RULES]\n${hits.map((h: LorebookEntry) => h.content).join('\n---\n')}\n`;
-  }
-
   private extractStreamText(payload: any): string {
     if (!payload) return '';
 
@@ -6066,7 +6042,7 @@ export class LLMClient {
     userInputs: string,
     settings: Settings,
     modelName: string,
-    lorebookEntries: LorebookEntry[] = [],
+    systemContent: string, // [修改] 直接接收外部组装好的完整 System Prompt
     groupCtx?: any,
     controller?: AbortController,
   ) {
@@ -6078,15 +6054,6 @@ export class LLMClient {
     const isGroupMode = !!groupCtx;
     const stopMarker = '惟';
     const playerDisplayName = settings.user_name || 'User';
-
-    let basePrompt = char.description + (char.summary ? `\n\n[Long-term Memory Archive]:\n${char.summary}` : '');
-    const lorebookInjection = this.scanLorebook(userInputs, history, lorebookEntries);
-
-    if (isGroupMode) {
-      basePrompt = `【剧场模式】身份：[${char.name}]，玩家：[${playerDisplayName}]。必须以 "${stopMarker}" 结束回复。\n${basePrompt}`;
-    }
-
-    const fullSystemContent = replaceVariables(basePrompt + lorebookInjection, settings, char);
 
     const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
     history.forEach((m: Message) => {
@@ -6102,8 +6069,8 @@ export class LLMClient {
       chatMessages.push({
         role: 'user',
         content: isGroupMode
-          ? `(Input: ${playerDisplayName}) -> ${replaceVariables(userInputs, settings, char)}`
-          : replaceVariables(userInputs, settings, char),
+          ? `(Input: ${playerDisplayName}) -> ${userInputs}`
+          : userInputs,
       });
     }
 
@@ -6118,7 +6085,7 @@ export class LLMClient {
           apiKey: this.apiKey,
           mode: this.mode,
           model: modelName,
-          systemContent: fullSystemContent,
+          systemContent: systemContent, // 使用传入的完整 Prompt
           chatMessages,
           temperature: settings.temperature || 0.8,
           stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],
@@ -6168,7 +6135,6 @@ ${facts}
     return await this.createTextCompletion(modelName, '你是精简且客观的剧情总结助手。', prompt, 0.3);
   }
 }
-
 ```
 
 

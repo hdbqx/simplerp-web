@@ -1,8 +1,42 @@
 -- ============================================
--- SimpleRP Web - Optimized Database Schema v3.1
+-- SimpleRP Web - Migration Script v3.1
+-- 安全迁移：先删除旧表，再创建新表
 -- ============================================
 
--- 1. 角色表
+-- 删除旧版本表（确保全新创建）
+DROP TABLE IF EXISTS lorebook;
+DROP TABLE IF EXISTS auto_snapshot_rules;
+DROP TABLE IF EXISTS lorebook_v2;
+DROP TABLE IF EXISTS variables;
+DROP TABLE IF EXISTS variable_stages;
+DROP TABLE IF EXISTS variable_thought_config;
+DROP TABLE IF EXISTS snapshots;
+DROP TABLE IF EXISTS snapshot_messages;
+DROP TABLE IF EXISTS snapshot_variables;
+DROP TABLE IF EXISTS message_edits;
+DROP TABLE IF EXISTS lorebook_groups;
+
+-- 删除旧索引
+DROP INDEX IF EXISTS idx_variables_char_id;
+DROP INDEX IF EXISTS idx_variables_room_id;
+DROP INDEX IF EXISTS idx_variables_key;
+DROP INDEX IF EXISTS idx_variable_stages_variable_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_char_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_room_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_group;
+DROP INDEX IF EXISTS idx_lorebook_v2_is_constant;
+DROP INDEX IF EXISTS idx_snapshots_char_id;
+DROP INDEX IF EXISTS idx_snapshots_room_id;
+DROP INDEX IF EXISTS idx_snapshots_order;
+DROP INDEX IF EXISTS idx_snapshots_room_order;
+DROP INDEX IF EXISTS idx_snapshot_messages_snapshot_id;
+DROP INDEX IF EXISTS idx_snapshot_variables_snapshot_id;
+DROP INDEX IF EXISTS idx_lorebook_groups_char_id;
+
+-- ============================================
+-- 基础表结构（保持不变）
+-- ============================================
+
 CREATE TABLE IF NOT EXISTS characters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -12,7 +46,6 @@ CREATE TABLE IF NOT EXISTS characters (
     created_at INTEGER
 );
 
--- 2. 消息表（角色私聊）
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
@@ -23,13 +56,11 @@ CREATE TABLE IF NOT EXISTS messages (
     snapshot_id INTEGER
 );
 
--- 3. 全局设置
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     config TEXT
 );
 
--- 4. API预设表
 CREATE TABLE IF NOT EXISTS api_presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -38,7 +69,6 @@ CREATE TABLE IF NOT EXISTS api_presets (
     api_mode TEXT DEFAULT 'chat_completions'
 );
 
--- 5. 房间表（剧场/群聊）
 CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -48,14 +78,12 @@ CREATE TABLE IF NOT EXISTS rooms (
     updated_at INTEGER
 );
 
--- 6. 房间成员表
 CREATE TABLE IF NOT EXISTS room_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
     char_id INTEGER NOT NULL
 );
 
--- 7. 房间消息表
 CREATE TABLE IF NOT EXISTS room_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id INTEGER NOT NULL,
@@ -69,7 +97,6 @@ CREATE TABLE IF NOT EXISTS room_messages (
     snapshot_id INTEGER
 );
 
--- 8. 图片管理表
 CREATE TABLE IF NOT EXISTS images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     r2_key TEXT NOT NULL UNIQUE,
@@ -82,12 +109,11 @@ CREATE TABLE IF NOT EXISTS images (
 );
 
 -- ============================================
--- v3.1 核心表结构
+-- v3.1 新增表结构
 -- ============================================
 
 -- 9. 对话变量定义表
--- 支持类型: number, string, boolean, range, dict, list
-CREATE TABLE IF NOT EXISTS variables (
+CREATE TABLE variables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
@@ -108,7 +134,7 @@ CREATE TABLE IF NOT EXISTS variables (
 );
 
 -- 10. 变量阶段性表现配置表
-CREATE TABLE IF NOT EXISTS variable_stages (
+CREATE TABLE variable_stages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     variable_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -121,7 +147,7 @@ CREATE TABLE IF NOT EXISTS variable_stages (
 );
 
 -- 11. 变量思考API配置表
-CREATE TABLE IF NOT EXISTS variable_thought_config (
+CREATE TABLE variable_thought_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
@@ -135,85 +161,56 @@ CREATE TABLE IF NOT EXISTS variable_thought_config (
 );
 
 -- 12. 世界书表（SillyTavern风格增强版）
-CREATE TABLE IF NOT EXISTS lorebook_v2 (
+CREATE TABLE lorebook_v2 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
-    -- 触发模式: constant(常驻激活), keyword(关键词激活), regex(正则匹配)
     trigger_mode TEXT DEFAULT 'keyword',
-    -- 关键词列表（逗号分隔）
     keywords TEXT,
-    -- 正则表达式模式
     regex_pattern TEXT,
-    -- 关键词匹配逻辑: any(任意匹配), all(全部匹配), not(排除匹配), expression(复杂表达式)
     match_logic TEXT DEFAULT 'any',
-    -- 复杂逻辑表达式（SillyTavern风格，如: (A AND B) OR (C AND NOT D)）
     match_expression TEXT,
-    -- 内容
     content TEXT NOT NULL,
-    -- 额外触发条件（JavaScript表达式）
     trigger_condition TEXT,
-    -- 优先级（越高越优先）
     priority INTEGER DEFAULT 0,
-    -- 分组/文件夹
     group_name TEXT,
-    -- 分类标签
     category TEXT,
-    -- 注入位置: before_system, after_system, last
     position TEXT DEFAULT 'before_system',
-    -- 插入深度
     insertion_depth INTEGER,
-    -- 父条目ID（用于层级结构）
     parent_id INTEGER,
-    -- 触发概率 (0.0-1.0)
     probability REAL DEFAULT 1.0,
-    -- 是否仅触发一次
     use_once INTEGER DEFAULT 0,
-    -- 冷却消息数
     cooldown_messages INTEGER DEFAULT 0,
-    -- 最后触发时间戳
     last_triggered_at INTEGER,
-    -- 每次触发后递减，0时不再触发
     trigger_count INTEGER DEFAULT -1,
-    -- 扫描深度（扫描最近N条消息）
     scan_depth INTEGER DEFAULT 2,
-    -- 是否启用
     is_active INTEGER DEFAULT 1,
-    -- 是否为常驻条目（始终激活）
     is_constant INTEGER DEFAULT 0,
-    -- 排序顺序
     sort_order INTEGER DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
 );
 
--- 13. 快照表（每轮对话自动生成）
-CREATE TABLE IF NOT EXISTS snapshots (
+-- 13. 快照表
+CREATE TABLE snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
     description TEXT,
-    -- 快照顺序（用于排序和回滚）
     snapshot_order INTEGER DEFAULT 0,
-    -- 快照类型: auto(自动), manual(手动), checkpoint(检查点)
     snapshot_type TEXT DEFAULT 'auto',
-    -- 该轮对话的用户输入
     user_message TEXT,
-    -- 该轮对话的AI回复
     ai_response TEXT,
-    -- 消息总数
     message_count INTEGER DEFAULT 0,
-    -- 缩略图（可选）
     thumbnail TEXT,
-    -- 是否为当前活跃快照
     is_active INTEGER DEFAULT 0,
     created_at INTEGER
 );
 
 -- 14. 快照消息数据
-CREATE TABLE IF NOT EXISTS snapshot_messages (
+CREATE TABLE snapshot_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
     original_message_id INTEGER,
@@ -227,7 +224,7 @@ CREATE TABLE IF NOT EXISTS snapshot_messages (
 );
 
 -- 15. 快照变量数据
-CREATE TABLE IF NOT EXISTS snapshot_variables (
+CREATE TABLE snapshot_variables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
     variable_id INTEGER,
@@ -237,7 +234,7 @@ CREATE TABLE IF NOT EXISTS snapshot_variables (
 );
 
 -- 16. 消息编辑历史表
-CREATE TABLE IF NOT EXISTS message_edits (
+CREATE TABLE message_edits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,
     char_id INTEGER,
@@ -248,7 +245,7 @@ CREATE TABLE IF NOT EXISTS message_edits (
 );
 
 -- 17. 世界书分组表
-CREATE TABLE IF NOT EXISTS lorebook_groups (
+CREATE TABLE lorebook_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
@@ -258,12 +255,6 @@ CREATE TABLE IF NOT EXISTS lorebook_groups (
     sort_order INTEGER DEFAULT 0,
     created_at INTEGER
 );
-
--- ============================================
--- 删除旧表（如果存在）
--- ============================================
-DROP TABLE IF EXISTS lorebook;
-DROP TABLE IF EXISTS auto_snapshot_rules;
 
 -- ============================================
 -- 创建索引
@@ -295,7 +286,6 @@ INSERT INTO settings (id, config)
 SELECT 1, '{}' 
 WHERE NOT EXISTS (SELECT 1 FROM settings WHERE id = 1);
 
--- 默认角色
 INSERT INTO characters (name, description, first_message, summary, created_at)
 SELECT '皇帝', '你是帝国的最高统治者。你要在大局、权术、人心与制度之间做决断。', '众卿平身。今日何事？', '', strftime('%s','now')*1000
 WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '皇帝');

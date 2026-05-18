@@ -25,14 +25,15 @@ export class LorebookEngine {
     context: any = {}
   ): LorebookV2Entry[] {
     const triggered: LorebookV2Entry[] = [];
-    const contextText = (input + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
+    const recentHistory = history.slice(-10);
+    const contextText = this.buildContextText(input, recentHistory);
 
     const activeEntries = this.entries
       .filter(e => e.is_active)
       .sort((a, b) => b.priority - a.priority);
 
     for (const entry of activeEntries) {
-      if (this.shouldTrigger(entry, contextText, history, variables, context)) {
+      if (this.shouldTrigger(entry, contextText, input, recentHistory, variables, context)) {
         triggered.push(entry);
         this.recordTrigger(entry.id!);
       }
@@ -63,53 +64,157 @@ export class LorebookEngine {
     return result;
   }
 
+  private buildContextText(input: string, history: Message[]): string {
+    const parts = [input.toLowerCase()];
+    for (const msg of history) {
+      if (msg.content) {
+        parts.push(msg.content.toLowerCase());
+      }
+    }
+    return parts.join(' ');
+  }
+
   private shouldTrigger(
     entry: LorebookV2Entry,
     contextText: string,
+    currentInput: string,
     history: Message[],
     variables: Record<string, any>,
     context: any
   ): boolean {
     const historyData = this.triggerHistory.get(entry.id!);
+    
     if (entry.use_once && historyData && historyData.count > 0) return false;
+    
     if (entry.cooldown_messages > 0 && historyData) {
       const messagesSince = this.totalMessageCount - historyData.lastTriggered;
       if (messagesSince < entry.cooldown_messages) return false;
     }
+
+    if (entry.trigger_count !== undefined && entry.trigger_count !== -1 && entry.trigger_count <= 0) {
+      return false;
+    }
+    
     if (entry.probability < 1 && Math.random() > entry.probability) return false;
 
-    let matchesKeywords = false;
-    if (entry.keywords) {
-      if (entry.keywords.trim() === '*') {
-        matchesKeywords = true;
-      } else {
-        const keywords = entry.keywords.split(/[,，\n]/).map(k => k.trim().toLowerCase()).filter(k => k);
-        matchesKeywords = keywords.some(k => contextText.includes(k));
-      }
+    const triggerMode = entry.trigger_mode || 'keyword';
+    
+    if (triggerMode === 'constant' || entry.is_constant) {
+      return this.evaluateCondition(entry, variables, history, context);
     }
 
-    let matchesRegex = false;
-    if (entry.regex_pattern) {
-      try {
-        const regex = new RegExp(entry.regex_pattern, 'i');
-        matchesRegex = regex.test(contextText);
-      } catch {
-        matchesRegex = false;
-      }
+    let matchesTrigger = false;
+    
+    switch (triggerMode) {
+      case 'keyword':
+        matchesTrigger = this.matchKeywords(entry, contextText, currentInput, history);
+        break;
+      case 'regex':
+        matchesTrigger = this.matchRegex(entry, contextText);
+        break;
+      default:
+        matchesTrigger = this.matchKeywords(entry, contextText, currentInput, history);
     }
 
-    let matchesCondition = true;
-    if (entry.trigger_condition) {
-      try {
-        const func = new Function('variables', 'history', 'context', `return ${entry.trigger_condition};`);
-        matchesCondition = func(variables, history, context);
-      } catch {
-        matchesCondition = false;
+    if (!matchesTrigger) return false;
+
+    return this.evaluateCondition(entry, variables, history, context);
+  }
+
+  private matchKeywords(
+    entry: LorebookV2Entry,
+    contextText: string,
+    currentInput: string,
+    history: Message[]
+  ): boolean {
+    if (!entry.keywords) return false;
+
+    const keywords = entry.keywords.split(/[,，\n]/).map(k => k.trim().toLowerCase()).filter(k => k);
+    if (keywords.length === 0) return false;
+
+    const scanDepth = entry.scan_depth ?? 2;
+    const scanTexts = [currentInput.toLowerCase()];
+    for (let i = 0; i < Math.min(scanDepth, history.length); i++) {
+      const msg = history[history.length - 1 - i];
+      if (msg?.content) {
+        scanTexts.push(msg.content.toLowerCase());
       }
     }
+    const scanText = scanTexts.join(' ');
 
-    const hasAnyMatch = entry.keywords || entry.regex_pattern ? (matchesKeywords || matchesRegex) : true;
-    return hasAnyMatch && matchesCondition;
+    const matchLogic = entry.match_logic || 'any';
+
+    switch (matchLogic) {
+      case 'any':
+        return keywords.some(k => scanText.includes(k));
+      
+      case 'all':
+        return keywords.every(k => scanText.includes(k));
+      
+      case 'not':
+        return !keywords.some(k => scanText.includes(k));
+      
+      case 'expression':
+        if (entry.match_expression) {
+          return this.evaluateMatchExpression(entry.match_expression, keywords, scanText);
+        }
+        return keywords.some(k => scanText.includes(k));
+      
+      default:
+        return keywords.some(k => scanText.includes(k));
+    }
+  }
+
+  private evaluateMatchExpression(expression: string, keywords: string[], text: string): boolean {
+    try {
+      const keywordMatches: Record<string, boolean> = {};
+      for (let i = 0; i < keywords.length; i++) {
+        keywordMatches[`k${i}`] = text.includes(keywords[i]);
+        keywordMatches[keywords[i]] = text.includes(keywords[i]);
+      }
+      
+      let evalExpr = expression
+        .replace(/\bAND\b/gi, '&&')
+        .replace(/\bOR\b/gi, '||')
+        .replace(/\bNOT\b/gi, '!');
+      
+      for (const [key, value] of Object.entries(keywordMatches)) {
+        const regex = new RegExp(`\\b${key}\\b`, 'g');
+        evalExpr = evalExpr.replace(regex, String(value));
+      }
+      
+      const func = new Function(`return (${evalExpr});`);
+      return func();
+    } catch {
+      return false;
+    }
+  }
+
+  private matchRegex(entry: LorebookV2Entry, contextText: string): boolean {
+    if (!entry.regex_pattern) return false;
+    
+    try {
+      const regex = new RegExp(entry.regex_pattern, 'i');
+      return regex.test(contextText);
+    } catch {
+      return false;
+    }
+  }
+
+  private evaluateCondition(
+    entry: LorebookV2Entry,
+    variables: Record<string, any>,
+    history: Message[],
+    context: any
+  ): boolean {
+    if (!entry.trigger_condition) return true;
+    
+    try {
+      const func = new Function('variables', 'history', 'context', `return ${entry.trigger_condition};`);
+      return func(variables, history, context);
+    } catch {
+      return false;
+    }
   }
 
   private recordTrigger(entryId: number) {
@@ -143,5 +248,9 @@ export class LorebookEngine {
   resetTriggerHistory() {
     this.triggerHistory.clear();
     this.totalMessageCount = 0;
+  }
+
+  getTriggerStats(): Map<number, { count: number; lastTriggered: number }> {
+    return new Map(this.triggerHistory);
   }
 }

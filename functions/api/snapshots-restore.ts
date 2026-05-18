@@ -10,16 +10,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const id = body.id;
     if (!id) return new Response('Missing snapshot id', { status: 400 });
 
-    // 1. 获取快照元数据
     const snapshot: any = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
     if (!snapshot) return new Response('Snapshot not found', { status: 404 });
 
-    // 单人角色存档回滚
+    await deleteLaterSnapshots(context, snapshot);
+
     if (snapshot.char_id) {
-      // (1) 清空当前角色主聊天记录 (不影响群聊记录)
-      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(snapshot.char_id).run();
+      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
       
-      // (2) 恢复聊天记录
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
       for (const m of msgs || []) {
         const msg: any = m;
@@ -29,28 +27,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           snapshot.char_id, 
           msg.role || 'user', 
           msg.content || '', 
-          msg.image || null, // 强制防 undefined 崩溃
+          msg.image || null,
           msg.timestamp || Date.now()
         ).run();
       }
 
-      // (3) 恢复变量状态
       const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
       for (const v of vars || []) {
         const sv: any = v;
         if (sv.variable_id) {
-            // 直接更新回原变量 ID
-            await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-                .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
+          await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+            .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
         }
       }
     } 
-    // 群聊房间存档回滚
     else if (snapshot.room_id) {
-      // (1) 清空当前群聊主聊天记录
       await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
       
-      // (2) 恢复群聊记录
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
       for (const m of msgs || []) {
         const msg: any = m;
@@ -61,14 +54,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           msg.char_id || null, 
           msg.role || 'user', 
           msg.content || '', 
-          msg.image || null, // 强制防 undefined 崩溃
+          msg.image || null,
           msg.timestamp || Date.now()
         ).run();
       }
     }
 
-    return Response.json({ success: true });
+    return Response.json({ success: true, deleted_after: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 };
+
+async function deleteLaterSnapshots(context: any, snapshot: any) {
+  const { results: laterSnapshots } = await context.env.DB.prepare(
+    'SELECT id FROM snapshots WHERE (char_id = ? OR room_id = ?) AND snapshot_order > ?'
+  ).bind(snapshot.char_id || null, snapshot.room_id || null, snapshot.snapshot_order || 0).all();
+
+  for (const later of laterSnapshots || []) {
+    const laterId = (later as any).id;
+    await context.env.DB.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(laterId).run();
+    await context.env.DB.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(laterId).run();
+    await context.env.DB.prepare('DELETE FROM snapshots WHERE id = ?').bind(laterId).run();
+  }
+}
