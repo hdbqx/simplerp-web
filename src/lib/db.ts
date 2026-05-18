@@ -1,5 +1,10 @@
 export type ApiMode = 'chat_completions' | 'responses';
 
+export type VariableType = 'number' | 'string' | 'boolean' | 'range';
+export type SnapshotType = 'manual' | 'auto' | 'checkpoint';
+export type LorebookPosition = 'before_system' | 'after_system' | 'last';
+export type RuleType = 'interval' | 'turn_count' | 'variable_change';
+
 export interface Character {
   id?: number;
   name: string;
@@ -16,6 +21,8 @@ export interface Message {
   content: string;
   image?: string;
   timestamp: number;
+  snapshot_id?: number;
+  branch_id?: string;
 }
 
 export interface Room {
@@ -41,6 +48,8 @@ export interface RoomMessage {
   image?: string;
   meta_json?: string;
   timestamp: number;
+  snapshot_id?: number;
+  branch_id?: string;
 }
 
 export interface ApiPreset {
@@ -86,6 +95,140 @@ export interface ImageRecord {
   room_id?: number;
   prompt?: string;
   created_at?: number;
+}
+
+// ============================================
+// 新增: v3.0 类型定义
+// ============================================
+
+export interface Variable {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  key: string;
+  type: VariableType;
+  value?: any;
+  min_value?: number;
+  max_value?: number;
+  step?: number;
+  is_persistent: boolean;
+  is_visible: boolean;
+  description?: string;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface VariableStage {
+  id?: number;
+  variable_id: number;
+  name: string;
+  condition: string;
+  priority: number;
+  stage_prompt?: string;
+  is_active: boolean;
+  created_at?: number;
+}
+
+export interface VariableThoughtConfig {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  preset_id?: number;
+  model?: string;
+  thought_prompt?: string;
+  update_condition?: string;
+  update_interval?: number;
+  is_auto_update: boolean;
+  created_at?: number;
+}
+
+export interface LorebookV2Entry {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  keywords?: string;
+  regex_pattern?: string;
+  content: string;
+  trigger_condition?: string;
+  priority: number;
+  category?: string;
+  position: LorebookPosition;
+  insertion_depth?: number;
+  parent_id?: number;
+  probability: number;
+  use_once: boolean;
+  cooldown_messages: number;
+  last_triggered_at?: number;
+  is_active: boolean;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface Snapshot {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  description?: string;
+  thumbnail?: string;
+  snapshot_type: SnapshotType;
+  message_count?: number;
+  created_at?: number;
+}
+
+export interface SnapshotMessage {
+  id?: number;
+  snapshot_id: number;
+  original_message_id?: number;
+  char_id?: number;
+  room_id?: number;
+  role: string;
+  content?: string;
+  image?: string;
+  timestamp?: number;
+  order_index?: number;
+}
+
+export interface SnapshotVariable {
+  id?: number;
+  snapshot_id: number;
+  variable_id?: number;
+  key: string;
+  value?: string;
+  type?: string;
+}
+
+export interface AutoSnapshotRule {
+  id?: number;
+  char_id?: number;
+  room_id?: number;
+  name: string;
+  rule_type: RuleType;
+  interval_minutes?: number;
+  turn_count?: number;
+  variable_key?: string;
+  keep_count: number;
+  is_active: boolean;
+  created_at?: number;
+}
+
+export interface MessageEdit {
+  id?: number;
+  message_id: number;
+  char_id?: number;
+  room_id?: number;
+  old_content?: string;
+  new_content?: string;
+  edited_at?: number;
+}
+
+export interface BranchInfo {
+  id: string;
+  name: string;
+  snapshot_id?: number;
+  created_at: number;
 }
 
 const API = '/api';
@@ -163,5 +306,97 @@ export const api = {
       if (roomId) params.set('room_id', String(roomId));
       return fetch(`${API}/images?${params}`, { method: 'DELETE' });
     },
+  },
+
+  // ============================================
+  // 新增: v3.0 API 客户端
+  // ============================================
+
+  variables: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/variables?${params}`).then(r => r.json() as Promise<Variable[]>);
+    },
+    get: (id: number) => fetch(`${API}/variables?id=${id}`).then(r => r.json() as Promise<Variable>),
+    add: (v: Variable) => fetch(`${API}/variables`, { method: 'POST', headers, body: JSON.stringify(v) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, v: Partial<Variable>) => fetch(`${API}/variables`, { method: 'PUT', headers, body: JSON.stringify({ id, ...v }) }),
+    delete: (id: number) => fetch(`${API}/variables?id=${id}`, { method: 'DELETE' }),
+    bulkUpdate: (updates: Array<{ id: number; value: any }>) =>
+      fetch(`${API}/variables?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates }) }),
+  },
+
+  variableStages: {
+    list: (variableId: number) => fetch(`${API}/variables/stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
+    add: (s: VariableStage) => fetch(`${API}/variables/stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables/stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
+    delete: (id: number) => fetch(`${API}/variables/stages?id=${id}`, { method: 'DELETE' }),
+  },
+
+  variableThoughtConfig: {
+    get: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/variables/thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
+    },
+    save: (config: VariableThoughtConfig) => fetch(`${API}/variables/thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
+    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string }) =>
+      fetch(`${API}/variables/thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      }),
+  },
+
+  lorebookV2: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/lorebook-v2?${params}`).then(r => r.json() as Promise<LorebookV2Entry[]>);
+    },
+    add: (entry: LorebookV2Entry) => fetch(`${API}/lorebook-v2`, { method: 'POST', headers, body: JSON.stringify(entry) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, entry: Partial<LorebookV2Entry>) => fetch(`${API}/lorebook-v2`, { method: 'PUT', headers, body: JSON.stringify({ id, ...entry }) }),
+    delete: (id: number) => fetch(`${API}/lorebook-v2?id=${id}`, { method: 'DELETE' }),
+    migrateFromV1: (charId: number) => fetch(`${API}/lorebook-v2?action=migrate&char_id=${charId}`, { method: 'POST' }),
+  },
+
+  snapshots: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/snapshots?${params}`).then(r => r.json() as Promise<Snapshot[]>);
+    },
+    get: (id: number) => fetch(`${API}/snapshots?id=${id}`).then(r => r.json() as Promise<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] }>),
+    create: (body: { char_id?: number; room_id?: number; name: string; description?: string }) =>
+      fetch(`${API}/snapshots`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
+    delete: (id: number) => fetch(`${API}/snapshots?id=${id}`, { method: 'DELETE' }),
+    restore: (id: number) => fetch(`${API}/snapshots/restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }),
+    createBranch: (id: number, name: string) => fetch(`${API}/snapshots/branch`, { method: 'POST', headers, body: JSON.stringify({ snapshot_id: id, name }) }).then(r => r.json() as Promise<{ branch_id: string }>),
+  },
+
+  branches: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/branches?${params}`).then(r => r.json() as Promise<BranchInfo[]>);
+    },
+    switch: (branchId: string) => fetch(`${API}/branches/switch`, { method: 'POST', headers, body: JSON.stringify({ branch_id: branchId }) }),
+    delete: (branchId: string) => fetch(`${API}/branches?branch_id=${encodeURIComponent(branchId)}`, { method: 'DELETE' }),
+  },
+
+  autoSnapshotRules: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/auto-snapshot-rules?${params}`).then(r => r.json() as Promise<AutoSnapshotRule[]>);
+    },
+    add: (rule: AutoSnapshotRule) => fetch(`${API}/auto-snapshot-rules`, { method: 'POST', headers, body: JSON.stringify(rule) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, rule: Partial<AutoSnapshotRule>) => fetch(`${API}/auto-snapshot-rules`, { method: 'PUT', headers, body: JSON.stringify({ id, ...rule }) }),
+    delete: (id: number) => fetch(`${API}/auto-snapshot-rules?id=${id}`, { method: 'DELETE' }),
   }
 };

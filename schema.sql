@@ -1,5 +1,5 @@
-﻿-- ============================================
--- SimpleRP Web - Optimized Database Schema v2.0
+-- ============================================
+-- SimpleRP Web - Optimized Database Schema v3.0
 -- ============================================
 
 -- 1. 角色表
@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT,
     image TEXT,
-    timestamp INTEGER
+    timestamp INTEGER,
+    snapshot_id INTEGER,
+    branch_id TEXT
 );
 
 -- 3. 全局设置
@@ -28,7 +30,7 @@ CREATE TABLE IF NOT EXISTS settings (
     config TEXT
 );
 
--- 4. 世界书
+-- 4. 世界书（保持向后兼容）
 CREATE TABLE IF NOT EXISTS lorebook (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
@@ -73,7 +75,9 @@ CREATE TABLE IF NOT EXISTS room_messages (
     content TEXT,
     image TEXT,
     meta_json TEXT,
-    timestamp INTEGER
+    timestamp INTEGER,
+    snapshot_id INTEGER,
+    branch_id TEXT
 );
 
 -- 9. 图片管理表
@@ -86,6 +90,142 @@ CREATE TABLE IF NOT EXISTS images (
     room_id INTEGER,
     prompt TEXT,
     created_at INTEGER
+);
+
+-- ============================================
+-- 新增: v3.0 表结构
+-- ============================================
+
+-- 10. 对话变量定义表
+CREATE TABLE IF NOT EXISTS variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    type TEXT NOT NULL,
+    value TEXT,
+    min_value REAL,
+    max_value REAL,
+    step REAL,
+    is_persistent INTEGER DEFAULT 1,
+    is_visible INTEGER DEFAULT 1,
+    description TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 11. 变量阶段性表现配置表
+CREATE TABLE IF NOT EXISTS variable_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variable_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    condition TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    stage_prompt TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER
+);
+
+-- 12. 变量思考API配置表
+CREATE TABLE IF NOT EXISTS variable_thought_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    preset_id INTEGER,
+    model TEXT,
+    thought_prompt TEXT,
+    update_condition TEXT,
+    update_interval INTEGER,
+    is_auto_update INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
+-- 13. 世界书扩展表（增强版）
+CREATE TABLE IF NOT EXISTS lorebook_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    keywords TEXT,
+    regex_pattern TEXT,
+    content TEXT NOT NULL,
+    trigger_condition TEXT,
+    priority INTEGER DEFAULT 0,
+    category TEXT,
+    position TEXT DEFAULT 'before_system',
+    insertion_depth INTEGER,
+    parent_id INTEGER,
+    probability REAL DEFAULT 1.0,
+    use_once INTEGER DEFAULT 0,
+    cooldown_messages INTEGER DEFAULT 0,
+    last_triggered_at INTEGER,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 14. 快照主表
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    thumbnail TEXT,
+    snapshot_type TEXT DEFAULT 'manual',
+    message_count INTEGER,
+    created_at INTEGER
+);
+
+-- 15. 快照消息数据
+CREATE TABLE IF NOT EXISTS snapshot_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    original_message_id INTEGER,
+    char_id INTEGER,
+    room_id INTEGER,
+    role TEXT NOT NULL,
+    content TEXT,
+    image TEXT,
+    timestamp INTEGER,
+    order_index INTEGER
+);
+
+-- 16. 快照变量数据
+CREATE TABLE IF NOT EXISTS snapshot_variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    variable_id INTEGER,
+    key TEXT NOT NULL,
+    value TEXT,
+    type TEXT
+);
+
+-- 17. 自动快照规则表
+CREATE TABLE IF NOT EXISTS auto_snapshot_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    rule_type TEXT NOT NULL,
+    interval_minutes INTEGER,
+    turn_count INTEGER,
+    variable_key TEXT,
+    keep_count INTEGER DEFAULT 10,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER
+);
+
+-- 18. 消息编辑历史表
+CREATE TABLE IF NOT EXISTS message_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    char_id INTEGER,
+    room_id INTEGER,
+    old_content TEXT,
+    new_content TEXT,
+    edited_at INTEGER
 );
 
 -- ============================================

@@ -2,16 +2,20 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { api, type Message, type Character, type Settings, type LorebookEntry, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { ImageStudio } from './components/ImageStudio';
+import { VariableManager } from './components/variables/VariableManager';
+import { LorebookManager } from './components/lorebook/LorebookManager';
+import { SnapshotManager } from './components/snapshots/SnapshotManager';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
   Send, Image as ImageIcon, Settings as SettingsIcon, Menu, Pencil, Plus, Trash2, X, 
-  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy
+  BookOpen, Book, Users, RefreshCw, Square, Save, Eraser, Sparkles, Copy,
+  Variables, Camera
 } from 'lucide-react';
 import { replaceVariables } from './lib/variables';
 
 function App() {
-  const [viewMode, setViewMode] = useState<'char' | 'group' | 'image'>('char');
+  const [viewMode, setViewMode] = useState<'char' | 'group' | 'image' | 'variables' | 'lorebook' | 'snapshots'>('char');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [presets, setPresets] = useState<ApiPreset[]>([]);
@@ -392,6 +396,12 @@ function App() {
         <button className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('group')}>剧场</button>
         <button className={`tab flex-1 transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`} onClick={() => setViewMode('image')}>生图</button>
       </div>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'variables' ? 'btn-active' : ''}`} onClick={() => setViewMode('variables')}><Variables size={16} /><span className="ml-1">变量</span></button>
+        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'lorebook' ? 'btn-active' : ''}`} onClick={() => setViewMode('lorebook')}><Book size={16} /><span className="ml-1">世界书</span></button>
+        <button className={`btn btn-sm btn-ghost flex-1 ${viewMode === 'snapshots' ? 'btn-active' : ''}`} onClick={() => setViewMode('snapshots')}><Camera size={16} /><span className="ml-1">快照</span></button>
+      </div>
       <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar pr-1 text-base-content">
         {viewMode === 'char' ? characters.map(c => (
           <div key={c.id} onClick={() => { setSelectedCharId(c.id); setMobileMenuOpen(false); }} className={`p-3 rounded-xl cursor-pointer flex justify-between items-center group ${selectedCharId === c.id ? 'bg-primary text-primary-content shadow-lg' : 'hover:bg-base-300'}`}>
@@ -498,6 +508,24 @@ function App() {
 
         {viewMode === 'image' ? (
           <ImageStudio settings={settings} presets={presets} activePresetId={activePresetId} activeModel={activeModel} manualModels={manualModels} getPresetMode={getPresetMode} fetchPresetModels={fetchPresetModels} presetModelsMap={presetModelsMap} presetModelsLoading={presetModelsLoading} />
+        ) : viewMode === 'variables' ? (
+          <VariableManager charId={selectedCharId} roomId={selectedRoomId} />
+        ) : viewMode === 'lorebook' ? (
+          <LorebookManager charId={selectedCharId} roomId={selectedRoomId} />
+        ) : viewMode === 'snapshots' ? (
+          <SnapshotManager 
+            charId={selectedCharId} 
+            roomId={selectedRoomId} 
+            onRestore={async () => {
+              // Reload data after restore
+              await loadData();
+              if (selectedCharId) {
+                await api.messages.list(selectedCharId).then(setMessages);
+              } else if (selectedRoomId) {
+                await api.roomMessages.list(selectedRoomId).then(setRoomMessages);
+              }
+            }} 
+          />
         ) : (
           <>
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
