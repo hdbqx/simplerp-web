@@ -1,4 +1,4 @@
-type ImageBackend = 'huggingface' | 'openai';
+type ImageBackend = 'huggingface' | 'openai' | 'modelscope';
 type ImageAction = 'txt2img' | 'img2img';
 
 interface ImageProxyBody {
@@ -106,6 +106,161 @@ async function saveImageRecord(db: D1Database, r2Key: string, charId?: number, r
   return meta.last_row_id;
 }
 
+async function handleModelScope(
+  context: any,
+  body: ImageProxyBody,
+  prompt: string,
+  charId?: number,
+  roomId?: number
+): Promise<Response> {
+  const apiBase = normalizeBase(body.apiBase || 'https://api-inference.modelscope.cn/v1');
+  const model = body.model || 'Tongyi-MAI/Z-Image-Turbo';
+  const apiKey = body.apiKey;
+  
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: '请配置魔搭社区 API Key' }), { 
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const payload = {
+    model,
+    prompt,
+    size: body.payload?.size || '1024x1024',
+    n: body.payload?.n || 1,
+    response_format: 'b64_json',
+    ...body.payload
+  };
+
+  try {
+    const res = await fetch(`${apiBase}/images/generations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'X-ModelScope-Async-Mode': 'true'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return new Response(errText, { status: res.status });
+    }
+
+    const data: any = await res.json();
+    
+    if (data.task_id || data.task_status) {
+      const taskId = data.task_id;
+      const taskStatusUrl = `${apiBase}/tasks/${taskId}`;
+      
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const statusRes = await fetch(taskStatusUrl, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'X-ModelScope-Async-Mode': 'true'
+          }
+        });
+        
+        if (!statusRes.ok) continue;
+        
+        const statusData: any = await statusRes.json();
+        
+        if (statusData.task_status === 'SUCCEEDED' || statusData.status === 'succeeded') {
+          const resultData = statusData.output || statusData.data || statusData;
+          
+          if (resultData.images || resultData.data) {
+            const images = resultData.images || resultData.data || [];
+            return await processImageResults(context, images, charId, roomId, prompt);
+          }
+        }
+        
+        if (statusData.task_status === 'FAILED' || statusData.status === 'failed') {
+          return new Response(JSON.stringify({ 
+            error: statusData.message || '生成失败' 
+          }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+      
+      return new Response(JSON.stringify({ error: '生成超时' }), { 
+        status: 504,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    if (data.data || data.images) {
+      const images = data.data || data.images || [];
+      return await processImageResults(context, images, charId, roomId, prompt);
+    }
+    
+    return new Response(JSON.stringify({ error: '未知响应格式' }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: `魔搭社区生成失败: ${e.message}` }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function processImageResults(
+  context: any,
+  images: any[],
+  charId?: number,
+  roomId?: number,
+  prompt?: string
+): Promise<Response> {
+  const urls: string[] = [];
+  const keys: string[] = [];
+  const imageIds: number[] = [];
+  
+  for (const item of images) {
+    const b64 = item.b64_json || item.image || (typeof item === 'string' ? item : null);
+    
+    if (b64) {
+      let imgBuf: ArrayBuffer;
+      
+      if (b64.startsWith('http')) {
+        const imgRes = await fetch(b64);
+        if (!imgRes.ok) continue;
+        imgBuf = await imgRes.arrayBuffer();
+      } else {
+        const binaryString = atob(b64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        imgBuf = bytes.buffer;
+      }
+      
+      const imageKey = generateImageKey(charId, roomId);
+      await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+      const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+      
+      const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+      urls.push(imageUrl);
+      keys.push(imageKey);
+      imageIds.push(imageId);
+    }
+  }
+  
+  return Response.json({ 
+    images: [], 
+    urls,
+    keys,
+    image_ids: imageIds
+  });
+}
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const key = url.searchParams.get('key');
@@ -204,6 +359,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const charId = body.char_id;
     const roomId = body.room_id;
 
+    if (backend === 'modelscope') {
+      return await handleModelScope(context, body, prompt, charId, roomId);
+    }
+
     if (backend === 'huggingface') {
       const comfyUrl = normalizeBase(body.apiKey || '');
       if (!comfyUrl || !comfyUrl.startsWith('http')) {
@@ -280,36 +439,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (!res.ok) return new Response(await res.text(), { status: res.status });
     const data: any = await res.json();
     
-    const urls: string[] = [];
-    const keys: string[] = [];
-    const imageIds: number[] = [];
-    
-    for (const item of data.data) {
-      if (item.b64_json) {
-        const binaryString = atob(item.b64_json);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const imgBuf = bytes.buffer;
-        
-        const imageKey = generateImageKey(charId, roomId);
-        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
-        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
-        
-        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
-        urls.push(imageUrl);
-        keys.push(imageKey);
-        imageIds.push(imageId);
-      }
-    }
-    
-    return Response.json({ 
-      images: [], 
-      urls,
-      keys,
-      image_ids: imageIds
-    });
+    return await processImageResults(context, data.data || [], charId, roomId, prompt);
 
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
