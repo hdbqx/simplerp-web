@@ -604,6 +604,8 @@ function App() {
             </div>
           </div>
         )}
+        {(selectedCharId && viewMode === 'char') || (selectedRoomId && viewMode === 'group') ? (
+          <>
             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
               {(viewMode === 'group' ? (roomMessages as any) : (messages as any)).map((m: any, idx: number) => {
                 const isUser = m.role === 'user' || m.sender_type === 'user';
@@ -638,7 +640,6 @@ function App() {
     )}
   </ReactMarkdown>
 </div>
-}
                     </div>
                   )}
                 </div>
