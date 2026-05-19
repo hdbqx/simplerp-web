@@ -161,7 +161,8 @@ async function handleModelScope(
         const statusRes = await fetch(taskStatusUrl, {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
-            'X-ModelScope-Async-Mode': 'true'
+            'X-ModelScope-Async-Mode': 'true',
+            'X-ModelScope-Task-Type': 'image_generation' // 【修改点1】添加必要的任务类型头
           }
         });
         
@@ -169,11 +170,11 @@ async function handleModelScope(
         
         const statusData: any = await statusRes.json();
         
-        if (statusData.task_status === 'SUCCEEDED' || statusData.status === 'succeeded') {
-          const resultData = statusData.output || statusData.data || statusData;
-          
-          if (resultData.images || resultData.data) {
-            const images = resultData.images || resultData.data || [];
+        // 【修改点2】官方完成状态为 SUCCEED
+        if (statusData.task_status === 'SUCCEED' || statusData.task_status === 'SUCCEEDED' || statusData.status === 'succeeded') {
+          // 【修改点3】正确读取官方的 output_images 字段
+          const images = statusData.output_images || statusData.output?.images || statusData.data || [];
+          if (images && images.length > 0) {
             return await processImageResults(context, images, charId, roomId, prompt);
           }
         }
