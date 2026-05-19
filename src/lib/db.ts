@@ -64,7 +64,9 @@ export interface ApiPreset {
 export interface Settings {
   id?: number;
   user_name?: string;
-  image_backend?: 'huggingface' | 'openai';
+  image_backend?: 'huggingface' | 'openai' | 'modelscope';
+  modelscope_api_key?: string;
+  modelscope_model?: string;
   image_preset_id?: number;
   image_model_id?: string;
   hf_keys?: string;

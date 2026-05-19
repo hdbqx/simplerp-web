@@ -475,6 +475,15 @@ function App() {
           apiKey: settings.hf_keys,
           payload: { prompt: finalPrompt }
         };
+      } else if (imageBackend === 'modelscope') {
+        if (!settings.modelscope_api_key) throw new Error("请在系统设置中配置魔搭社区 API Key");
+        reqBody = {
+          ...reqBody,
+          backend: 'modelscope',
+          model: settings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo',
+          apiKey: settings.modelscope_api_key,
+          payload: { prompt: finalPrompt, size: '1024x1024', n: 1 }
+        };
       } else {
         const imagePreset = presets.find(p => p.id === settings.image_preset_id) || presets.find(p => p.id === activePresetId);
         const imageModel = settings.image_model_id || activeModel;
@@ -804,6 +813,7 @@ function App() {
                               <select className="select select-bordered" value={settings.image_backend || 'huggingface'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
                                 <option value="huggingface">ComfyUI 本地穿透 (利用 HF 通道)</option>
                                 <option value="openai">OpenAI 兼容端点</option>
+                                <option value="modelscope">魔搭社区 ModelScope</option>
                               </select>
                             </div>
                           </div>
@@ -841,6 +851,20 @@ function App() {
                                   </div>
                                 </div>
                               </div>
+                            </div>
+                            <div className="p-4 border border-base-300 rounded-xl bg-gradient-to-r from-orange-500/10 to-red-500/10">
+                              <div className="text-xs font-black mb-3 text-orange-500">魔搭社区 ModelScope 生图参数</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">API Key</label>
+                                  <input type="password" className="input input-bordered input-sm" placeholder="输入魔搭社区 API Key" value={settings.modelscope_api_key || ''} onChange={e=>setSettings({...settings, modelscope_api_key: e.target.value})} />
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型 ID</label>
+                                  <input className="input input-bordered input-sm" placeholder="默认: Tongyi-MAI/Z-Image-Turbo" value={settings.modelscope_model || ''} onChange={e=>setSettings({...settings, modelscope_model: e.target.value})} />
+                                </div>
+                              </div>
+                              <div className="text-[10px] opacity-60 mt-2">默认模型: Tongyi-MAI/Z-Image-Turbo (通义万相极速版)</div>
                             </div>
                           </div>
                       </section>
@@ -1132,7 +1156,7 @@ function App() {
                     <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
                     自动扩写词条
                   </label>
-                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : 'ComfyUI 本地穿透'}</b></span>
+                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : settings?.image_backend === 'modelscope' ? '魔搭社区' : 'ComfyUI 本地穿透'}</b></span>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>

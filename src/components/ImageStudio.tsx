@@ -36,17 +36,14 @@ export function ImageStudio({
 }: Props) {
   const [prompt, setPrompt] = useState('');
   
-  // OpenAI 专属配置
   const [openAiSize, setOpenAiSize] = useState<string>('1024x1024');
   
-  // HF 高级配置（可选参数，通常放入 JSON 中传递）
   const [extraJson, setExtraJson] = useState<string>('');
 
   const [results, setResults] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
 
-  // --- 图片预览 ---
   const [viewerSrc, setViewerSrc] = useState<string>('');
   const [viewerZoom, setViewerZoom] = useState<number>(1);
   const [viewerOffset, setViewerOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -54,7 +51,7 @@ export function ImageStudio({
   const dragStart = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const backend = (settings?.image_backend || 'huggingface') as 'huggingface' | 'openai';
+  const backend = (settings?.image_backend || 'huggingface') as 'huggingface' | 'openai' | 'modelscope';
 
   const resolvePresetById = (id?: number) => presets.find(p => p.id === id);
   const currentPreset = presets.find(p => p.id === activePresetId);
@@ -141,6 +138,16 @@ export function ImageStudio({
           apiKey: settings.hf_keys,
           payload: { prompt: rawPrompt, ...extra }
         };
+      } else if (backend === 'modelscope') {
+        if (!settings.modelscope_api_key) throw new Error('请在系统设置中配置魔搭社区 API Key');
+        const modelId = settings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo';
+        
+        reqBody = {
+          backend: 'modelscope',
+          model: modelId,
+          apiKey: settings.modelscope_api_key,
+          payload: { prompt: rawPrompt, size: openAiSize || '1024x1024', n: 1, ...extra }
+        };
       } else {
         if (!resolvedImagePreset || !resolvedImageModel) throw new Error('请配置生图预设/模型（或在顶部选择）');
         reqBody = {
@@ -180,14 +187,27 @@ export function ImageStudio({
     }
   };
 
+  const getBackendBadge = () => {
+    switch (backend) {
+      case 'huggingface':
+        return { label: 'Hugging Face API', class: 'badge-accent' };
+      case 'modelscope':
+        return { label: 'ModelScope', class: 'badge-orange' };
+      default:
+        return { label: 'OpenAI Compatible', class: 'badge-info' };
+    }
+  };
+
+  const badgeInfo = getBackendBadge();
+
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
       <div className="max-w-5xl mx-auto space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="text-lg font-black text-primary flex items-center gap-2"><ImageIcon size={18}/> 生图工作台</div>
-            <div className={`badge badge-outline ${backend === 'huggingface' ? 'badge-accent' : 'badge-info'}`}>
-              {backend === 'huggingface' ? 'Hugging Face API' : 'OpenAI Compatible'}
+            <div className={`badge badge-outline ${badgeInfo.class}`}>
+              {badgeInfo.label}
             </div>
           </div>
           <div className="text-xs opacity-60">使用自然语言描述你想要生成的画面。</div>
@@ -202,7 +222,7 @@ export function ImageStudio({
                 <textarea className="textarea textarea-bordered w-full h-32" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="输入提示词（如: A cinematic shot of a cyberpunk city...）" />
               </div>
 
-              {backend === 'openai' && (
+              {(backend === 'openai' || backend === 'modelscope') && (
                 <div className="form-control">
                   <label className="label text-xs font-bold">生成尺寸 (Size)</label>
                   <select className="select select-bordered select-sm" value={openAiSize} onChange={e => setOpenAiSize(e.target.value)}>
