@@ -17,47 +17,37 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     if (snapshot.char_id) {
       await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
-      
-      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-      for (const m of msgs || []) {
-        const msg: any = m;
-        await context.env.DB.prepare(
-          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
-        ).bind(
-          snapshot.char_id, 
-          msg.role || 'user', 
-          msg.content || '', 
-          msg.image || null,
-          msg.timestamp || Date.now()
-        ).run();
-      }
 
-      const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
-      for (const v of vars || []) {
-        const sv: any = v;
-        if (sv.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-            .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
-        }
-      }
-    } 
+      const [{ results: msgs }, { results: vars }] = await Promise.all([
+        context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all(),
+        context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all(),
+      ]);
+
+      const msgStatements = (msgs || []).map((msg: any) =>
+        context.env.DB.prepare(
+          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
+        ).bind(snapshot.char_id, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+      );
+      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
+
+      const varStatements = (vars || [])
+        .filter((v: any) => v.variable_id)
+        .map((sv: any) =>
+          context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+            .bind(sv.value ?? null, Date.now(), sv.variable_id)
+        );
+      if (varStatements.length > 0) await context.env.DB.batch(varStatements);
+    }
     else if (snapshot.room_id) {
       await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
-      
+
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-      for (const m of msgs || []) {
-        const msg: any = m;
-        await context.env.DB.prepare(
+      const msgStatements = (msgs || []).map((msg: any) =>
+        context.env.DB.prepare(
           'INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(
-          snapshot.room_id, 
-          msg.char_id || null, 
-          msg.role || 'user', 
-          msg.content || '', 
-          msg.image || null,
-          msg.timestamp || Date.now()
-        ).run();
-      }
+        ).bind(snapshot.room_id, msg.char_id || null, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+      );
+      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
     }
 
     return Response.json({ success: true, deleted_after: true });

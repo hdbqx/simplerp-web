@@ -367,7 +367,7 @@ function App() {
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
 
     // 2. 世界书动态扫描与注入组装
-    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, {}, {});
+    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
 
     // 3. 获取变量阶段的心理/行为暗示
@@ -430,6 +430,19 @@ function App() {
               }
               return nextCount;
             });
+
+            const updatedVars = globalVariables.map(v => varEngine.applyStageEffects(v));
+            const changedVars = updatedVars.filter((v, i) => v.value !== globalVariables[i].value && v.id != null);
+            if (changedVars.length > 0) {
+              setGlobalVariables(updatedVars);
+              api.variables.bulkUpdate(changedVars.map(v => ({ id: v.id!, value: v.value }))).catch(console.error);
+            }
+
+            api.snapshots.autoCreate({
+              char_id: char.id,
+              user_message: textOverride || "",
+              ai_response: fullContent,
+            }).catch(console.error);
 
           } catch (dbErr) { }
       } else {

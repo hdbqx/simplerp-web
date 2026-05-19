@@ -100,37 +100,49 @@ async function createAutoSnapshot(context: any, body: any, now: number) {
 }
 
 async function populateSnapshotData(context: any, snapshotId: number, charId: number | undefined, roomId: number | undefined, now: number) {
+  const statements: any[] = [];
+
   if (charId) {
-    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC').bind(charId).all();
-    for (let i = 0; i < (msgs?.length || 0); i++) {
-      const m: any = msgs[i];
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(snapshotId, m.id || null, charId, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
-    }
-    
-    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(charId).all();
-    for (const v of vars || []) {
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
-      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
-    }
+    const [{ results: msgs }, { results: vars }] = await Promise.all([
+      context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC').bind(charId).all(),
+      context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(charId).all(),
+    ]);
+    (msgs || []).forEach((m: any, i: number) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, original_message_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, m.id || null, charId, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i)
+      );
+    });
+    (vars || []).forEach((v: any) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+        ).bind(snapshotId, v.id || null, v.key || '', v.value ?? null, v.type || 'string')
+      );
+    });
   } else if (roomId) {
-    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(roomId).all();
-    for (let i = 0; i < (msgs?.length || 0); i++) {
-      const m: any = msgs[i];
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(snapshotId, m.id || null, roomId, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
-    }
-    
-    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(roomId).all();
-    for (const v of vars || []) {
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
-      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
-    }
+    const [{ results: msgs }, { results: vars }] = await Promise.all([
+      context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(roomId).all(),
+      context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(roomId).all(),
+    ]);
+    (msgs || []).forEach((m: any, i: number) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, original_message_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, m.id || null, roomId, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i)
+      );
+    });
+    (vars || []).forEach((v: any) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+        ).bind(snapshotId, v.id || null, v.key || '', v.value ?? null, v.type || 'string')
+      );
+    });
   }
+
+  if (statements.length > 0) await context.env.DB.batch(statements);
 }
 
 export const onRequestPut: PagesFunction<Env> = async (context) => {

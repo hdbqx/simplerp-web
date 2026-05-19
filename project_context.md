@@ -1,7 +1,10 @@
 # Project Structure
 
 simplerp-web/
+├── .claude
+│   └── settings.json
 ├── .gitignore
+├── CLAUDE.md
 ├── README.md
 ├── eslint.config.js
 ├── functions
@@ -88,6 +91,67 @@ project_context.md
 *.sln
 *.sw?
 *.tsbuildinfo
+```
+
+
+## File: CLAUDE.md
+
+```md
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+npm run dev        # Start Vite dev server (port 5173)
+npm run build      # tsc -b && vite build
+npm run lint       # eslint .
+npm run preview    # Preview production build
+```
+
+No test framework is configured.
+
+## Architecture
+
+**SimpleRP Cloud** is a serverless AI roleplay/multi-agent sandbox running on Cloudflare Pages + Functions + D1 (SQLite) + R2 (images).
+
+### Frontend
+
+Single-page React 19 + TypeScript app with no router. View switching (character/group/image modes) is managed entirely via `useState` in [src/App.tsx](src/App.tsx), which is a large monolithic component (~76KB) containing most UI logic and state.
+
+Supporting components live in [src/components/](src/components/):
+- `ImageStudio.tsx` — image generation UI
+- `lorebook/LorebookManager.tsx` — world book / context injection UI
+- `snapshots/SnapshotManager.tsx` — conversation snapshot UI
+- `variables/VariableManager.tsx` — global variable UI
+
+### Library Layer (`src/lib/`)
+
+Domain logic is extracted into standalone modules:
+- [db.ts](src/lib/db.ts) — TypeScript interfaces for all DB entities + fetch-based API client that calls Cloudflare Pages Functions
+- [llm.ts](src/lib/llm.ts) — `LLMClient` wrapping the OpenAI SDK for OpenAI-compatible APIs; calls `/api/llm` with actions `'models'` or `'complete'`
+- [lorebook-engine.ts](src/lib/lorebook-engine.ts) — `LorebookEngine` class: trigger matching, context injection, trigger history
+- [variable-engine.ts](src/lib/variable-engine.ts) — `VariableEngine` class: variable state, stage management, change listeners
+- [variables.ts](src/lib/variables.ts) — built-in variable replacement utilities
+
+### Backend (Cloudflare Pages Functions)
+
+Not in this repo's `src/` directory. The frontend communicates with it via `fetch` POST requests. Cloudflare bindings configured in [wrangler.toml](wrangler.toml):
+- `DB` → D1 database (`simplerp-db`)
+- `IMAGES_BUCKET` → R2 bucket (`simplerp-images`)
+
+### Styling
+
+Tailwind CSS 3 + DaisyUI 4. Use DaisyUI component classes where possible. The `cn()` helper (clsx + tailwind-merge) is available for conditional class merging.
+
+## Key Patterns
+
+- **No global state library** — all state lives in `useState`/`useRef` hooks inside `App.tsx` and the engine classes.
+- **Engine classes** (`VariableEngine`, `LorebookEngine`) own their domain state and expose event listeners; `App.tsx` instantiates them via `useRef`.
+- **TypeScript interfaces** for all data shapes are defined in `src/lib/db.ts` — check there before defining new types.
+- **Markdown rendering** uses `react-markdown` + `rehype-raw` (raw HTML allowed in content).
+
 ```
 
 
@@ -1079,6 +1143,20 @@ database_id = "740b4cf9-8916-480a-9b8e-f0c0977a3b0c"
 [[r2_buckets]]
 bucket_name = "simplerp-images"
 binding = "IMAGES_BUCKET"
+```
+
+
+## File: .claude\settings.json
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)"
+    ]
+  }
+}
+
 ```
 
 
@@ -2822,47 +2900,37 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     if (snapshot.char_id) {
       await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
-      
-      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-      for (const m of msgs || []) {
-        const msg: any = m;
-        await context.env.DB.prepare(
-          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
-        ).bind(
-          snapshot.char_id, 
-          msg.role || 'user', 
-          msg.content || '', 
-          msg.image || null,
-          msg.timestamp || Date.now()
-        ).run();
-      }
 
-      const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
-      for (const v of vars || []) {
-        const sv: any = v;
-        if (sv.variable_id) {
-          await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-            .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
-        }
-      }
-    } 
+      const [{ results: msgs }, { results: vars }] = await Promise.all([
+        context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all(),
+        context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all(),
+      ]);
+
+      const msgStatements = (msgs || []).map((msg: any) =>
+        context.env.DB.prepare(
+          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
+        ).bind(snapshot.char_id, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+      );
+      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
+
+      const varStatements = (vars || [])
+        .filter((v: any) => v.variable_id)
+        .map((sv: any) =>
+          context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+            .bind(sv.value ?? null, Date.now(), sv.variable_id)
+        );
+      if (varStatements.length > 0) await context.env.DB.batch(varStatements);
+    }
     else if (snapshot.room_id) {
       await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
-      
+
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-      for (const m of msgs || []) {
-        const msg: any = m;
-        await context.env.DB.prepare(
+      const msgStatements = (msgs || []).map((msg: any) =>
+        context.env.DB.prepare(
           'INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(
-          snapshot.room_id, 
-          msg.char_id || null, 
-          msg.role || 'user', 
-          msg.content || '', 
-          msg.image || null,
-          msg.timestamp || Date.now()
-        ).run();
-      }
+        ).bind(snapshot.room_id, msg.char_id || null, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+      );
+      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
     }
 
     return Response.json({ success: true, deleted_after: true });
@@ -2992,37 +3060,49 @@ async function createAutoSnapshot(context: any, body: any, now: number) {
 }
 
 async function populateSnapshotData(context: any, snapshotId: number, charId: number | undefined, roomId: number | undefined, now: number) {
+  const statements: any[] = [];
+
   if (charId) {
-    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC').bind(charId).all();
-    for (let i = 0; i < (msgs?.length || 0); i++) {
-      const m: any = msgs[i];
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(snapshotId, m.id || null, charId, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
-    }
-    
-    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(charId).all();
-    for (const v of vars || []) {
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
-      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
-    }
+    const [{ results: msgs }, { results: vars }] = await Promise.all([
+      context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC').bind(charId).all(),
+      context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(charId).all(),
+    ]);
+    (msgs || []).forEach((m: any, i: number) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, original_message_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, m.id || null, charId, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i)
+      );
+    });
+    (vars || []).forEach((v: any) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+        ).bind(snapshotId, v.id || null, v.key || '', v.value ?? null, v.type || 'string')
+      );
+    });
   } else if (roomId) {
-    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(roomId).all();
-    for (let i = 0; i < (msgs?.length || 0); i++) {
-      const m: any = msgs[i];
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(snapshotId, m.id || null, roomId, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
-    }
-    
-    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(roomId).all();
-    for (const v of vars || []) {
-      await context.env.DB.prepare(
-        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
-      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
-    }
+    const [{ results: msgs }, { results: vars }] = await Promise.all([
+      context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(roomId).all(),
+      context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(roomId).all(),
+    ]);
+    (msgs || []).forEach((m: any, i: number) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_messages (snapshot_id, original_message_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(snapshotId, m.id || null, roomId, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i)
+      );
+    });
+    (vars || []).forEach((v: any) => {
+      statements.push(
+        context.env.DB.prepare(
+          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+        ).bind(snapshotId, v.id || null, v.key || '', v.value ?? null, v.type || 'string')
+      );
+    });
   }
+
+  if (statements.length > 0) await context.env.DB.batch(statements);
 }
 
 export const onRequestPut: PagesFunction<Env> = async (context) => {
@@ -3912,7 +3992,7 @@ function App() {
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
 
     // 2. 世界书动态扫描与注入组装
-    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, {}, {});
+    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
 
     // 3. 获取变量阶段的心理/行为暗示
@@ -3975,6 +4055,19 @@ function App() {
               }
               return nextCount;
             });
+
+            const updatedVars = globalVariables.map(v => varEngine.applyStageEffects(v));
+            const changedVars = updatedVars.filter((v, i) => v.value !== globalVariables[i].value && v.id != null);
+            if (changedVars.length > 0) {
+              setGlobalVariables(updatedVars);
+              api.variables.bulkUpdate(changedVars.map(v => ({ id: v.id!, value: v.value }))).catch(console.error);
+            }
+
+            api.snapshots.autoCreate({
+              char_id: char.id,
+              user_message: textOverride || "",
+              ai_response: fullContent,
+            }).catch(console.error);
 
           } catch (dbErr) { }
       } else {
@@ -5738,21 +5831,21 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
                 <div className="space-y-2">
                   <input
                     type="text"
-                    value={editingSnapshot.name}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, name: e.target.value })}
+                    value={editingSnapshot!.name}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, name: e.target.value })}
                     className="w-full px-2 py-1 border rounded"
                   />
                   <textarea
-                    value={editingSnapshot.description || ''}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, description: e.target.value })}
+                    value={editingSnapshot!.description || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, description: e.target.value })}
                     placeholder="描述"
                     className="w-full px-2 py-1 border rounded"
                     rows={2}
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <select
-                      value={editingSnapshot.snapshot_type || 'manual'}
-                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, snapshot_type: e.target.value as SnapshotType })}
+                      value={editingSnapshot!.snapshot_type || 'manual'}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, snapshot_type: e.target.value as SnapshotType })}
                       className="px-2 py-1 border rounded"
                     >
                       {snapshotTypeOptions.map((opt) => (
@@ -5763,22 +5856,22 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
                     </select>
                     <input
                       type="text"
-                      value={editingSnapshot.user_message || ''}
-                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, user_message: e.target.value })}
+                      value={editingSnapshot!.user_message || ''}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, user_message: e.target.value })}
                       placeholder="用户消息"
                       className="px-2 py-1 border rounded"
                     />
                   </div>
                   <textarea
-                    value={editingSnapshot.ai_response || ''}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, ai_response: e.target.value })}
+                    value={editingSnapshot!.ai_response || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, ai_response: e.target.value })}
                     placeholder="AI回复"
                     className="w-full px-2 py-1 border rounded"
                     rows={3}
                   />
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleUpdate(editingSnapshot)}
+                      onClick={() => handleUpdate(editingSnapshot!)}
                       className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
                     >
                       保存
@@ -6324,8 +6417,8 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
 export type ApiMode = 'chat_completions' | 'responses';
 
 export type VariableType = 'number' | 'string' | 'boolean' | 'range' | 'dict' | 'list';
-export type SnapshotType = 'manual' | 'auto' | 'checkpoint';
-export type LorebookPosition = 'before_system' | 'after_system' | 'last';
+export type SnapshotType = 'manual' | 'auto' | 'checkpoint' | 'milestone';
+export type LorebookPosition = 'before_system' | 'after_system' | 'last' | 'before_user' | 'after_user' | 'before_ai' | 'after_ai';
 export type TriggerMode = 'constant' | 'keyword' | 'regex';
 export type MatchLogic = 'any' | 'all' | 'not' | 'expression';
 
