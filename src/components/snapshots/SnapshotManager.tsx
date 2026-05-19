@@ -5,6 +5,7 @@ interface SnapshotManagerProps {
   charId?: number;
   roomId?: number;
   onSnapshotRestore?: (snapshot: Snapshot) => void;
+  latestMessages?: any[];
 }
 
 const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
@@ -13,7 +14,7 @@ const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
   { value: 'milestone', label: '里程碑' },
 ];
 
-export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotManagerProps) {
+export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessages }: SnapshotManagerProps) {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
@@ -42,6 +43,9 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
 
   const handleCreate = async () => {
     try {
+      const msgs = latestMessages || [];
+      const aiMsg = msgs[msgs.length - 1];
+      const userMsg = msgs[msgs.length - 2];
       const res = await fetch('/api/snapshots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -50,11 +54,11 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
           room_id: roomId,
           name: `快照 ${new Date().toLocaleString()}`,
           snapshot_type: 'manual',
+          user_message: userMsg?.content || undefined,
+          ai_response: aiMsg?.content || undefined,
         }),
       });
-      if (res.ok) {
-        fetchSnapshots();
-      }
+      if (res.ok) fetchSnapshots();
     } catch (e) {
       console.error('Failed to create snapshot:', e);
     }

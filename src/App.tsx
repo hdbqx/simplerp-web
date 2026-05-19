@@ -931,14 +931,68 @@ function App() {
                         </div>
                       )}
                       {charEditTab === 'variables' && (
-                        <VariableManager
-                          charId={selectedCharId}
-                          onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
-                        />
+                        <div className="space-y-4">
+                          <div className="card bg-base-200 border border-base-300">
+                            <div className="card-body p-4">
+                              <h4 className="card-title text-sm">🤖 AI 自动推演变量配置</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <label className="flex items-center gap-2 cursor-pointer col-span-2">
+                                  <input type="checkbox" className="toggle toggle-primary toggle-sm"
+                                    checked={thoughtConfig?.is_auto_update ?? false}
+                                    onChange={async (e) => {
+                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, is_auto_update: e.target.checked };
+                                      await api.variableThoughtConfig.save(updated);
+                                      setThoughtConfig(updated);
+                                    }} />
+                                  <span className="text-sm">启用自动推演</span>
+                                </label>
+                                <div className="form-control">
+                                  <label className="label py-0"><span className="label-text text-xs">推演间隔（轮）</span></label>
+                                  <input type="number" min={1} className="input input-bordered input-sm"
+                                    value={thoughtConfig?.update_interval ?? 5}
+                                    onChange={async (e) => {
+                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, update_interval: Number(e.target.value) };
+                                      await api.variableThoughtConfig.save(updated);
+                                      setThoughtConfig(updated);
+                                    }} />
+                                </div>
+                                <div className="form-control">
+                                  <label className="label py-0"><span className="label-text text-xs">API 预设</span></label>
+                                  <select className="select select-bordered select-sm"
+                                    value={thoughtConfig?.preset_id ?? ''}
+                                    onChange={async (e) => {
+                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, preset_id: e.target.value ? Number(e.target.value) : undefined };
+                                      await api.variableThoughtConfig.save(updated);
+                                      setThoughtConfig(updated);
+                                    }}>
+                                    <option value="">-- 选择预设 --</option>
+                                    {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                  </select>
+                                </div>
+                                <div className="form-control col-span-2">
+                                  <label className="label py-0"><span className="label-text text-xs">模型名称</span></label>
+                                  <input type="text" className="input input-bordered input-sm"
+                                    value={thoughtConfig?.model ?? ''}
+                                    placeholder="留空使用全局模型"
+                                    onChange={async (e) => {
+                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, model: e.target.value };
+                                      await api.variableThoughtConfig.save(updated);
+                                      setThoughtConfig(updated);
+                                    }} />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <VariableManager
+                            charId={selectedCharId}
+                            onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
+                          />
+                        </div>
                       )}
                       {charEditTab === 'snapshots' && (
                         <SnapshotManager
                           charId={selectedCharId}
+                          latestMessages={messages}
                           onSnapshotRestore={async (_snap) => {
                             await loadCharData();
                             setMessages([]);

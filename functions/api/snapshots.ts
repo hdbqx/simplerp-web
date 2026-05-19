@@ -46,18 +46,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ).bind(body.char_id || null, body.char_id || null, body.room_id || null, body.room_id || null).first();
     const snapshotOrder = ((maxOrderRes?.max_order as number) || 0) + 1;
 
+    let messageCount = 0;
+    if (body.char_id) {
+      const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM messages WHERE char_id = ?').bind(body.char_id).first();
+      messageCount = (countRes?.count as number) || 0;
+    } else if (body.room_id) {
+      const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM room_messages WHERE room_id = ?').bind(body.room_id).first();
+      messageCount = (countRes?.count as number) || 0;
+    }
+
     const { meta } = await context.env.DB.prepare(
       `INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, snapshot_type, user_message, ai_response, message_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
-      body.char_id || null, 
-      body.room_id || null, 
-      body.name, 
-      body.description || null, 
+      body.char_id || null,
+      body.room_id || null,
+      body.name,
+      body.description || null,
       snapshotOrder,
       body.snapshot_type || 'manual',
       body.user_message || null,
       body.ai_response || null,
-      0,
+      messageCount,
       now
     ).run();
     
