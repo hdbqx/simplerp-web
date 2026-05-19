@@ -3630,6 +3630,9 @@ import { VariableEngine } from './lib/variable-engine';
 import { LorebookEngine } from './lib/lorebook-engine';
 import { replaceVariables as replaceBuiltInVariables } from './lib/variables';
 import { ImageStudio } from './components/ImageStudio';
+import { VariableManager } from './components/variables/VariableManager';
+import { SnapshotManager } from './components/snapshots/SnapshotManager';
+import { LorebookManager } from './components/lorebook/LorebookManager';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { 
@@ -3678,7 +3681,6 @@ function App() {
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
   const [charVariables, setCharVariables] = useState<any[]>([]);
-  const [charSnapshots, setCharSnapshots] = useState<any[]>([]);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
@@ -3764,17 +3766,10 @@ function App() {
     loadCharData();
   }, [showCharEdit, selectedCharId, charEditTab]);
 
-  // 在 src/App.tsx 中，找到 loadCharData 函数并替换为：
   const loadCharData = async () => {
     try {
-      const [vars, snaps] = await Promise.all([
-        api.variables.list(selectedCharId, undefined),
-        api.snapshots.list(selectedCharId, undefined)
-      ]);
+      const vars = await api.variables.list(selectedCharId, undefined);
       setCharVariables(vars);
-      setCharSnapshots(snaps);
-      
-      // 【核心修复】创建变量后，立即同步更新给对话引擎所在的全局状态！
       setGlobalVariables(vars);
       let allStages: VariableStage[] = [];
       for (const v of vars) {
@@ -3787,67 +3782,6 @@ function App() {
     } catch (e) {
       console.error('Failed to load char data', e);
     }
-  };
-
-  const addVariable = async () => {
-    const newVar = {
-      name: '新变量',
-      key: 'new_var',
-      type: 'number' as const,
-      value: 0,
-      char_id: selectedCharId,
-      is_persistent: true,
-      is_visible: true
-    };
-    await api.variables.add(newVar);
-    await loadCharData();
-  };
-
-  const editVariable = async (variable: any) => {
-    const name = prompt('变量名称:', variable.name);
-    if (!name) return;
-    const key = prompt('变量键:', variable.key);
-    if (!key) return;
-    await api.variables.update(variable.id!, { name, key });
-    await loadCharData();
-  };
-
-  const updateVariableValue = async (id: number, value: any) => {
-    await api.variables.update(id, { value });
-    await loadCharData();
-  };
-
-  const deleteVariable = async (id: number) => {
-    if (!confirm('确定删除此变量？')) return;
-    await api.variables.delete(id);
-    await loadCharData();
-  };
-
-  const createSnapshot = async () => {
-    const name = prompt('快照名称:', `快照 ${new Date().toLocaleString()}`);
-    if (!name) return;
-    const description = prompt('快照描述:') || undefined;
-    await api.snapshots.create({ char_id: selectedCharId, name, description });
-    await loadCharData();
-  };
-
-  const viewSnapshot = (snapshot: any) => {
-    alert(`快照内容:\n名称: ${snapshot.name}\n创建时间: ${new Date(snapshot.created_at).toLocaleString()}`);
-  };
-
-  const restoreSnapshot = async (snapshot: any) => {
-    if (!confirm(`确定回滚到快照 "${snapshot.name}"？当前进度将丢失。`)) return;
-    await api.snapshots.restore(snapshot.id!);
-    await loadCharData();
-    setMessages([]);
-    await api.messages.list(selectedCharId).then(setMessages);
-    alert('快照已恢复');
-  };
-
-  const deleteSnapshot = async (id: number) => {
-    if (!confirm('确定删除此快照？')) return;
-    await api.snapshots.delete(id);
-    await loadCharData();
   };
 
   const loadLorebookEntries = async () => {
@@ -4622,78 +4556,21 @@ function App() {
                         </div>
                       )}
                       {charEditTab === 'variables' && (
-                        <div className="space-y-3">
-                          {charVariables.map(v => (
-                            <div key={v.id} className="card bg-base-100 border border-base-content/10 p-4">
-                              <div className="flex justify-between items-start mb-2">
-                                <div>
-                                  <span className="font-bold">{v.name}</span>
-                                  <span className="text-xs opacity-60 font-mono ml-2">{v.key}</span>
-                                </div>
-                                <div className="flex gap-1">
-                                  <button className="btn btn-ghost btn-xs" onClick={() => editVariable(v)}><Edit size={14} /></button>
-                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteVariable(v.id!)}><Trash2 size={14} /></button>
-                                </div>
-                              </div>
-                              {v.type === 'number' || v.type === 'range' ? (
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="number"
-                                    className="input input-bordered input-sm w-24"
-                                    value={v.value}
-                                    onChange={(e) => updateVariableValue(v.id!, parseFloat(e.target.value))}
-                                    step={v.step || 1}
-                                    min={v.min_value}
-                                    max={v.max_value}
-                                  />
-                                  {v.min_value !== undefined && v.max_value !== undefined && (
-                                    <div className="flex-1">
-                                      <progress className="progress progress-primary w-full" value={((v.value - v.min_value) / (v.max_value - v.min_value)) * 100} max="100" />
-                                    </div>
-                                  )}
-                                </div>
-                              ) : v.type === 'boolean' ? (
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    className="toggle toggle-primary"
-                                    checked={Boolean(v.value)}
-                                    onChange={(e) => updateVariableValue(v.id!, e.target.checked)}
-                                  />
-                                  <span>{v.value ? '是' : '否'}</span>
-                                </label>
-                              ) : (
-                                <textarea
-                                  className="textarea textarea-bordered text-sm"
-                                  value={v.value}
-                                  onChange={(e) => updateVariableValue(v.id!, e.target.value)}
-                                />
-                              )}
-                            </div>
-                          ))}
-                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={addVariable}>+ 添加变量</button>
-                        </div>
+                        <VariableManager
+                          charId={selectedCharId}
+                          onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
+                        />
                       )}
                       {charEditTab === 'snapshots' && (
-                        <div className="space-y-3">
-                          {charSnapshots.map(s => (
-                            <div key={s.id} className="card bg-base-100 border border-base-content/10 p-4">
-                              <div className="flex justify-between items-start mb-2">
-                                <div>
-                                  <span className="font-bold">{s.name}</span>
-                                  <span className="text-xs opacity-60 ml-2">{new Date(s.created_at!).toLocaleString()}</span>
-                                </div>
-                                <div className="flex gap-1">
-                                  <button className="btn btn-ghost btn-xs" onClick={() => viewSnapshot(s)}>查看</button>
-                                  <button className="btn btn-ghost btn-xs" onClick={() => restoreSnapshot(s)}>回滚</button>
-                                  <button className="btn btn-ghost btn-xs text-error" onClick={() => deleteSnapshot(s.id!)}><Trash2 size={14} /></button>
-                                </div>
-                              </div>
-                              {s.description && <p className="text-sm opacity-70">{s.description}</p>}
-                            </div>
-                          ))}
-                          <button className="btn btn-block btn-outline border-dashed btn-sm" onClick={createSnapshot}>+ 创建快照</button>
-                        </div>
+                        <SnapshotManager
+                          charId={selectedCharId}
+                          onSnapshotRestore={async (_snap) => {
+                            await loadCharData();
+                            setMessages([]);
+                            const msgs = await api.messages.list(selectedCharId!);
+                            setMessages(msgs);
+                          }}
+                        />
                       )}
                     </div>
                   </div>
@@ -4758,27 +4635,9 @@ function App() {
       {showLorebook && selectedCharId && (
           <div className="modal modal-open text-base-content">
               <div className="modal-box max-w-2xl h-[75vh] flex flex-col p-0 overflow-hidden">
-                  <div className="p-4 border-b bg-base-200 font-bold flex justify-between items-center">世界书 (Worldbook)<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowLorebook(false)}><X/></button></div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                    {lorebookEntries.map(e => (
-                        <div key={e.id} className="collapse collapse-arrow bg-base-200 border border-base-content/5">
-                            <input type="checkbox"/>
-                            <div className="collapse-title text-sm font-bold flex justify-between items-center pr-12">
-                                <span>{e.keywords}</span>
-                                <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded ${(e as any).is_active ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>{(e as any).is_active ? 'Active' : 'Inactive'}</span>
-                            </div>
-                            <div className="collapse-content space-y-2">
-                                <textarea className="textarea textarea-bordered w-full h-32 text-xs font-mono" defaultValue={e.content} onBlur={(evt)=>api.lorebookV2.update(e.id!, {content: evt.target.value})} />
-                                <div className="flex gap-2 items-center">
-                                    <input className="input input-bordered input-sm flex-1 text-xs" defaultValue={e.keywords} onBlur={(evt)=>api.lorebookV2.update(e.id!, {keywords: evt.target.value})} />
-                                    <input type="number" className="input input-bordered input-sm w-20 text-xs" defaultValue={(e as any).priority || 0} onBlur={(evt)=>api.lorebookV2.update(e.id!, {priority: parseInt(evt.target.value) || 0})} placeholder="优先级" />
-                                    <div className="flex items-center gap-2 bg-base-300 px-3 py-1 rounded-full"><span className="text-[10px] font-bold">启用</span><input type="checkbox" className="toggle toggle-success toggle-xs" checked={Boolean((e as any).is_active)} onChange={(evt) => {const val = evt.target.checked; api.lorebookV2.update(e.id!, { is_active: val }).then(() => {setLorebookEntries(prev => prev.map(item => item.id === e.id ? {...item, is_active: val} : item));});}} /></div>
-                                    <button className="btn btn-sm btn-error" onClick={()=>api.lorebookV2.delete(e.id!).then(()=>loadLorebookEntries())}><Trash2 size={14}/></button>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                    <button className="btn btn-block btn-outline border-dashed btn-sm mt-4" onClick={()=>api.lorebookV2.add({char_id:selectedCharId, name:"新词条", keywords:"新词条", content:"", priority:0, position:'before_system', probability:1.0, is_active:true, use_once:false, cooldown_messages:0}).then(()=>loadLorebookEntries())}>+ 添加新设定</button>
+                  <div className="p-4 border-b bg-base-200 font-bold flex justify-between items-center">世界书 (Worldbook)<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>{ setShowLorebook(false); loadLorebookEntries(); }}><X/></button></div>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <LorebookManager charId={selectedCharId} />
                   </div>
               </div>
           </div>
