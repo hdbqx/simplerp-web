@@ -5,17 +5,18 @@ interface Env {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
-    const { char_id, room_id, history, user_input } = body;
+    const { char_id, room_id, history, user_input, preset_id: bodyPresetId, model: bodyModel } = body;
 
-    let config: any = null;
+    let config: any = {};
     if (char_id) {
-      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE char_id = ?').bind(Number(char_id)).first();
-    }
-    if (!config && room_id) {
-      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE room_id = ?').bind(Number(room_id)).first();
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE char_id = ?').bind(Number(char_id)).first() || {};
+    } else if (room_id) {
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE room_id = ?').bind(Number(room_id)).first() || {};
     }
 
-    if (!config) return new Response('No thought config found', { status: 400 });
+    // Body params override stored config
+    if (bodyPresetId) config = { ...config, preset_id: bodyPresetId };
+    if (bodyModel) config = { ...config, model: bodyModel };
 
     const variables: any[] = [];
     if (char_id) {
@@ -58,11 +59,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     if (!preset) {
-      return new Response('No API preset configured', { status: 400 });
+      return new Response('No API preset configured for thought engine', { status: 400 });
     }
 
     const model = config.model;
-    if (!model) return new Response('No model configured', { status: 400 });
+    if (!model) return new Response('No model configured for thought engine', { status: 400 });
 
     const normalizedBase = (preset.api_base || '').trim().replace(/\/+$/, '');
     const trimmedKey = (preset.api_key || '').trim();

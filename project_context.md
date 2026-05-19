@@ -3006,18 +3006,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ).bind(body.char_id || null, body.char_id || null, body.room_id || null, body.room_id || null).first();
     const snapshotOrder = ((maxOrderRes?.max_order as number) || 0) + 1;
 
+    let messageCount = 0;
+    if (body.char_id) {
+      const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM messages WHERE char_id = ?').bind(body.char_id).first();
+      messageCount = (countRes?.count as number) || 0;
+    } else if (body.room_id) {
+      const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM room_messages WHERE room_id = ?').bind(body.room_id).first();
+      messageCount = (countRes?.count as number) || 0;
+    }
+
     const { meta } = await context.env.DB.prepare(
       `INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, snapshot_type, user_message, ai_response, message_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
-      body.char_id || null, 
-      body.room_id || null, 
-      body.name, 
-      body.description || null, 
+      body.char_id || null,
+      body.room_id || null,
+      body.name,
+      body.description || null,
       snapshotOrder,
       body.snapshot_type || 'manual',
       body.user_message || null,
       body.ai_response || null,
-      0,
+      messageCount,
       now
     ).run();
     
@@ -3298,17 +3307,18 @@ interface Env {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body: any = await context.request.json();
-    const { char_id, room_id, history, user_input } = body;
+    const { char_id, room_id, history, user_input, preset_id: bodyPresetId, model: bodyModel } = body;
 
-    let config: any = null;
+    let config: any = {};
     if (char_id) {
-      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE char_id = ?').bind(Number(char_id)).first();
-    }
-    if (!config && room_id) {
-      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE room_id = ?').bind(Number(room_id)).first();
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE char_id = ?').bind(Number(char_id)).first() || {};
+    } else if (room_id) {
+      config = await context.env.DB.prepare('SELECT * FROM variable_thought_config WHERE room_id = ?').bind(Number(room_id)).first() || {};
     }
 
-    if (!config) return new Response('No thought config found', { status: 400 });
+    // Body params override stored config
+    if (bodyPresetId) config = { ...config, preset_id: bodyPresetId };
+    if (bodyModel) config = { ...config, model: bodyModel };
 
     const variables: any[] = [];
     if (char_id) {
@@ -3351,11 +3361,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     if (!preset) {
-      return new Response('No API preset configured', { status: 400 });
+      return new Response('No API preset configured for thought engine', { status: 400 });
     }
 
     const model = config.model;
-    if (!model) return new Response('No model configured', { status: 400 });
+    if (!model) return new Response('No model configured for thought engine', { status: 400 });
 
     const normalizedBase = (preset.api_base || '').trim().replace(/\/+$/, '');
     const trimmedKey = (preset.api_key || '').trim();
@@ -3662,11 +3672,16 @@ function App() {
   const [settings, setSettings] = useState<Settings>();
   const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
-  // 【新增】全局变量与思考引擎状态
+  // 全局变量与思考引擎状态
   const [globalVariables, setGlobalVariables] = useState<Variable[]>([]);
   const [globalStages, setGlobalStages] = useState<VariableStage[]>([]);
-  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
   const [turnCount, setTurnCount] = useState(0);
+  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'info' | 'success' } | null>(null);
+
+  const showToast = (text: string, type: 'info' | 'success' = 'info') => {
+    setToastMsg({ text, type });
+    setTimeout(() => setToastMsg(null), 3000);
+  };
 
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -3845,8 +3860,7 @@ function App() {
         }
         setGlobalStages(allStages);
       });
-      api.variableThoughtConfig.get(selectedCharId).then(setThoughtConfig);
-      setTurnCount(0); // 重置会话计数器
+      setTurnCount(0);
 
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
@@ -3928,6 +3942,9 @@ function App() {
     // 2. 世界书动态扫描与注入组装
     const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
+    if (triggeredLorebook.length > 0) {
+      showToast("已激活世界书：" + triggeredLorebook.map((l: any) => l.name || l.keywords).join(', '));
+    }
 
     // 3. 获取变量阶段的心理/行为暗示
     const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
@@ -3972,20 +3989,24 @@ function App() {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
 
-            // 【核心修改】触发后台自动分析更新变量机制
+            // 触发后台自动分析更新变量机制
             setTurnCount(prev => {
               const nextCount = prev + 1;
-              if (thoughtConfig?.is_auto_update && thoughtConfig.update_interval && nextCount >= thoughtConfig.update_interval) {
-                // 静默触发分析
+              const interval = settings?.thought_interval ?? 5;
+              if (settings?.is_thought_auto_update && nextCount >= interval) {
                 api.variableThoughtConfig.triggerThought({
                   char_id: char.id,
-                  history: currentHistory.slice(-10), // 取近10条用于分析
-                  user_input: textOverride
-                }).then(() => {
-                  // 分析完成后静默刷新前端变量展示状态
+                  history: currentHistory.slice(-10),
+                  user_input: textOverride,
+                  preset_id: settings?.thought_preset_id,
+                  model: settings?.thought_model_id || activeModel,
+                }).then((result) => {
+                  if (result?.updates?.length > 0) {
+                    showToast("后台推演完成，变量已更新", 'success');
+                  }
                   api.variables.list(char.id).then(setGlobalVariables);
                 }).catch(console.error);
-                return 0; // 重置计数器
+                return 0;
               }
               return nextCount;
             });
@@ -4176,6 +4197,7 @@ function App() {
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
+    <>
     <div className="drawer md:drawer-open fixed inset-0 w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
@@ -4491,6 +4513,41 @@ function App() {
                           </div>
                       </section>
                       <section>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">后台变量推演模型</h4>
+                          <div className="p-4 border border-base-300 rounded-xl space-y-3">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" className="toggle toggle-primary toggle-sm"
+                                checked={settings.is_thought_auto_update ?? false}
+                                onChange={e => setSettings({ ...settings, is_thought_auto_update: e.target.checked })} />
+                              <span className="text-sm font-bold">启用自动推演</span>
+                            </label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="form-control">
+                                <label className="label text-xs font-bold">推演间隔（轮）</label>
+                                <input type="number" min={1} className="input input-bordered input-sm"
+                                  value={settings.thought_interval ?? 5}
+                                  onChange={e => setSettings({ ...settings, thought_interval: Number(e.target.value) })} />
+                              </div>
+                              <div className="form-control">
+                                <label className="label text-xs font-bold">预设</label>
+                                <select className="select select-bordered select-sm"
+                                  value={settings.thought_preset_id ? String(settings.thought_preset_id) : ''}
+                                  onChange={e => { const v = e.target.value; setSettings({ ...settings, thought_preset_id: v ? Number(v) : undefined }); }}>
+                                  <option value="">跟随顶部预设</option>
+                                  {presets.map(p => <option key={`thought-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                </select>
+                              </div>
+                              <div className="form-control md:col-span-2">
+                                <label className="label text-xs font-bold">模型</label>
+                                <input type="text" className="input input-bordered input-sm"
+                                  value={settings.thought_model_id ?? ''}
+                                  placeholder="留空跟随顶部模型"
+                                  onChange={e => setSettings({ ...settings, thought_model_id: e.target.value })} />
+                              </div>
+                            </div>
+                          </div>
+                      </section>
+                      <section>
                           <div className="flex justify-between items-end mb-3">
                               <h4 className="text-sm font-black text-primary uppercase">API 预设库</h4>
                               <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "New Preset", api_base: "", api_key: "", api_mode: 'chat_completions'}).then(() => loadData())}>+ 新增</button>
@@ -4564,6 +4621,7 @@ function App() {
                       {charEditTab === 'snapshots' && (
                         <SnapshotManager
                           charId={selectedCharId}
+                          latestMessages={messages}
                           onSnapshotRestore={async (_snap) => {
                             await loadCharData();
                             setMessages([]);
@@ -4663,6 +4721,15 @@ function App() {
           </div>
       )}
     </div>
+
+    {toastMsg && (
+      <div className="toast toast-bottom toast-start z-50">
+        <div className={`alert ${toastMsg.type === 'success' ? 'alert-success' : 'alert-info'} shadow-lg`}>
+          <span className="text-sm">{toastMsg.text}</span>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -5522,6 +5589,7 @@ interface SnapshotManagerProps {
   charId?: number;
   roomId?: number;
   onSnapshotRestore?: (snapshot: Snapshot) => void;
+  latestMessages?: any[];
 }
 
 const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
@@ -5530,10 +5598,11 @@ const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
   { value: 'milestone', label: '里程碑' },
 ];
 
-export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotManagerProps) {
+export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessages }: SnapshotManagerProps) {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
+  const [snapshotDetails, setSnapshotDetails] = useState<{ snapshot: any; messages: any[]; variables: any[] } | null>(null);
   const [editingSnapshot, setEditingSnapshot] = useState<Snapshot | null>(null);
   const [showDetail, setShowDetail] = useState(false);
 
@@ -5559,6 +5628,9 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
 
   const handleCreate = async () => {
     try {
+      const msgs = latestMessages || [];
+      const aiMsg = msgs[msgs.length - 1];
+      const userMsg = msgs[msgs.length - 2];
       const res = await fetch('/api/snapshots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -5567,11 +5639,11 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
           room_id: roomId,
           name: `快照 ${new Date().toLocaleString()}`,
           snapshot_type: 'manual',
+          user_message: userMsg?.content || undefined,
+          ai_response: aiMsg?.content || undefined,
         }),
       });
-      if (res.ok) {
-        fetchSnapshots();
-      }
+      if (res.ok) fetchSnapshots();
     } catch (e) {
       console.error('Failed to create snapshot:', e);
     }
@@ -5634,7 +5706,8 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
     try {
       const res = await fetch(`/api/snapshots?id=${snapshot.id}`);
       const data = await res.json();
-      setSelectedSnapshot(data);
+      setSelectedSnapshot(data.snapshot ?? data);
+      setSnapshotDetails(data);
       setShowDetail(true);
     } catch (e) {
       console.error('Failed to fetch snapshot detail:', e);
@@ -5811,48 +5884,57 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
       )}
 
       {showDetail && selectedSnapshot && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+        <div className="modal modal-open">
+          <div className="modal-box max-w-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h4 className="text-lg font-semibold">快照详情</h4>
-              <button
-                onClick={() => setShowDetail(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ✕
-              </button>
+              <h4 className="text-lg font-bold">快照详情</h4>
+              <button onClick={() => setShowDetail(false)} className="btn btn-sm btn-circle btn-ghost">✕</button>
             </div>
             <div className="space-y-4">
               <div>
-                <div className="font-medium">名称</div>
-                <div>{selectedSnapshot.name}</div>
+                <div className="font-bold text-sm opacity-60">名称</div>
+                <div>{(selectedSnapshot as any).name ?? (snapshotDetails?.snapshot?.name)}</div>
               </div>
-              {selectedSnapshot.description && (
+              {((selectedSnapshot as any).description ?? snapshotDetails?.snapshot?.description) && (
                 <div>
-                  <div className="font-medium">描述</div>
-                  <div>{selectedSnapshot.description}</div>
+                  <div className="font-bold text-sm opacity-60">描述</div>
+                  <div>{(selectedSnapshot as any).description ?? snapshotDetails?.snapshot?.description}</div>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="font-medium">类型</div>
-                  <div>{getTypeLabel(selectedSnapshot.snapshot_type)}</div>
+                  <div className="font-bold text-sm opacity-60">类型</div>
+                  <div>{getTypeLabel((selectedSnapshot as any).snapshot_type ?? snapshotDetails?.snapshot?.snapshot_type)}</div>
                 </div>
                 <div>
-                  <div className="font-medium">创建时间</div>
-                  <div>{formatDate(selectedSnapshot.created_at)}</div>
+                  <div className="font-bold text-sm opacity-60">创建时间</div>
+                  <div>{formatDate((selectedSnapshot as any).created_at ?? snapshotDetails?.snapshot?.created_at)}</div>
                 </div>
               </div>
-              {selectedSnapshot.user_message && (
+              {((selectedSnapshot as any).user_message ?? snapshotDetails?.snapshot?.user_message) && (
                 <div>
-                  <div className="font-medium">用户消息</div>
-                  <div className="bg-gray-100 p-2 rounded">{selectedSnapshot.user_message}</div>
+                  <div className="font-bold text-sm opacity-60">用户消息</div>
+                  <div className="bg-base-200 p-2 rounded text-sm">{(selectedSnapshot as any).user_message ?? snapshotDetails?.snapshot?.user_message}</div>
                 </div>
               )}
-              {selectedSnapshot.ai_response && (
+              {((selectedSnapshot as any).ai_response ?? snapshotDetails?.snapshot?.ai_response) && (
                 <div>
-                  <div className="font-medium">AI回复</div>
-                  <div className="bg-gray-100 p-2 rounded whitespace-pre-wrap">{selectedSnapshot.ai_response}</div>
+                  <div className="font-bold text-sm opacity-60">AI 回复</div>
+                  <div className="bg-base-200 p-2 rounded text-sm whitespace-pre-wrap">{(selectedSnapshot as any).ai_response ?? snapshotDetails?.snapshot?.ai_response}</div>
+                </div>
+              )}
+              {snapshotDetails?.variables && snapshotDetails.variables.length > 0 && (
+                <div>
+                  <div className="font-bold text-sm opacity-60 mb-2">保存的变量</div>
+                  <div className="flex flex-wrap gap-2">
+                    {snapshotDetails.variables.map((v: any, i: number) => (
+                      <div key={i} className="badge badge-outline gap-1 text-xs">
+                        <span className="font-mono font-bold">{v.key}</span>
+                        <span className="opacity-70">=</span>
+                        <span>{String(v.value ?? '')}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -5869,8 +5951,9 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
 ## File: src\components\variables\VariableManager.tsx
 
 ```tsx
-import React, { useState, useEffect, useCallback } from 'react';
-import type { Variable, VariableType } from '../../lib/db';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import type { Variable, VariableType, VariableStage } from '../../lib/db';
+import { api } from '../../lib/db';
 
 interface VariableManagerProps {
   charId?: number;
@@ -5887,11 +5970,42 @@ const typeOptions: { value: VariableType; label: string }[] = [
   { value: 'list', label: '列表' },
 ];
 
+const typeBadgeColor: Record<string, string> = {
+  number: 'badge-primary', string: 'badge-secondary', boolean: 'badge-accent',
+  range: 'badge-info', dict: 'badge-warning', list: 'badge-success',
+};
+
+const defaultValueForType = (type: VariableType): any => {
+  switch (type) {
+    case 'number': case 'range': return 0;
+    case 'boolean': return false;
+    case 'string': return '';
+    case 'dict': return {};
+    case 'list': return [];
+  }
+};
+
+const DICT_PLACEHOLDER = '{"name": "主角", "技能": ["技能1", "技能2"], "后宫": [{"name": "nv1", "堕落值": 1}]}';
+
 export function VariableManager({ charId, roomId, onVariablesChange }: VariableManagerProps) {
   const [variables, setVariables] = useState<Variable[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<Variable>>({});
+  // raw text buffer for dict/list while user is typing (may be invalid JSON)
+  const [rawTextState, setRawTextState] = useState<Record<number, string>>({});
+
+  // Stages modal
+  const [stagesVarId, setStagesVarId] = useState<number | null>(null);
+  const [stages, setStages] = useState<VariableStage[]>([]);
+  const [stagesLoading, setStagesLoading] = useState(false);
+  const [editingStageId, setEditingStageId] = useState<number | null>(null);
+  const [stageForm, setStageForm] = useState<Partial<VariableStage>>({
+    name: '', condition: '', priority: 0, stage_prompt: '', effects: '', is_active: true,
+  });
+
+  const onChangeRef = useRef(onVariablesChange);
+  useEffect(() => { onChangeRef.current = onVariablesChange; });
 
   const fetchVariables = useCallback(async () => {
     setLoading(true);
@@ -5899,368 +6013,330 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
       const params = new URLSearchParams();
       if (charId) params.set('char_id', String(charId));
       if (roomId) params.set('room_id', String(roomId));
-      const res = await fetch(`/api/variables?${params}`);
-      const data = await res.json();
+      const data = await fetch(`/api/variables?${params}`).then(r => r.json());
       setVariables(data);
-      onVariablesChange?.(data);
-    } catch (e) {
-      console.error('Failed to fetch variables:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [charId, roomId, onVariablesChange]);
+      onChangeRef.current?.(data);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, [charId, roomId]);
 
-  useEffect(() => {
-    fetchVariables();
-  }, [fetchVariables]);
+  useEffect(() => { fetchVariables(); }, [fetchVariables]);
+
+  // ── variable CRUD ──────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
-    try {
-      const res = await fetch('/api/variables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          char_id: charId,
-          room_id: roomId,
-          name: '新变量',
-          key: `var_${Date.now()}`,
-          type: 'number',
-          value: 0,
-          is_persistent: true,
-          is_visible: true,
-        }),
-      });
-      if (res.ok) {
-        fetchVariables();
-      }
-    } catch (e) {
-      console.error('Failed to create variable:', e);
-    }
+    await fetch('/api/variables', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ char_id: charId, room_id: roomId, name: '新变量', key: `var_${Date.now()}`, type: 'number', value: 0, is_persistent: true, is_visible: true }),
+    });
+    fetchVariables();
   };
 
   const handleUpdate = async (id: number, updates: Partial<Variable>) => {
-    try {
-      const res = await fetch('/api/variables', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, ...updates }),
-      });
-      if (res.ok) {
-        fetchVariables();
-      }
-    } catch (e) {
-      console.error('Failed to update variable:', e);
-    }
+    await fetch('/api/variables', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...updates }),
+    });
+    fetchVariables();
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除此变量？')) return;
-    try {
-      const res = await fetch(`/api/variables?id=${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchVariables();
-      }
-    } catch (e) {
-      console.error('Failed to delete variable:', e);
-    }
+    await fetch(`/api/variables?id=${id}`, { method: 'DELETE' });
+    fetchVariables();
   };
 
   const handleReset = async (id: number) => {
-    try {
-      const res = await fetch('/api/variables?action=reset&id=' + id, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setVariables(prev => prev.map(v => v.id === id ? { ...v, value: data.value } : v));
-      }
-    } catch (e) {
-      console.error('Failed to reset variable:', e);
+    const res = await fetch('/api/variables?action=reset&id=' + id, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      setVariables(prev => prev.map(v => v.id === id ? { ...v, value: data.value } : v));
     }
   };
 
-  const handleBulkUpdate = async (updates: Array<{ id: number; value: any }>) => {
-    try {
-      const res = await fetch('/api/variables?action=bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates }),
-      });
-      if (res.ok) {
-        fetchVariables();
-      }
-    } catch (e) {
-      console.error('Failed to bulk update variables:', e);
+  const startEdit = (v: Variable) => { setEditingId(v.id ?? null); setEditForm({ ...v }); };
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); };
+  const saveEdit = async () => { if (editingId) { await handleUpdate(editingId, editForm); cancelEdit(); } };
+
+  // ── stages CRUD ────────────────────────────────────────────────────────────
+
+  const openStages = async (varId: number) => {
+    setStagesVarId(varId);
+    setEditingStageId(null);
+    setStageForm({ name: '', condition: '', priority: 0, stage_prompt: '', effects: '', is_active: true });
+    setStagesLoading(true);
+    try { setStages(await api.variableStages.list(varId)); }
+    catch (e) { console.error(e); }
+    finally { setStagesLoading(false); }
+  };
+
+  const saveStage = async () => {
+    if (!stagesVarId) return;
+    if (editingStageId) {
+      await api.variableStages.update(editingStageId, stageForm);
+    } else {
+      await api.variableStages.add({ ...stageForm as VariableStage, variable_id: stagesVarId });
     }
+    setEditingStageId(null);
+    setStageForm({ name: '', condition: '', priority: 0, stage_prompt: '', effects: '', is_active: true });
+    setStages(await api.variableStages.list(stagesVarId));
   };
 
-  const startEdit = (variable: Variable) => {
-    setEditingId(variable.id ?? null);
-    setEditForm({ ...variable });
+  const deleteStage = async (id: number) => {
+    if (!stagesVarId) return;
+    await api.variableStages.delete(id);
+    setStages(await api.variableStages.list(stagesVarId));
   };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditForm({});
-  };
+  const startEditStage = (s: VariableStage) => { setEditingStageId(s.id ?? null); setStageForm({ ...s }); };
 
-  const saveEdit = async () => {
-    if (editingId) {
-      await handleUpdate(editingId, editForm);
-      cancelEdit();
-    }
-  };
+  // ── value input renderer ───────────────────────────────────────────────────
 
-  const renderValueInput = (variable: Variable, onChange: (value: any) => void) => {
-    const value = variable.value;
+  const renderValueInput = (variable: Variable, onChange: (v: any) => void) => {
+    const { value, id: vid } = variable;
+    const id = vid!;
 
     switch (variable.type) {
       case 'boolean':
-        return (
-          <select
-            value={value ? 'true' : 'false'}
-            onChange={(e) => onChange(e.target.value === 'true')}
-            className="w-full px-2 py-1 border rounded"
-          >
-            <option value="true">是</option>
-            <option value="false">否</option>
-          </select>
-        );
+        return <input type="checkbox" className="toggle toggle-primary toggle-sm"
+          checked={Boolean(value)} onChange={e => onChange(e.target.checked)} />;
 
       case 'range':
         return (
-          <div className="space-y-1">
-            <input
-              type="range"
-              min={variable.min_value ?? 0}
-              max={variable.max_value ?? 100}
-              step={variable.step ?? 1}
-              value={Number(value) || 0}
-              onChange={(e) => onChange(Number(e.target.value))}
-              className="w-full"
-            />
-            <div className="text-center text-sm">{String(value)}</div>
+          <div className="flex items-center gap-2 flex-1">
+            <input type="range" min={variable.min_value ?? 0} max={variable.max_value ?? 100}
+              step={variable.step ?? 1} value={Number(value) || 0}
+              onChange={e => onChange(Number(e.target.value))}
+              className="range range-primary range-xs flex-1" />
+            <span className="text-sm font-mono w-10 text-right">{String(value)}</span>
           </div>
         );
 
-      case 'dict':
+      case 'dict': {
+        const raw = rawTextState[id] ?? (typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '{}'));
         return (
-          <textarea
-            value={typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '{}')}
-            onChange={(e) => {
+          <textarea value={raw} rows={5} placeholder={DICT_PLACEHOLDER}
+            className="textarea textarea-bordered textarea-sm w-full font-mono text-xs"
+            onChange={e => {
+              const text = e.target.value;
+              setRawTextState(prev => ({ ...prev, [id]: text }));
+              try { onChange(JSON.parse(text)); } catch {}
+            }}
+            onBlur={e => {
               try {
                 onChange(JSON.parse(e.target.value));
+                setRawTextState(prev => { const n = { ...prev }; delete n[id]; return n; });
               } catch {}
-            }}
-            className="w-full px-2 py-1 border rounded font-mono text-sm"
-            rows={3}
-          />
+            }} />
         );
+      }
 
-      case 'list':
+      case 'list': {
+        const raw = rawTextState[id] ?? (Array.isArray(value) ? value.join('\n') : String(value ?? ''));
         return (
-          <textarea
-            value={Array.isArray(value) ? value.join('\n') : String(value ?? '')}
-            onChange={(e) => onChange(e.target.value.split('\n').filter(s => s.trim()))}
-            className="w-full px-2 py-1 border rounded font-mono text-sm"
-            rows={3}
-            placeholder="每行一个值"
-          />
+          <textarea value={raw} rows={3} placeholder="每行一个值"
+            className="textarea textarea-bordered textarea-sm w-full font-mono text-xs"
+            onChange={e => {
+              const text = e.target.value;
+              setRawTextState(prev => ({ ...prev, [id]: text }));
+              onChange(text.split('\n').filter((s: string) => s.trim()));
+            }}
+            onBlur={() => setRawTextState(prev => { const n = { ...prev }; delete n[id]; return n; })} />
         );
+      }
 
       case 'number':
-        return (
-          <input
-            type="number"
-            value={Number(value) || 0}
-            onChange={(e) => onChange(Number(e.target.value))}
-            className="w-full px-2 py-1 border rounded"
-          />
-        );
+        return <input type="number" value={Number(value) || 0} onChange={e => onChange(Number(e.target.value))}
+          className="input input-bordered input-sm w-32" />;
 
       default:
-        return (
-          <input
-            type="text"
-            value={String(value ?? '')}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-full px-2 py-1 border rounded"
-          />
-        );
+        return <input type="text" value={String(value ?? '')} onChange={e => onChange(e.target.value)}
+          className="input input-bordered input-sm flex-1" />;
     }
   };
 
-  const renderValueDisplay = (variable: Variable) => {
-    const { value, type } = variable;
+  // ── render ─────────────────────────────────────────────────────────────────
 
-    switch (type) {
-      case 'boolean':
-        return value ? '是' : '否';
-      case 'dict':
-      case 'list':
-        return typeof value === 'object' ? JSON.stringify(value) : String(value);
-      default:
-        return String(value ?? '');
-    }
-  };
+  const stagesVar = variables.find(v => v.id === stagesVarId);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">变量管理</h3>
-        <button
-          onClick={handleCreate}
-          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-        >
-          添加变量
-        </button>
+        <h3 className="font-bold text-sm opacity-70">变量列表</h3>
+        <button onClick={handleCreate} className="btn btn-primary btn-sm">+ 添加变量</button>
       </div>
 
       {loading ? (
-        <div className="text-center py-4">加载中...</div>
+        <div className="flex justify-center py-8"><span className="loading loading-spinner loading-md" /></div>
       ) : variables.length === 0 ? (
-        <div className="text-center py-4 text-gray-500">暂无变量</div>
+        <div className="text-center py-8 opacity-50 text-sm">暂无变量，点击右上角添加</div>
       ) : (
         <div className="space-y-2">
-          {variables.map((variable) => (
-            <div key={variable.id} className="border rounded p-3 space-y-2">
-              {editingId === variable.id ? (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={editForm.name || ''}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      placeholder="名称"
-                      className="px-2 py-1 border rounded"
-                    />
-                    <input
-                      type="text"
-                      value={editForm.key || ''}
-                      onChange={(e) => setEditForm({ ...editForm, key: e.target.value })}
-                      placeholder="键名"
-                      className="px-2 py-1 border rounded"
-                    />
+          {variables.map(variable => (
+            <div key={variable.id} className="card bg-base-200 shadow-sm border border-base-300">
+              <div className="card-body p-3">
+                {editingId === variable.id ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="text" value={editForm.name || ''} placeholder="名称"
+                        onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                        className="input input-bordered input-sm" />
+                      <input type="text" value={editForm.key || ''} placeholder="键名"
+                        onChange={e => setEditForm({ ...editForm, key: e.target.value })}
+                        className="input input-bordered input-sm font-mono" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={editForm.type || 'number'}
+                        onChange={e => {
+                          const t = e.target.value as VariableType;
+                          setEditForm({ ...editForm, type: t, value: defaultValueForType(t) });
+                        }}
+                        className="select select-bordered select-sm">
+                        {typeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                          <input type="checkbox" className="checkbox checkbox-xs"
+                            checked={editForm.is_persistent ?? true}
+                            onChange={e => setEditForm({ ...editForm, is_persistent: e.target.checked })} />
+                          持久化
+                        </label>
+                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                          <input type="checkbox" className="checkbox checkbox-xs"
+                            checked={editForm.is_visible ?? true}
+                            onChange={e => setEditForm({ ...editForm, is_visible: e.target.checked })} />
+                          可见
+                        </label>
+                      </div>
+                    </div>
+                    {(editForm.type === 'number' || editForm.type === 'range') && (
+                      <div className="grid grid-cols-3 gap-2">
+                        <input type="number" value={editForm.min_value ?? ''} placeholder="最小值"
+                          onChange={e => setEditForm({ ...editForm, min_value: e.target.value ? Number(e.target.value) : undefined })}
+                          className="input input-bordered input-sm" />
+                        <input type="number" value={editForm.max_value ?? ''} placeholder="最大值"
+                          onChange={e => setEditForm({ ...editForm, max_value: e.target.value ? Number(e.target.value) : undefined })}
+                          className="input input-bordered input-sm" />
+                        <input type="number" value={editForm.step ?? ''} placeholder="步长"
+                          onChange={e => setEditForm({ ...editForm, step: e.target.value ? Number(e.target.value) : undefined })}
+                          className="input input-bordered input-sm" />
+                      </div>
+                    )}
+                    <textarea value={editForm.description || ''} placeholder="描述（可选）" rows={2}
+                      onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                      className="textarea textarea-bordered textarea-sm w-full" />
+                    <div className="flex gap-2">
+                      <button onClick={saveEdit} className="btn btn-success btn-sm">保存</button>
+                      <button onClick={cancelEdit} className="btn btn-ghost btn-sm">取消</button>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      value={editForm.type || 'number'}
-                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value as VariableType })}
-                      className="px-2 py-1 border rounded"
-                    >
-                      {typeOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm">{variable.name}</span>
+                        <span className={`badge badge-sm ${typeBadgeColor[variable.type] || 'badge-ghost'}`}>
+                          {typeOptions.find(t => t.value === variable.type)?.label || variable.type}
+                        </span>
+                        <span className="font-mono text-xs opacity-50">{variable.key}</span>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => openStages(variable.id!)} className="btn btn-ghost btn-xs">阶段</button>
+                        <button onClick={() => startEdit(variable)} className="btn btn-ghost btn-xs">编辑</button>
+                        <button onClick={() => handleReset(variable.id!)} className="btn btn-ghost btn-xs text-warning">重置</button>
+                        <button onClick={() => handleDelete(variable.id!)} className="btn btn-ghost btn-xs text-error">删除</button>
+                      </div>
+                    </div>
                     <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-1">
-                        <input
-                          type="checkbox"
-                          checked={editForm.is_persistent ?? true}
-                          onChange={(e) => setEditForm({ ...editForm, is_persistent: e.target.checked })}
-                        />
-                        持久化
-                      </label>
-                      <label className="flex items-center gap-1">
-                        <input
-                          type="checkbox"
-                          checked={editForm.is_visible ?? true}
-                          onChange={(e) => setEditForm({ ...editForm, is_visible: e.target.checked })}
-                        />
-                        可见
-                      </label>
+                      {renderValueInput(variable, val => handleUpdate(variable.id!, { value: val }))}
                     </div>
+                    {variable.description && <div className="text-xs opacity-60">{variable.description}</div>}
                   </div>
-                  {(editForm.type === 'number' || editForm.type === 'range') && (
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        type="number"
-                        value={editForm.min_value ?? ''}
-                        onChange={(e) => setEditForm({ ...editForm, min_value: e.target.value ? Number(e.target.value) : undefined })}
-                        placeholder="最小值"
-                        className="px-2 py-1 border rounded"
-                      />
-                      <input
-                        type="number"
-                        value={editForm.max_value ?? ''}
-                        onChange={(e) => setEditForm({ ...editForm, max_value: e.target.value ? Number(e.target.value) : undefined })}
-                        placeholder="最大值"
-                        className="px-2 py-1 border rounded"
-                      />
-                      <input
-                        type="number"
-                        value={editForm.step ?? ''}
-                        onChange={(e) => setEditForm({ ...editForm, step: e.target.value ? Number(e.target.value) : undefined })}
-                        placeholder="步长"
-                        className="px-2 py-1 border rounded"
-                      />
-                    </div>
-                  )}
-                  <textarea
-                    value={editForm.description || ''}
-                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                    placeholder="描述"
-                    className="w-full px-2 py-1 border rounded"
-                    rows={2}
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveEdit}
-                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
-                    >
-                      保存
-                    </button>
-                    <button
-                      onClick={cancelEdit}
-                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="font-medium">{variable.name}</div>
-                      <div className="text-sm text-gray-500">键名: {variable.key}</div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => startEdit(variable)}
-                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        onClick={() => handleReset(variable.id!)}
-                        className="px-2 py-1 text-sm bg-yellow-100 rounded hover:bg-yellow-200"
-                      >
-                        重置
-                      </button>
-                      <button
-                        onClick={() => handleDelete(variable.id!)}
-                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">
-                      {typeOptions.find(t => t.value === variable.type)?.label || variable.type}:
-                    </span>
-                    {renderValueInput(variable, (value) => handleUpdate(variable.id!, { value }))}
-                  </div>
-                  {variable.description && (
-                    <div className="text-sm text-gray-500">{variable.description}</div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Stages modal */}
+      {stagesVarId !== null && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-2xl flex flex-col max-h-[80vh]">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg">阶段管理 — {stagesVar?.name}</h3>
+              <button className="btn btn-sm btn-circle btn-ghost" onClick={() => setStagesVarId(null)}>✕</button>
+            </div>
+
+            {stagesLoading ? (
+              <div className="flex justify-center py-4"><span className="loading loading-spinner" /></div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+                {stages.length === 0 && <div className="text-center py-4 opacity-50 text-sm">暂无阶段</div>}
+                {stages.map(s => (
+                  <div key={s.id} className="card bg-base-200 border border-base-300">
+                    <div className="card-body p-3 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm">{s.name}</span>
+                          <span className="badge badge-xs badge-outline">优先级 {s.priority}</span>
+                          <span className={`badge badge-xs ${s.is_active ? 'badge-success' : 'badge-ghost'}`}>
+                            {s.is_active ? '启用' : '禁用'}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={() => startEditStage(s)} className="btn btn-ghost btn-xs">编辑</button>
+                          <button onClick={() => deleteStage(s.id!)} className="btn btn-ghost btn-xs text-error">删除</button>
+                        </div>
+                      </div>
+                      <div className="text-xs font-mono opacity-70">条件: {s.condition}</div>
+                      {s.stage_prompt && <div className="text-xs opacity-60 truncate">提示: {s.stage_prompt}</div>}
+                      {s.effects && <div className="text-xs font-mono opacity-60">效果: {s.effects}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stage form */}
+            <div className="border-t pt-4 space-y-2">
+              <div className="text-xs font-bold opacity-60">{editingStageId ? '编辑阶段' : '新增阶段'}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="text" value={stageForm.name || ''} placeholder="阶段名称"
+                  onChange={e => setStageForm({ ...stageForm, name: e.target.value })}
+                  className="input input-bordered input-sm" />
+                <input type="number" value={stageForm.priority ?? 0} placeholder="优先级"
+                  onChange={e => setStageForm({ ...stageForm, priority: Number(e.target.value) })}
+                  className="input input-bordered input-sm" />
+              </div>
+              <input type="text" value={stageForm.condition || ''} placeholder="触发条件，如: v > 50"
+                onChange={e => setStageForm({ ...stageForm, condition: e.target.value })}
+                className="input input-bordered input-sm w-full font-mono" />
+              <textarea value={stageForm.stage_prompt || ''} placeholder="阶段提示词（注入 System Prompt）" rows={2}
+                onChange={e => setStageForm({ ...stageForm, stage_prompt: e.target.value })}
+                className="textarea textarea-bordered textarea-sm w-full" />
+              <input type="text" value={stageForm.effects || ''} placeholder='效果 JSON，如: {"add": -5} 或 {"set": 100}'
+                onChange={e => setStageForm({ ...stageForm, effects: e.target.value })}
+                className="input input-bordered input-sm w-full font-mono" />
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="checkbox" className="toggle toggle-success toggle-sm"
+                    checked={stageForm.is_active ?? true}
+                    onChange={e => setStageForm({ ...stageForm, is_active: e.target.checked })} />
+                  启用
+                </label>
+                <div className="flex gap-2">
+                  {editingStageId && (
+                    <button onClick={() => { setEditingStageId(null); setStageForm({ name: '', condition: '', priority: 0, stage_prompt: '', effects: '', is_active: true }); }}
+                      className="btn btn-ghost btn-sm">取消</button>
+                  )}
+                  <button onClick={saveStage} className="btn btn-primary btn-sm">
+                    {editingStageId ? '保存修改' : '添加阶段'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -6350,6 +6426,10 @@ export interface Settings {
   summary_model_id?: string;
   sd_prompt_preset_id?: number;
   sd_prompt_model_id?: string;
+  thought_preset_id?: number;
+  thought_model_id?: string;
+  thought_interval?: number;
+  is_thought_auto_update?: boolean;
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
@@ -6630,10 +6710,10 @@ export const api = {
   },
 
   variableStages: {
-    list: (variableId: number) => fetch(`${API}/variables/stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
-    add: (s: VariableStage) => fetch(`${API}/variables/stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
-    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables/stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
-    delete: (id: number) => fetch(`${API}/variables/stages?id=${id}`, { method: 'DELETE' }),
+    list: (variableId: number) => fetch(`${API}/variables-stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
+    add: (s: VariableStage) => fetch(`${API}/variables-stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables-stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
+    delete: (id: number) => fetch(`${API}/variables-stages?id=${id}`, { method: 'DELETE' }),
   },
 
   variableThoughtConfig: {
@@ -6641,11 +6721,11 @@ export const api = {
       const params = new URLSearchParams();
       if (charId) params.set('char_id', String(charId));
       if (roomId) params.set('room_id', String(roomId));
-      return fetch(`${API}/variables/thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
+      return fetch(`${API}/variables-thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
     },
-    save: (config: VariableThoughtConfig) => fetch(`${API}/variables/thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
-    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string }) =>
-      fetch(`${API}/variables/thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
+    save: (config: VariableThoughtConfig) => fetch(`${API}/variables-thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
+    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string; preset_id?: number; model?: string }) =>
+      fetch(`${API}/variables-thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
         if (!r.ok) throw new Error(await r.text());
         return r.json();
       }),

@@ -37,11 +37,16 @@ function App() {
   const [settings, setSettings] = useState<Settings>();
   const [lorebookEntries, setLorebookEntries] = useState<any[]>([]);
   
-  // 【新增】全局变量与思考引擎状态
+  // 全局变量与思考引擎状态
   const [globalVariables, setGlobalVariables] = useState<Variable[]>([]);
   const [globalStages, setGlobalStages] = useState<VariableStage[]>([]);
-  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
   const [turnCount, setTurnCount] = useState(0);
+  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'info' | 'success' } | null>(null);
+
+  const showToast = (text: string, type: 'info' | 'success' = 'info') => {
+    setToastMsg({ text, type });
+    setTimeout(() => setToastMsg(null), 3000);
+  };
 
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -220,8 +225,7 @@ function App() {
         }
         setGlobalStages(allStages);
       });
-      api.variableThoughtConfig.get(selectedCharId).then(setThoughtConfig);
-      setTurnCount(0); // 重置会话计数器
+      setTurnCount(0);
 
     } else if (viewMode === 'group' && selectedRoomId) {
       api.rooms.getMembers(selectedRoomId).then((m) => {
@@ -303,6 +307,9 @@ function App() {
     // 2. 世界书动态扫描与注入组装
     const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
+    if (triggeredLorebook.length > 0) {
+      showToast("已激活世界书：" + triggeredLorebook.map((l: any) => l.name || l.keywords).join(', '));
+    }
 
     // 3. 获取变量阶段的心理/行为暗示
     const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
@@ -347,20 +354,24 @@ function App() {
             const res = await api.messages.add({ role: 'assistant', content: fullContent, char_id: char.id, timestamp: tempTs });
             setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, id: res.id } : m));
 
-            // 【核心修改】触发后台自动分析更新变量机制
+            // 触发后台自动分析更新变量机制
             setTurnCount(prev => {
               const nextCount = prev + 1;
-              if (thoughtConfig?.is_auto_update && thoughtConfig.update_interval && nextCount >= thoughtConfig.update_interval) {
-                // 静默触发分析
+              const interval = settings?.thought_interval ?? 5;
+              if (settings?.is_thought_auto_update && nextCount >= interval) {
                 api.variableThoughtConfig.triggerThought({
                   char_id: char.id,
-                  history: currentHistory.slice(-10), // 取近10条用于分析
-                  user_input: textOverride
-                }).then(() => {
-                  // 分析完成后静默刷新前端变量展示状态
+                  history: currentHistory.slice(-10),
+                  user_input: textOverride,
+                  preset_id: settings?.thought_preset_id,
+                  model: settings?.thought_model_id || activeModel,
+                }).then((result) => {
+                  if (result?.updates?.length > 0) {
+                    showToast("后台推演完成，变量已更新", 'success');
+                  }
                   api.variables.list(char.id).then(setGlobalVariables);
                 }).catch(console.error);
-                return 0; // 重置计数器
+                return 0;
               }
               return nextCount;
             });
@@ -551,6 +562,7 @@ function App() {
   if (isLoading) return <div className="h-screen flex items-center justify-center bg-base-100"><span className="loading loading-spinner loading-lg text-primary"></span></div>;
 
   return (
+    <>
     <div className="drawer md:drawer-open fixed inset-0 w-full bg-base-100 overflow-hidden text-base-content">
       <input id="my-drawer" type="checkbox" className="drawer-toggle" checked={mobileMenuOpen} onChange={e=>setMobileMenuOpen(e.target.checked)} />
       <div className="drawer-content flex flex-col h-full overflow-hidden relative">
@@ -866,6 +878,41 @@ function App() {
                           </div>
                       </section>
                       <section>
+                          <h4 className="text-sm font-black mb-3 text-primary uppercase">后台变量推演模型</h4>
+                          <div className="p-4 border border-base-300 rounded-xl space-y-3">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" className="toggle toggle-primary toggle-sm"
+                                checked={settings.is_thought_auto_update ?? false}
+                                onChange={e => setSettings({ ...settings, is_thought_auto_update: e.target.checked })} />
+                              <span className="text-sm font-bold">启用自动推演</span>
+                            </label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="form-control">
+                                <label className="label text-xs font-bold">推演间隔（轮）</label>
+                                <input type="number" min={1} className="input input-bordered input-sm"
+                                  value={settings.thought_interval ?? 5}
+                                  onChange={e => setSettings({ ...settings, thought_interval: Number(e.target.value) })} />
+                              </div>
+                              <div className="form-control">
+                                <label className="label text-xs font-bold">预设</label>
+                                <select className="select select-bordered select-sm"
+                                  value={settings.thought_preset_id ? String(settings.thought_preset_id) : ''}
+                                  onChange={e => { const v = e.target.value; setSettings({ ...settings, thought_preset_id: v ? Number(v) : undefined }); }}>
+                                  <option value="">跟随顶部预设</option>
+                                  {presets.map(p => <option key={`thought-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
+                                </select>
+                              </div>
+                              <div className="form-control md:col-span-2">
+                                <label className="label text-xs font-bold">模型</label>
+                                <input type="text" className="input input-bordered input-sm"
+                                  value={settings.thought_model_id ?? ''}
+                                  placeholder="留空跟随顶部模型"
+                                  onChange={e => setSettings({ ...settings, thought_model_id: e.target.value })} />
+                              </div>
+                            </div>
+                          </div>
+                      </section>
+                      <section>
                           <div className="flex justify-between items-end mb-3">
                               <h4 className="text-sm font-black text-primary uppercase">API 预设库</h4>
                               <button className="btn btn-xs btn-primary" onClick={() => api.presets.add({name: "New Preset", api_base: "", api_key: "", api_mode: 'chat_completions'}).then(() => loadData())}>+ 新增</button>
@@ -931,63 +978,10 @@ function App() {
                         </div>
                       )}
                       {charEditTab === 'variables' && (
-                        <div className="space-y-4">
-                          <div className="card bg-base-200 border border-base-300">
-                            <div className="card-body p-4">
-                              <h4 className="card-title text-sm">🤖 AI 自动推演变量配置</h4>
-                              <div className="grid grid-cols-2 gap-3">
-                                <label className="flex items-center gap-2 cursor-pointer col-span-2">
-                                  <input type="checkbox" className="toggle toggle-primary toggle-sm"
-                                    checked={thoughtConfig?.is_auto_update ?? false}
-                                    onChange={async (e) => {
-                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, is_auto_update: e.target.checked };
-                                      await api.variableThoughtConfig.save(updated);
-                                      setThoughtConfig(updated);
-                                    }} />
-                                  <span className="text-sm">启用自动推演</span>
-                                </label>
-                                <div className="form-control">
-                                  <label className="label py-0"><span className="label-text text-xs">推演间隔（轮）</span></label>
-                                  <input type="number" min={1} className="input input-bordered input-sm"
-                                    value={thoughtConfig?.update_interval ?? 5}
-                                    onChange={async (e) => {
-                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, update_interval: Number(e.target.value) };
-                                      await api.variableThoughtConfig.save(updated);
-                                      setThoughtConfig(updated);
-                                    }} />
-                                </div>
-                                <div className="form-control">
-                                  <label className="label py-0"><span className="label-text text-xs">API 预设</span></label>
-                                  <select className="select select-bordered select-sm"
-                                    value={thoughtConfig?.preset_id ?? ''}
-                                    onChange={async (e) => {
-                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, preset_id: e.target.value ? Number(e.target.value) : undefined };
-                                      await api.variableThoughtConfig.save(updated);
-                                      setThoughtConfig(updated);
-                                    }}>
-                                    <option value="">-- 选择预设 --</option>
-                                    {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                  </select>
-                                </div>
-                                <div className="form-control col-span-2">
-                                  <label className="label py-0"><span className="label-text text-xs">模型名称</span></label>
-                                  <input type="text" className="input input-bordered input-sm"
-                                    value={thoughtConfig?.model ?? ''}
-                                    placeholder="留空使用全局模型"
-                                    onChange={async (e) => {
-                                      const updated = { ...(thoughtConfig ?? { is_auto_update: false }), char_id: selectedCharId, model: e.target.value };
-                                      await api.variableThoughtConfig.save(updated);
-                                      setThoughtConfig(updated);
-                                    }} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          <VariableManager
-                            charId={selectedCharId}
-                            onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
-                          />
-                        </div>
+                        <VariableManager
+                          charId={selectedCharId}
+                          onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
+                        />
                       )}
                       {charEditTab === 'snapshots' && (
                         <SnapshotManager
@@ -1092,6 +1086,15 @@ function App() {
           </div>
       )}
     </div>
+
+    {toastMsg && (
+      <div className="toast toast-bottom toast-start z-50">
+        <div className={`alert ${toastMsg.type === 'success' ? 'alert-success' : 'alert-info'} shadow-lg`}>
+          <span className="text-sm">{toastMsg.text}</span>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

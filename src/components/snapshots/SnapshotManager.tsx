@@ -18,6 +18,7 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
+  const [snapshotDetails, setSnapshotDetails] = useState<{ snapshot: any; messages: any[]; variables: any[] } | null>(null);
   const [editingSnapshot, setEditingSnapshot] = useState<Snapshot | null>(null);
   const [showDetail, setShowDetail] = useState(false);
 
@@ -121,7 +122,8 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
     try {
       const res = await fetch(`/api/snapshots?id=${snapshot.id}`);
       const data = await res.json();
-      setSelectedSnapshot(data);
+      setSelectedSnapshot(data.snapshot ?? data);
+      setSnapshotDetails(data);
       setShowDetail(true);
     } catch (e) {
       console.error('Failed to fetch snapshot detail:', e);
@@ -298,48 +300,57 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
       )}
 
       {showDetail && selectedSnapshot && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+        <div className="modal modal-open">
+          <div className="modal-box max-w-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h4 className="text-lg font-semibold">快照详情</h4>
-              <button
-                onClick={() => setShowDetail(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                ✕
-              </button>
+              <h4 className="text-lg font-bold">快照详情</h4>
+              <button onClick={() => setShowDetail(false)} className="btn btn-sm btn-circle btn-ghost">✕</button>
             </div>
             <div className="space-y-4">
               <div>
-                <div className="font-medium">名称</div>
-                <div>{selectedSnapshot.name}</div>
+                <div className="font-bold text-sm opacity-60">名称</div>
+                <div>{(selectedSnapshot as any).name ?? (snapshotDetails?.snapshot?.name)}</div>
               </div>
-              {selectedSnapshot.description && (
+              {((selectedSnapshot as any).description ?? snapshotDetails?.snapshot?.description) && (
                 <div>
-                  <div className="font-medium">描述</div>
-                  <div>{selectedSnapshot.description}</div>
+                  <div className="font-bold text-sm opacity-60">描述</div>
+                  <div>{(selectedSnapshot as any).description ?? snapshotDetails?.snapshot?.description}</div>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="font-medium">类型</div>
-                  <div>{getTypeLabel(selectedSnapshot.snapshot_type)}</div>
+                  <div className="font-bold text-sm opacity-60">类型</div>
+                  <div>{getTypeLabel((selectedSnapshot as any).snapshot_type ?? snapshotDetails?.snapshot?.snapshot_type)}</div>
                 </div>
                 <div>
-                  <div className="font-medium">创建时间</div>
-                  <div>{formatDate(selectedSnapshot.created_at)}</div>
+                  <div className="font-bold text-sm opacity-60">创建时间</div>
+                  <div>{formatDate((selectedSnapshot as any).created_at ?? snapshotDetails?.snapshot?.created_at)}</div>
                 </div>
               </div>
-              {selectedSnapshot.user_message && (
+              {((selectedSnapshot as any).user_message ?? snapshotDetails?.snapshot?.user_message) && (
                 <div>
-                  <div className="font-medium">用户消息</div>
-                  <div className="bg-gray-100 p-2 rounded">{selectedSnapshot.user_message}</div>
+                  <div className="font-bold text-sm opacity-60">用户消息</div>
+                  <div className="bg-base-200 p-2 rounded text-sm">{(selectedSnapshot as any).user_message ?? snapshotDetails?.snapshot?.user_message}</div>
                 </div>
               )}
-              {selectedSnapshot.ai_response && (
+              {((selectedSnapshot as any).ai_response ?? snapshotDetails?.snapshot?.ai_response) && (
                 <div>
-                  <div className="font-medium">AI回复</div>
-                  <div className="bg-gray-100 p-2 rounded whitespace-pre-wrap">{selectedSnapshot.ai_response}</div>
+                  <div className="font-bold text-sm opacity-60">AI 回复</div>
+                  <div className="bg-base-200 p-2 rounded text-sm whitespace-pre-wrap">{(selectedSnapshot as any).ai_response ?? snapshotDetails?.snapshot?.ai_response}</div>
+                </div>
+              )}
+              {snapshotDetails?.variables && snapshotDetails.variables.length > 0 && (
+                <div>
+                  <div className="font-bold text-sm opacity-60 mb-2">保存的变量</div>
+                  <div className="flex flex-wrap gap-2">
+                    {snapshotDetails.variables.map((v: any, i: number) => (
+                      <div key={i} className="badge badge-outline gap-1 text-xs">
+                        <span className="font-mono font-bold">{v.key}</span>
+                        <span className="opacity-70">=</span>
+                        <span>{String(v.value ?? '')}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

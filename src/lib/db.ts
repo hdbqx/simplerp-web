@@ -75,6 +75,10 @@ export interface Settings {
   summary_model_id?: string;
   sd_prompt_preset_id?: number;
   sd_prompt_model_id?: string;
+  thought_preset_id?: number;
+  thought_model_id?: string;
+  thought_interval?: number;
+  is_thought_auto_update?: boolean;
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
@@ -355,10 +359,10 @@ export const api = {
   },
 
   variableStages: {
-    list: (variableId: number) => fetch(`${API}/variables/stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
-    add: (s: VariableStage) => fetch(`${API}/variables/stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
-    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables/stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
-    delete: (id: number) => fetch(`${API}/variables/stages?id=${id}`, { method: 'DELETE' }),
+    list: (variableId: number) => fetch(`${API}/variables-stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
+    add: (s: VariableStage) => fetch(`${API}/variables-stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables-stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
+    delete: (id: number) => fetch(`${API}/variables-stages?id=${id}`, { method: 'DELETE' }),
   },
 
   variableThoughtConfig: {
@@ -366,11 +370,11 @@ export const api = {
       const params = new URLSearchParams();
       if (charId) params.set('char_id', String(charId));
       if (roomId) params.set('room_id', String(roomId));
-      return fetch(`${API}/variables/thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
+      return fetch(`${API}/variables-thought-config?${params}`).then(r => r.json() as Promise<VariableThoughtConfig | null>);
     },
-    save: (config: VariableThoughtConfig) => fetch(`${API}/variables/thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
-    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string }) =>
-      fetch(`${API}/variables/thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
+    save: (config: VariableThoughtConfig) => fetch(`${API}/variables-thought-config`, { method: 'POST', headers, body: JSON.stringify(config) }),
+    triggerThought: (body: { char_id?: number; room_id?: number; history?: any[]; user_input?: string; preset_id?: number; model?: string }) =>
+      fetch(`${API}/variables-thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
         if (!r.ok) throw new Error(await r.text());
         return r.json();
       }),
