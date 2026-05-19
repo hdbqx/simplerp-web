@@ -28,6 +28,7 @@ simplerp-web/
 │       ├── variables-thought.ts
 │       └── variables.ts
 ├── index.html
+├── migrate-v3.1.sql
 ├── package.json
 ├── postcss.config.js
 ├── public
@@ -75,7 +76,7 @@ node_modules
 dist
 dist-ssr
 *.local
-
+project_context.md
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -137,6 +138,344 @@ export default defineConfig([
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+```
+
+
+## File: migrate-v3.1.sql
+
+```sql
+-- ============================================
+-- SimpleRP Web - Migration Script v3.1
+-- 安全迁移：先删除旧表，再创建新表
+-- ============================================
+
+-- 删除旧版本表（确保全新创建）
+DROP TABLE IF EXISTS lorebook;
+DROP TABLE IF EXISTS auto_snapshot_rules;
+DROP TABLE IF EXISTS lorebook_v2;
+DROP TABLE IF EXISTS variables;
+DROP TABLE IF EXISTS variable_stages;
+DROP TABLE IF EXISTS variable_thought_config;
+DROP TABLE IF EXISTS snapshots;
+DROP TABLE IF EXISTS snapshot_messages;
+DROP TABLE IF EXISTS snapshot_variables;
+DROP TABLE IF EXISTS message_edits;
+DROP TABLE IF EXISTS lorebook_groups;
+
+-- 删除旧索引
+DROP INDEX IF EXISTS idx_variables_char_id;
+DROP INDEX IF EXISTS idx_variables_room_id;
+DROP INDEX IF EXISTS idx_variables_key;
+DROP INDEX IF EXISTS idx_variable_stages_variable_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_char_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_room_id;
+DROP INDEX IF EXISTS idx_lorebook_v2_group;
+DROP INDEX IF EXISTS idx_lorebook_v2_is_constant;
+DROP INDEX IF EXISTS idx_snapshots_char_id;
+DROP INDEX IF EXISTS idx_snapshots_room_id;
+DROP INDEX IF EXISTS idx_snapshots_order;
+DROP INDEX IF EXISTS idx_snapshots_room_order;
+DROP INDEX IF EXISTS idx_snapshot_messages_snapshot_id;
+DROP INDEX IF EXISTS idx_snapshot_variables_snapshot_id;
+DROP INDEX IF EXISTS idx_lorebook_groups_char_id;
+
+-- ============================================
+-- 基础表结构（保持不变）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS characters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    first_message TEXT,
+    summary TEXT,
+    created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    role TEXT NOT NULL,
+    content TEXT,
+    image TEXT,
+    timestamp INTEGER,
+    snapshot_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config TEXT
+);
+
+CREATE TABLE IF NOT EXISTS api_presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    api_base TEXT,
+    api_key TEXT,
+    api_mode TEXT DEFAULT 'chat_completions'
+);
+
+CREATE TABLE IF NOT EXISTS rooms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    summary TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS room_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL,
+    char_id INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS room_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL,
+    char_id INTEGER,
+    sender_type TEXT,
+    role TEXT,
+    content TEXT,
+    image TEXT,
+    meta_json TEXT,
+    timestamp INTEGER,
+    snapshot_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    r2_key TEXT NOT NULL UNIQUE,
+    message_id INTEGER,
+    room_message_id INTEGER,
+    char_id INTEGER,
+    room_id INTEGER,
+    prompt TEXT,
+    created_at INTEGER
+);
+
+-- ============================================
+-- v3.1 新增表结构
+-- ============================================
+
+-- 9. 对话变量定义表
+CREATE TABLE variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'number',
+    value TEXT,
+    default_value TEXT,
+    min_value REAL,
+    max_value REAL,
+    step REAL,
+    is_persistent INTEGER DEFAULT 1,
+    is_visible INTEGER DEFAULT 1,
+    description TEXT,
+    tags TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 10. 变量阶段性表现配置表
+CREATE TABLE variable_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variable_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    condition TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    stage_prompt TEXT,
+    effects TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at INTEGER
+);
+
+-- 11. 变量思考API配置表
+CREATE TABLE variable_thought_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    preset_id INTEGER,
+    model TEXT,
+    thought_prompt TEXT,
+    update_condition TEXT,
+    update_interval INTEGER DEFAULT 5,
+    is_auto_update INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
+-- 12. 世界书表（SillyTavern风格增强版）
+CREATE TABLE lorebook_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    trigger_mode TEXT DEFAULT 'keyword',
+    keywords TEXT,
+    regex_pattern TEXT,
+    match_logic TEXT DEFAULT 'any',
+    match_expression TEXT,
+    content TEXT NOT NULL,
+    trigger_condition TEXT,
+    priority INTEGER DEFAULT 0,
+    group_name TEXT,
+    category TEXT,
+    position TEXT DEFAULT 'before_system',
+    insertion_depth INTEGER,
+    parent_id INTEGER,
+    probability REAL DEFAULT 1.0,
+    use_once INTEGER DEFAULT 0,
+    cooldown_messages INTEGER DEFAULT 0,
+    last_triggered_at INTEGER,
+    trigger_count INTEGER DEFAULT -1,
+    scan_depth INTEGER DEFAULT 2,
+    is_active INTEGER DEFAULT 1,
+    is_constant INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
+-- 13. 快照表
+CREATE TABLE snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    snapshot_order INTEGER DEFAULT 0,
+    snapshot_type TEXT DEFAULT 'auto',
+    user_message TEXT,
+    ai_response TEXT,
+    message_count INTEGER DEFAULT 0,
+    thumbnail TEXT,
+    is_active INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
+-- 14. 快照消息数据
+CREATE TABLE snapshot_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    original_message_id INTEGER,
+    char_id INTEGER,
+    room_id INTEGER,
+    role TEXT NOT NULL,
+    content TEXT,
+    image TEXT,
+    timestamp INTEGER,
+    order_index INTEGER
+);
+
+-- 15. 快照变量数据
+CREATE TABLE snapshot_variables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL,
+    variable_id INTEGER,
+    key TEXT NOT NULL,
+    value TEXT,
+    type TEXT
+);
+
+-- 16. 消息编辑历史表
+CREATE TABLE message_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    char_id INTEGER,
+    room_id INTEGER,
+    old_content TEXT,
+    new_content TEXT,
+    edited_at INTEGER
+);
+
+-- 17. 世界书分组表
+CREATE TABLE lorebook_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_active INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
+-- ============================================
+-- 创建索引
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_messages_char_id ON messages(char_id);
+CREATE INDEX IF NOT EXISTS idx_messages_snapshot_id ON messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_variables_char_id ON variables(char_id);
+CREATE INDEX IF NOT EXISTS idx_variables_room_id ON variables(room_id);
+CREATE INDEX IF NOT EXISTS idx_variables_key ON variables(key);
+CREATE INDEX IF NOT EXISTS idx_variable_stages_variable_id ON variable_stages(variable_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_char_id ON lorebook_v2(char_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_room_id ON lorebook_v2(room_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_group ON lorebook_v2(group_name);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_is_constant ON lorebook_v2(is_constant);
+CREATE INDEX IF NOT EXISTS idx_snapshots_char_id ON snapshots(char_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_room_id ON snapshots(room_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_order ON snapshots(char_id, snapshot_order);
+CREATE INDEX IF NOT EXISTS idx_snapshots_room_order ON snapshots(room_id, snapshot_order);
+CREATE INDEX IF NOT EXISTS idx_snapshot_messages_snapshot_id ON snapshot_messages(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_variables_snapshot_id ON snapshot_variables(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_groups_char_id ON lorebook_groups(char_id);
+
+-- ============================================
+-- 初始化默认数据
+-- ============================================
+
+INSERT INTO settings (id, config) 
+SELECT 1, '{}' 
+WHERE NOT EXISTS (SELECT 1 FROM settings WHERE id = 1);
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '皇帝', '你是帝国的最高统治者。你要在大局、权术、人心与制度之间做决断。', '众卿平身。今日何事？', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '皇帝');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '中书令', '你掌中书省机务，负责拟制诏令、汇总政务、承接圣意并协调六部。', '臣在。请陛下示下要点，臣即拟旨。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '中书令');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '吏部尚书', '你主管选官、考课、任免。你既讲制度，也懂人情与派系平衡。', '臣吏部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '吏部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '户部尚书', '你主管财政、田赋、仓储。你对数字敏感，常以"银子与粮"衡量政策可行性。', '臣户部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '户部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '礼部尚书', '你主管礼制、科举、邦交礼仪。你最在意"名分与秩序"。', '臣礼部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '礼部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '兵部尚书', '你主管军政、调兵、边防。你重视情报、兵员、粮草与将领忠诚。', '臣兵部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '兵部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '刑部尚书', '你主管刑名、律令、审狱。你强调证据与法度，也懂得用法驭人。', '臣刑部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '刑部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '工部尚书', '你主管工程、水利、营造与工匠。你关注工期、材料与事故风险。', '臣工部在此。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '工部尚书');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '皇后', '你代表后宫秩序与宗庙名分。你温和端方，但对权力与家族利益敏感。', '臣妾在。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '皇后');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '贵妃', '你深谙人心与情绪，擅长影响陛下判断与宫廷风向。你有自己的算盘。', '妾身参见陛下。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '贵妃');
+
+INSERT INTO characters (name, description, first_message, summary, created_at)
+SELECT '外邦使臣', '你代表外邦利益，善用礼仪、威胁与交易争取筹码。你会试探帝国底线。', '使臣奉命来朝。', '', strftime('%s','now')*1000
+WHERE NOT EXISTS (SELECT 1 FROM characters WHERE name = '外邦使臣');
+
 ```
 
 
@@ -262,7 +601,7 @@ npm run dev
 
 ```sql
 -- ============================================
--- SimpleRP Web - Optimized Database Schema v3.0
+-- SimpleRP Web - Optimized Database Schema v3.1
 -- ============================================
 
 -- 1. 角色表
@@ -345,24 +684,27 @@ CREATE TABLE IF NOT EXISTS images (
 );
 
 -- ============================================
--- 新增: v3.0 表结构
+-- v3.1 核心表结构
 -- ============================================
 
 -- 9. 对话变量定义表
+-- 支持类型: number, string, boolean, range, dict, list
 CREATE TABLE IF NOT EXISTS variables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
     key TEXT NOT NULL,
-    type TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'number',
     value TEXT,
+    default_value TEXT,
     min_value REAL,
     max_value REAL,
     step REAL,
     is_persistent INTEGER DEFAULT 1,
     is_visible INTEGER DEFAULT 1,
     description TEXT,
+    tags TEXT,
     created_at INTEGER,
     updated_at INTEGER
 );
@@ -375,6 +717,7 @@ CREATE TABLE IF NOT EXISTS variable_stages (
     condition TEXT NOT NULL,
     priority INTEGER DEFAULT 0,
     stage_prompt TEXT,
+    effects TEXT,
     is_active INTEGER DEFAULT 1,
     created_at INTEGER
 );
@@ -388,45 +731,86 @@ CREATE TABLE IF NOT EXISTS variable_thought_config (
     model TEXT,
     thought_prompt TEXT,
     update_condition TEXT,
-    update_interval INTEGER,
+    update_interval INTEGER DEFAULT 5,
     is_auto_update INTEGER DEFAULT 0,
     created_at INTEGER
 );
 
--- 12. 世界书表（增强版，替代旧表）
+-- 12. 世界书表（SillyTavern风格增强版）
 CREATE TABLE IF NOT EXISTS lorebook_v2 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
+    -- 触发模式: constant(常驻激活), keyword(关键词激活), regex(正则匹配)
+    trigger_mode TEXT DEFAULT 'keyword',
+    -- 关键词列表（逗号分隔）
     keywords TEXT,
+    -- 正则表达式模式
     regex_pattern TEXT,
+    -- 关键词匹配逻辑: any(任意匹配), all(全部匹配), not(排除匹配), expression(复杂表达式)
+    match_logic TEXT DEFAULT 'any',
+    -- 复杂逻辑表达式（SillyTavern风格，如: (A AND B) OR (C AND NOT D)）
+    match_expression TEXT,
+    -- 内容
     content TEXT NOT NULL,
+    -- 额外触发条件（JavaScript表达式）
     trigger_condition TEXT,
+    -- 优先级（越高越优先）
     priority INTEGER DEFAULT 0,
+    -- 分组/文件夹
+    group_name TEXT,
+    -- 分类标签
     category TEXT,
+    -- 注入位置: before_system, after_system, last
     position TEXT DEFAULT 'before_system',
+    -- 插入深度
     insertion_depth INTEGER,
+    -- 父条目ID（用于层级结构）
     parent_id INTEGER,
+    -- 触发概率 (0.0-1.0)
     probability REAL DEFAULT 1.0,
+    -- 是否仅触发一次
     use_once INTEGER DEFAULT 0,
+    -- 冷却消息数
     cooldown_messages INTEGER DEFAULT 0,
+    -- 最后触发时间戳
     last_triggered_at INTEGER,
+    -- 每次触发后递减，0时不再触发
+    trigger_count INTEGER DEFAULT -1,
+    -- 扫描深度（扫描最近N条消息）
+    scan_depth INTEGER DEFAULT 2,
+    -- 是否启用
     is_active INTEGER DEFAULT 1,
+    -- 是否为常驻条目（始终激活）
+    is_constant INTEGER DEFAULT 0,
+    -- 排序顺序
+    sort_order INTEGER DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
 );
 
--- 13. 快照表（线性存储，每次对话生成一个快照）
+-- 13. 快照表（每轮对话自动生成）
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id INTEGER,
     room_id INTEGER,
     name TEXT NOT NULL,
     description TEXT,
+    -- 快照顺序（用于排序和回滚）
     snapshot_order INTEGER DEFAULT 0,
+    -- 快照类型: auto(自动), manual(手动), checkpoint(检查点)
+    snapshot_type TEXT DEFAULT 'auto',
+    -- 该轮对话的用户输入
     user_message TEXT,
+    -- 该轮对话的AI回复
     ai_response TEXT,
+    -- 消息总数
+    message_count INTEGER DEFAULT 0,
+    -- 缩略图（可选）
+    thumbnail TEXT,
+    -- 是否为当前活跃快照
+    is_active INTEGER DEFAULT 0,
     created_at INTEGER
 );
 
@@ -434,6 +818,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE TABLE IF NOT EXISTS snapshot_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
+    original_message_id INTEGER,
     char_id INTEGER,
     room_id INTEGER,
     role TEXT NOT NULL,
@@ -464,6 +849,18 @@ CREATE TABLE IF NOT EXISTS message_edits (
     edited_at INTEGER
 );
 
+-- 17. 世界书分组表
+CREATE TABLE IF NOT EXISTS lorebook_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id INTEGER,
+    room_id INTEGER,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_active INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER
+);
+
 -- ============================================
 -- 删除旧表（如果存在）
 -- ============================================
@@ -478,13 +875,19 @@ CREATE INDEX IF NOT EXISTS idx_messages_snapshot_id ON messages(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id);
 CREATE INDEX IF NOT EXISTS idx_variables_char_id ON variables(char_id);
 CREATE INDEX IF NOT EXISTS idx_variables_room_id ON variables(room_id);
+CREATE INDEX IF NOT EXISTS idx_variables_key ON variables(key);
+CREATE INDEX IF NOT EXISTS idx_variable_stages_variable_id ON variable_stages(variable_id);
 CREATE INDEX IF NOT EXISTS idx_lorebook_v2_char_id ON lorebook_v2(char_id);
 CREATE INDEX IF NOT EXISTS idx_lorebook_v2_room_id ON lorebook_v2(room_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_group ON lorebook_v2(group_name);
+CREATE INDEX IF NOT EXISTS idx_lorebook_v2_is_constant ON lorebook_v2(is_constant);
 CREATE INDEX IF NOT EXISTS idx_snapshots_char_id ON snapshots(char_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_room_id ON snapshots(room_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_order ON snapshots(char_id, snapshot_order);
+CREATE INDEX IF NOT EXISTS idx_snapshots_room_order ON snapshots(room_id, snapshot_order);
 CREATE INDEX IF NOT EXISTS idx_snapshot_messages_snapshot_id ON snapshot_messages(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_variables_snapshot_id ON snapshot_variables(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_lorebook_groups_char_id ON lorebook_groups(char_id);
 
 -- ============================================
 -- 初始化默认数据
@@ -939,7 +1342,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 ## File: functions\api\images.ts
 
 ```ts
-type ImageBackend = 'huggingface' | 'openai';
+type ImageBackend = 'huggingface' | 'openai' | 'modelscope';
 type ImageAction = 'txt2img' | 'img2img';
 
 interface ImageProxyBody {
@@ -1047,6 +1450,161 @@ async function saveImageRecord(db: D1Database, r2Key: string, charId?: number, r
   return meta.last_row_id;
 }
 
+async function handleModelScope(
+  context: any,
+  body: ImageProxyBody,
+  prompt: string,
+  charId?: number,
+  roomId?: number
+): Promise<Response> {
+  const apiBase = normalizeBase(body.apiBase || 'https://api-inference.modelscope.cn/v1');
+  const model = body.model || 'Tongyi-MAI/Z-Image-Turbo';
+  const apiKey = body.apiKey;
+  
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: '请配置魔搭社区 API Key' }), { 
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const payload = {
+    model,
+    prompt,
+    size: body.payload?.size || '1024x1024',
+    n: body.payload?.n || 1,
+    response_format: 'b64_json',
+    ...body.payload
+  };
+
+  try {
+    const res = await fetch(`${apiBase}/images/generations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'X-ModelScope-Async-Mode': 'true'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return new Response(errText, { status: res.status });
+    }
+
+    const data: any = await res.json();
+    
+    if (data.task_id || data.task_status) {
+      const taskId = data.task_id;
+      const taskStatusUrl = `${apiBase}/tasks/${taskId}`;
+      
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const statusRes = await fetch(taskStatusUrl, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'X-ModelScope-Async-Mode': 'true'
+          }
+        });
+        
+        if (!statusRes.ok) continue;
+        
+        const statusData: any = await statusRes.json();
+        
+        if (statusData.task_status === 'SUCCEEDED' || statusData.status === 'succeeded') {
+          const resultData = statusData.output || statusData.data || statusData;
+          
+          if (resultData.images || resultData.data) {
+            const images = resultData.images || resultData.data || [];
+            return await processImageResults(context, images, charId, roomId, prompt);
+          }
+        }
+        
+        if (statusData.task_status === 'FAILED' || statusData.status === 'failed') {
+          return new Response(JSON.stringify({ 
+            error: statusData.message || '生成失败' 
+          }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+      
+      return new Response(JSON.stringify({ error: '生成超时' }), { 
+        status: 504,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    if (data.data || data.images) {
+      const images = data.data || data.images || [];
+      return await processImageResults(context, images, charId, roomId, prompt);
+    }
+    
+    return new Response(JSON.stringify({ error: '未知响应格式' }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: `魔搭社区生成失败: ${e.message}` }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function processImageResults(
+  context: any,
+  images: any[],
+  charId?: number,
+  roomId?: number,
+  prompt?: string
+): Promise<Response> {
+  const urls: string[] = [];
+  const keys: string[] = [];
+  const imageIds: number[] = [];
+  
+  for (const item of images) {
+    const b64 = item.b64_json || item.image || (typeof item === 'string' ? item : null);
+    
+    if (b64) {
+      let imgBuf: ArrayBuffer;
+      
+      if (b64.startsWith('http')) {
+        const imgRes = await fetch(b64);
+        if (!imgRes.ok) continue;
+        imgBuf = await imgRes.arrayBuffer();
+      } else {
+        const binaryString = atob(b64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        imgBuf = bytes.buffer;
+      }
+      
+      const imageKey = generateImageKey(charId, roomId);
+      await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
+      const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
+      
+      const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
+      urls.push(imageUrl);
+      keys.push(imageKey);
+      imageIds.push(imageId);
+    }
+  }
+  
+  return Response.json({ 
+    images: [], 
+    urls,
+    keys,
+    image_ids: imageIds
+  });
+}
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const key = url.searchParams.get('key');
@@ -1145,6 +1703,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const charId = body.char_id;
     const roomId = body.room_id;
 
+    if (backend === 'modelscope') {
+      return await handleModelScope(context, body, prompt, charId, roomId);
+    }
+
     if (backend === 'huggingface') {
       const comfyUrl = normalizeBase(body.apiKey || '');
       if (!comfyUrl || !comfyUrl.startsWith('http')) {
@@ -1221,36 +1783,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (!res.ok) return new Response(await res.text(), { status: res.status });
     const data: any = await res.json();
     
-    const urls: string[] = [];
-    const keys: string[] = [];
-    const imageIds: number[] = [];
-    
-    for (const item of data.data) {
-      if (item.b64_json) {
-        const binaryString = atob(item.b64_json);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const imgBuf = bytes.buffer;
-        
-        const imageKey = generateImageKey(charId, roomId);
-        await uploadToR2(context.env.IMAGES_BUCKET, imgBuf, imageKey);
-        const imageId = await saveImageRecord(context.env.DB, imageKey, charId, roomId, prompt);
-        
-        const imageUrl = `/api/images?key=${encodeURIComponent(imageKey)}`;
-        urls.push(imageUrl);
-        keys.push(imageKey);
-        imageIds.push(imageId);
-      }
-    }
-    
-    return Response.json({ 
-      images: [], 
-      urls,
-      keys,
-      image_ids: imageIds
-    });
+    return await processImageResults(context, data.data || [], charId, roomId, prompt);
 
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
@@ -1435,6 +1968,8 @@ export const onRequestPost: PagesFunction = async (context) => {
 ## File: functions\api\lorebook-v2.ts
 
 ```ts
+import { D1Database } from '@cloudflare/workers-types';
+
 interface Env {
   DB: D1Database;
 }
@@ -1449,10 +1984,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const params: any[] = [];
     if (charId) { query += ' AND char_id = ?'; params.push(Number(charId)); }
     if (roomId) { query += ' AND room_id = ?'; params.push(Number(roomId)); }
-    query += ' ORDER BY priority DESC, created_at DESC';
+    query += ' ORDER BY priority DESC, sort_order ASC, created_at DESC';
 
     const { results } = await context.env.DB.prepare(query).bind(...params).all();
-    return Response.json(results?.map(r => ({ ...r, is_active: r.is_active === 1, use_once: r.use_once === 1 })) || []);
+    return Response.json(results?.map(r => ({
+      ...r,
+      is_active: r.is_active === 1,
+      use_once: r.use_once === 1,
+      is_constant: r.is_constant === 1
+    })) || []);
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
@@ -1468,7 +2008,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       const { results } = await context.env.DB.prepare('SELECT * FROM lorebook WHERE char_id = ?').bind(Number(charId)).all();
       for (const entry of results || []) {
         await context.env.DB.prepare(
-          'INSERT INTO lorebook_v2 (char_id, name, keywords, content, priority, position, probability, use_once, cooldown_messages, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO lorebook_v2 (char_id, name, keywords, content, priority, position, probability, use_once, cooldown_messages, is_active, trigger_mode, match_logic, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
           Number(charId),
           entry.keywords?.substring(0, 50) || '未命名条目',
@@ -1480,6 +2020,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           0,
           0,
           entry.is_active,
+          'keyword',
+          'any',
           Date.now(),
           Date.now()
         ).run();
@@ -1487,19 +2029,54 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return new Response('Migrated');
     }
 
+    if (action === 'bulk') {
+      const body: any = await context.request.json();
+      const updates = body.updates as Array<{ id: number; [key: string]: any }>;
+      const now = Date.now();
+      
+      for (const u of updates) {
+        const { id, ...fields } = u;
+        const setFields: string[] = [];
+        const params: any[] = [];
+        
+        for (const [key, val] of Object.entries(fields)) {
+          if (key === 'is_active' || key === 'use_once' || key === 'is_constant') {
+            setFields.push(`${key} = ?`);
+            params.push(val ? 1 : 0);
+          } else if (val !== undefined) {
+            setFields.push(`${key} = ?`);
+            params.push(val);
+          }
+        }
+        
+        if (setFields.length > 0) {
+          setFields.push('updated_at = ?');
+          params.push(now);
+          params.push(id);
+          await context.env.DB.prepare(`UPDATE lorebook_v2 SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+        }
+      }
+      
+      return Response.json({ success: true, count: updates.length });
+    }
+
     const body: any = await context.request.json();
     const now = Date.now();
     const { meta } = await context.env.DB.prepare(
-      'INSERT INTO lorebook_v2 (char_id, room_id, name, keywords, regex_pattern, content, trigger_condition, priority, category, position, insertion_depth, parent_id, probability, use_once, cooldown_messages, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO lorebook_v2 (char_id, room_id, name, trigger_mode, keywords, regex_pattern, match_logic, match_expression, content, trigger_condition, priority, group_name, category, position, insertion_depth, parent_id, probability, use_once, cooldown_messages, trigger_count, scan_depth, is_active, is_constant, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).bind(
       body.char_id || null,
       body.room_id || null,
       body.name,
+      body.trigger_mode || 'keyword',
       body.keywords || null,
       body.regex_pattern || null,
+      body.match_logic || 'any',
+      body.match_expression || null,
       body.content,
       body.trigger_condition || null,
       body.priority || 0,
+      body.group_name || null,
       body.category || null,
       body.position || 'before_system',
       body.insertion_depth || null,
@@ -1507,7 +2084,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       body.probability ?? 1.0,
       body.use_once ? 1 : 0,
       body.cooldown_messages || 0,
+      body.trigger_count ?? -1,
+      body.scan_depth ?? 2,
       body.is_active !== false ? 1 : 0,
+      body.is_constant ? 1 : 0,
+      body.sort_order || 0,
       now,
       now
     ).run();
@@ -1528,21 +2109,21 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     const setFields: string[] = [];
     const params: any[] = [];
 
-    if (updates.name !== undefined) { setFields.push('name = ?'); params.push(updates.name); }
-    if (updates.keywords !== undefined) { setFields.push('keywords = ?'); params.push(updates.keywords); }
-    if (updates.regex_pattern !== undefined) { setFields.push('regex_pattern = ?'); params.push(updates.regex_pattern); }
-    if (updates.content !== undefined) { setFields.push('content = ?'); params.push(updates.content); }
-    if (updates.trigger_condition !== undefined) { setFields.push('trigger_condition = ?'); params.push(updates.trigger_condition); }
-    if (updates.priority !== undefined) { setFields.push('priority = ?'); params.push(updates.priority); }
-    if (updates.category !== undefined) { setFields.push('category = ?'); params.push(updates.category); }
-    if (updates.position !== undefined) { setFields.push('position = ?'); params.push(updates.position); }
-    if (updates.insertion_depth !== undefined) { setFields.push('insertion_depth = ?'); params.push(updates.insertion_depth); }
-    if (updates.parent_id !== undefined) { setFields.push('parent_id = ?'); params.push(updates.parent_id); }
-    if (updates.probability !== undefined) { setFields.push('probability = ?'); params.push(updates.probability); }
+    const stringFields = ['name', 'keywords', 'regex_pattern', 'match_logic', 'match_expression', 'content', 'trigger_condition', 'group_name', 'category', 'position'];
+    for (const f of stringFields) {
+      if (updates[f] !== undefined) { setFields.push(`${f} = ?`); params.push(updates[f]); }
+    }
+    
+    const numberFields = ['priority', 'insertion_depth', 'parent_id', 'probability', 'cooldown_messages', 'trigger_count', 'scan_depth', 'sort_order'];
+    for (const f of numberFields) {
+      if (updates[f] !== undefined) { setFields.push(`${f} = ?`); params.push(updates[f]); }
+    }
+    
+    if (updates.trigger_mode !== undefined) { setFields.push('trigger_mode = ?'); params.push(updates.trigger_mode); }
     if (updates.use_once !== undefined) { setFields.push('use_once = ?'); params.push(updates.use_once ? 1 : 0); }
-    if (updates.cooldown_messages !== undefined) { setFields.push('cooldown_messages = ?'); params.push(updates.cooldown_messages); }
-    if (updates.last_triggered_at !== undefined) { setFields.push('last_triggered_at = ?'); params.push(updates.last_triggered_at); }
     if (updates.is_active !== undefined) { setFields.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
+    if (updates.is_constant !== undefined) { setFields.push('is_constant = ?'); params.push(updates.is_constant ? 1 : 0); }
+    if (updates.last_triggered_at !== undefined) { setFields.push('last_triggered_at = ?'); params.push(updates.last_triggered_at); }
 
     setFields.push('updated_at = ?');
     params.push(Date.now());
@@ -2234,16 +2815,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const id = body.id;
     if (!id) return new Response('Missing snapshot id', { status: 400 });
 
-    // 1. 获取快照元数据
     const snapshot: any = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
     if (!snapshot) return new Response('Snapshot not found', { status: 404 });
 
-    // 单人角色存档回滚
+    await deleteLaterSnapshots(context, snapshot);
+
     if (snapshot.char_id) {
-      // (1) 清空当前角色主聊天记录 (不影响群聊记录)
-      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND group_id IS NULL').bind(snapshot.char_id).run();
+      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
       
-      // (2) 恢复聊天记录
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
       for (const m of msgs || []) {
         const msg: any = m;
@@ -2253,28 +2832,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           snapshot.char_id, 
           msg.role || 'user', 
           msg.content || '', 
-          msg.image || null, // 强制防 undefined 崩溃
+          msg.image || null,
           msg.timestamp || Date.now()
         ).run();
       }
 
-      // (3) 恢复变量状态
       const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
       for (const v of vars || []) {
         const sv: any = v;
         if (sv.variable_id) {
-            // 直接更新回原变量 ID
-            await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-                .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
+          await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+            .bind(sv.value ?? null, Date.now(), sv.variable_id).run();
         }
       }
     } 
-    // 群聊房间存档回滚
     else if (snapshot.room_id) {
-      // (1) 清空当前群聊主聊天记录
       await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
       
-      // (2) 恢复群聊记录
       const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
       for (const m of msgs || []) {
         const msg: any = m;
@@ -2285,17 +2859,31 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           msg.char_id || null, 
           msg.role || 'user', 
           msg.content || '', 
-          msg.image || null, // 强制防 undefined 崩溃
+          msg.image || null,
           msg.timestamp || Date.now()
         ).run();
       }
     }
 
-    return Response.json({ success: true });
+    return Response.json({ success: true, deleted_after: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 };
+
+async function deleteLaterSnapshots(context: any, snapshot: any) {
+  const { results: laterSnapshots } = await context.env.DB.prepare(
+    'SELECT id FROM snapshots WHERE (char_id = ? OR room_id = ?) AND snapshot_order > ?'
+  ).bind(snapshot.char_id || null, snapshot.room_id || null, snapshot.snapshot_order || 0).all();
+
+  for (const later of laterSnapshots || []) {
+    const laterId = (later as any).id;
+    await context.env.DB.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(laterId).run();
+    await context.env.DB.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(laterId).run();
+    await context.env.DB.prepare('DELETE FROM snapshots WHERE id = ?').bind(laterId).run();
+  }
+}
+
 ```
 
 
@@ -2315,6 +2903,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     if (id) {
       const snapshot = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
+      if (!snapshot) return new Response('Not found', { status: 404 });
       const { results: messages } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
       const { results: variables } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
       return Response.json({ snapshot, messages, variables });
@@ -2335,45 +2924,133 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
+    const url = new URL(context.request.url);
+    const action = url.searchParams.get('action');
     const body: any = await context.request.json();
     const now = Date.now();
 
-    const maxOrderRes = await context.env.DB.prepare('SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE char_id = ? OR room_id = ?')
-      .bind(body.char_id || null, body.room_id || null).first();
+    if (action === 'auto') {
+      return await createAutoSnapshot(context, body, now);
+    }
+
+    const maxOrderRes = await context.env.DB.prepare(
+      'SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE (char_id = ? OR ? IS NULL) AND (room_id = ? OR ? IS NULL)'
+    ).bind(body.char_id || null, body.char_id || null, body.room_id || null, body.room_id || null).first();
     const snapshotOrder = ((maxOrderRes?.max_order as number) || 0) + 1;
 
     const { meta } = await context.env.DB.prepare(
-      `INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(body.char_id || null, body.room_id || null, body.name, body.description || null, snapshotOrder, now).run();
+      `INSERT INTO snapshots (char_id, room_id, name, description, snapshot_order, snapshot_type, user_message, ai_response, message_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      body.char_id || null, 
+      body.room_id || null, 
+      body.name, 
+      body.description || null, 
+      snapshotOrder,
+      body.snapshot_type || 'manual',
+      body.user_message || null,
+      body.ai_response || null,
+      0,
+      now
+    ).run();
     
     const snapshotId = meta.last_row_id as number;
+    await populateSnapshotData(context, snapshotId, body.char_id, body.room_id, now);
 
-    if (body.char_id) {
-      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? AND group_id IS NULL ORDER BY timestamp ASC').bind(body.char_id).all();
-      for (let i = 0; i < (msgs?.length || 0); i++) {
-        const m: any = msgs[i];
-        await context.env.DB.prepare(
-          `INSERT INTO snapshot_messages (snapshot_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).bind(snapshotId, body.char_id, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
-      }
-      
-      const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(body.char_id).all();
-      for (const v of vars || []) {
-        await context.env.DB.prepare(
-          `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
-        ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
-      }
-    } else if (body.room_id) {
-      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(body.room_id).all();
-      for (let i = 0; i < (msgs?.length || 0); i++) {
-        const m: any = msgs[i];
-        await context.env.DB.prepare(
-          `INSERT INTO snapshot_messages (snapshot_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(snapshotId, body.room_id, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
+    return Response.json({ id: snapshotId });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+  }
+};
+
+async function createAutoSnapshot(context: any, body: any, now: number) {
+  const { char_id, room_id, user_message, ai_response } = body;
+  
+  const maxOrderRes = await context.env.DB.prepare(
+    'SELECT COALESCE(MAX(snapshot_order), 0) as max_order FROM snapshots WHERE (char_id = ? OR ? IS NULL) AND (room_id = ? OR ? IS NULL)'
+  ).bind(char_id || null, char_id || null, room_id || null, room_id || null).first();
+  const snapshotOrder = ((maxOrderRes?.max_order as number) || 0) + 1;
+
+  const name = `第 ${snapshotOrder} 轮 - ${new Date().toLocaleTimeString()}`;
+  
+  let messageCount = 0;
+  if (char_id) {
+    const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM messages WHERE char_id = ?').bind(char_id).first();
+    messageCount = (countRes?.count as number) || 0;
+  } else if (room_id) {
+    const countRes = await context.env.DB.prepare('SELECT COUNT(*) as count FROM room_messages WHERE room_id = ?').bind(room_id).first();
+    messageCount = (countRes?.count as number) || 0;
+  }
+
+  const { meta } = await context.env.DB.prepare(
+    `INSERT INTO snapshots (char_id, room_id, name, snapshot_order, snapshot_type, user_message, ai_response, message_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(char_id || null, room_id || null, name, snapshotOrder, 'auto', user_message, ai_response, messageCount, now).run();
+  
+  const snapshotId = meta.last_row_id as number;
+  await populateSnapshotData(context, snapshotId, char_id, room_id, now);
+
+  return Response.json({ id: snapshotId, snapshot_order: snapshotOrder });
+}
+
+async function populateSnapshotData(context: any, snapshotId: number, charId: number | undefined, roomId: number | undefined, now: number) {
+  if (charId) {
+    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM messages WHERE char_id = ? ORDER BY timestamp ASC').bind(charId).all();
+    for (let i = 0; i < (msgs?.length || 0); i++) {
+      const m: any = msgs[i];
+      await context.env.DB.prepare(
+        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(snapshotId, m.id || null, charId, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
+    }
+    
+    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE char_id = ?').bind(charId).all();
+    for (const v of vars || []) {
+      await context.env.DB.prepare(
+        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
+    }
+  } else if (roomId) {
+    const { results: msgs } = await context.env.DB.prepare('SELECT * FROM room_messages WHERE room_id = ? ORDER BY timestamp ASC').bind(roomId).all();
+    for (let i = 0; i < (msgs?.length || 0); i++) {
+      const m: any = msgs[i];
+      await context.env.DB.prepare(
+        `INSERT INTO snapshot_messages (snapshot_id, original_message_id, room_id, char_id, role, content, image, timestamp, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(snapshotId, m.id || null, roomId, m.char_id || null, m.role || 'user', m.content || '', m.image || null, m.timestamp || now, i).run();
+    }
+    
+    const { results: vars } = await context.env.DB.prepare('SELECT * FROM variables WHERE room_id = ?').bind(roomId).all();
+    for (const v of vars || []) {
+      await context.env.DB.prepare(
+        `INSERT INTO snapshot_variables (snapshot_id, variable_id, key, value, type) VALUES (?, ?, ?, ?, ?)`
+      ).bind(snapshotId, (v as any).id || null, (v as any).key || '', (v as any).value ?? null, (v as any).type || 'string').run();
+    }
+  }
+}
+
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  try {
+    const body: any = await context.request.json();
+    const { id, ...updates } = body;
+    
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const setFields: string[] = [];
+    const params: any[] = [];
+
+    const editableFields = ['name', 'description', 'user_message', 'ai_response'];
+    for (const f of editableFields) {
+      if (updates[f] !== undefined) {
+        setFields.push(`${f} = ?`);
+        params.push(updates[f]);
       }
     }
 
-    return Response.json({ id: snapshotId });
+    if (setFields.length === 0) return Response.json({ success: true });
+
+    setFields.push('updated_at = ?');
+    params.push(Date.now());
+    params.push(id);
+
+    await context.env.DB.prepare(`UPDATE snapshots SET ${setFields.join(', ')} WHERE id = ?`).bind(...params).run();
+    return Response.json({ success: true });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
@@ -2383,6 +3060,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   try {
     const id = new URL(context.request.url).searchParams.get('id');
     if (!id) return new Response('Missing id', { status: 400 });
+    
     await context.env.DB.prepare('DELETE FROM snapshot_messages WHERE snapshot_id = ?').bind(Number(id)).run();
     await context.env.DB.prepare('DELETE FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).run();
     await context.env.DB.prepare('DELETE FROM snapshots WHERE id = ?').bind(Number(id)).run();
@@ -2391,6 +3069,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
+
 ```
 
 
@@ -2665,14 +3344,19 @@ interface Env {
   DB: D1Database;
 }
 
-// 安全解析函数，防止单一数据格式错误导致整个列表崩溃
 function safeParse(val: any) {
   if (val == null) return null;
   try {
     return typeof val === 'string' ? JSON.parse(val) : val;
   } catch {
-    return val; // 如果解析失败，直接原样返回
+    return val;
   }
+}
+
+function serializeValue(val: any): string {
+  if (val == null) return '';
+  if (typeof val === 'object') return JSON.stringify(val);
+  return String(val);
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -2682,18 +3366,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const charId = url.searchParams.get('char_id');
     const roomId = url.searchParams.get('room_id');
 
-    // 获取单条详情
     if (id) {
       const result = await context.env.DB.prepare('SELECT * FROM variables WHERE id = ?').bind(Number(id)).first();
       if (!result) return new Response('Not found', { status: 404 });
-      return Response.json({ ...result, value: safeParse(result.value) });
+      return Response.json({ ...result, value: safeParse(result.value), default_value: safeParse(result.default_value) });
     }
 
-    // 获取列表
     let query = 'SELECT * FROM variables WHERE 1=1';
     const params: any[] = [];
     
-    // 过滤可能传过来的字符串 "undefined" 或 "null"
     if (charId && charId !== 'undefined' && charId !== 'null') { 
       query += ' AND char_id = ?'; 
       params.push(Number(charId)); 
@@ -2706,7 +3387,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     query += ' ORDER BY created_at DESC';
 
     const { results } = await context.env.DB.prepare(query).bind(...params).all();
-    return Response.json(results?.map(r => ({ ...r, value: safeParse(r.value) })) || []);
+    return Response.json(results?.map(r => ({ ...r, value: safeParse(r.value), default_value: safeParse(r.default_value) })) || []);
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
@@ -2714,27 +3395,81 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
+    const url = new URL(context.request.url);
+    const action = url.searchParams.get('action');
     const body: any = await context.request.json();
     const now = Date.now();
-    
-    // 确保 value 在入库前转换为合适的字符串
-    const valStr = typeof body.value === 'object' ? JSON.stringify(body.value) : String(body.value ?? '');
+
+    if (action === 'bulk') {
+      const updates = body.updates as Array<{ id: number; value: any }>;
+      for (const u of updates) {
+        await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+          .bind(serializeValue(u.value), now, u.id).run();
+      }
+      return Response.json({ success: true, count: updates.length });
+    }
+
+    if (action === 'reset') {
+      const id = url.searchParams.get('id');
+      if (!id) return new Response('Missing id', { status: 400 });
+      
+      const variable = await context.env.DB.prepare('SELECT default_value, type FROM variables WHERE id = ?').bind(Number(id)).first();
+      if (!variable) return new Response('Not found', { status: 404 });
+      
+      const defaultValue = safeParse((variable as any).default_value);
+      let resetValue = defaultValue;
+      
+      if (defaultValue === null || defaultValue === undefined) {
+        const type = (variable as any).type || 'number';
+        switch (type) {
+          case 'number':
+          case 'range':
+            resetValue = 0;
+            break;
+          case 'boolean':
+            resetValue = false;
+            break;
+          case 'string':
+            resetValue = '';
+            break;
+          case 'dict':
+            resetValue = {};
+            break;
+          case 'list':
+            resetValue = [];
+            break;
+          default:
+            resetValue = null;
+        }
+      }
+      
+      await context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
+        .bind(serializeValue(resetValue), now, Number(id)).run();
+      
+      return Response.json({ success: true, value: resetValue });
+    }
+
+    const valStr = serializeValue(body.value);
+    const defaultValStr = serializeValue(body.default_value);
 
     const { meta } = await context.env.DB.prepare(
-      `INSERT INTO variables (char_id, room_id, name, key, type, value, is_persistent, is_visible, step, min_value, max_value, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO variables (char_id, room_id, name, key, type, value, default_value, is_persistent, is_visible, step, min_value, max_value, description, tags, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       body.char_id || null,
       body.room_id || null,
       body.name || '新变量',
       body.key || 'new_var',
-      body.type || 'number', // 默认设为数字型
+      body.type || 'number',
       valStr,
+      defaultValStr || null,
       body.is_persistent !== false ? 1 : 0,
       body.is_visible !== false ? 1 : 0,
       body.step ?? null,
       body.min_value ?? null,
       body.max_value ?? null,
+      body.description ?? null,
+      body.tags ?? null,
       now,
       now
     ).run();
@@ -2751,12 +3486,13 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     const url = new URL(context.request.url);
     const id = url.searchParams.get('id');
     
-    if (!id) return new Response('Missing id', { status: 400 });
+    if (!id && !body.id) return new Response('Missing id', { status: 400 });
+    const targetId = id ? Number(id) : body.id;
 
     const updates: string[] = [];
     const params: any[] = [];
 
-    const fields = ['name', 'key', 'type', 'is_persistent', 'is_visible', 'step', 'min_value', 'max_value'];
+    const fields = ['name', 'key', 'type', 'is_persistent', 'is_visible', 'step', 'min_value', 'max_value', 'description', 'tags'];
     for (const f of fields) {
       if (body[f] !== undefined) {
         updates.push(`${f} = ?`);
@@ -2766,14 +3502,19 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 
     if (body.value !== undefined) {
       updates.push(`value = ?`);
-      params.push(typeof body.value === 'object' ? JSON.stringify(body.value) : String(body.value));
+      params.push(serializeValue(body.value));
+    }
+
+    if (body.default_value !== undefined) {
+      updates.push(`default_value = ?`);
+      params.push(serializeValue(body.default_value));
     }
 
     if (updates.length === 0) return Response.json({ success: true });
 
     updates.push('updated_at = ?');
     params.push(Date.now());
-    params.push(Number(id)); // WHERE id = ?
+    params.push(targetId);
 
     await context.env.DB.prepare(`UPDATE variables SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
     return Response.json({ success: true });
@@ -2787,7 +3528,6 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     const id = new URL(context.request.url).searchParams.get('id');
     if (!id) return new Response('Missing id', { status: 400 });
     
-    // 级联删除相关的阶段(Stages)配置
     await context.env.DB.prepare('DELETE FROM variable_stages WHERE variable_id = ?').bind(Number(id)).run();
     await context.env.DB.prepare('DELETE FROM variables WHERE id = ?').bind(Number(id)).run();
     
@@ -2796,6 +3536,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 };
+
 ```
 
 
@@ -3279,6 +4020,15 @@ function App() {
           apiKey: settings.hf_keys,
           payload: { prompt: finalPrompt }
         };
+      } else if (imageBackend === 'modelscope') {
+        if (!settings.modelscope_api_key) throw new Error("请在系统设置中配置魔搭社区 API Key");
+        reqBody = {
+          ...reqBody,
+          backend: 'modelscope',
+          model: settings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo',
+          apiKey: settings.modelscope_api_key,
+          payload: { prompt: finalPrompt, size: '1024x1024', n: 1 }
+        };
       } else {
         const imagePreset = presets.find(p => p.id === settings.image_preset_id) || presets.find(p => p.id === activePresetId);
         const imageModel = settings.image_model_id || activeModel;
@@ -3608,6 +4358,7 @@ function App() {
                               <select className="select select-bordered" value={settings.image_backend || 'huggingface'} onChange={e=>setSettings({...settings, image_backend: e.target.value as any})}>
                                 <option value="huggingface">ComfyUI 本地穿透 (利用 HF 通道)</option>
                                 <option value="openai">OpenAI 兼容端点</option>
+                                <option value="modelscope">魔搭社区 ModelScope</option>
                               </select>
                             </div>
                           </div>
@@ -3645,6 +4396,20 @@ function App() {
                                   </div>
                                 </div>
                               </div>
+                            </div>
+                            <div className="p-4 border border-base-300 rounded-xl bg-gradient-to-r from-orange-500/10 to-red-500/10">
+                              <div className="text-xs font-black mb-3 text-orange-500">魔搭社区 ModelScope 生图参数</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">API Key</label>
+                                  <input type="password" className="input input-bordered input-sm" placeholder="输入魔搭社区 API Key" value={settings.modelscope_api_key || ''} onChange={e=>setSettings({...settings, modelscope_api_key: e.target.value})} />
+                                </div>
+                                <div className="form-control">
+                                  <label className="label text-xs font-bold">模型 ID</label>
+                                  <input className="input input-bordered input-sm" placeholder="默认: Tongyi-MAI/Z-Image-Turbo" value={settings.modelscope_model || ''} onChange={e=>setSettings({...settings, modelscope_model: e.target.value})} />
+                                </div>
+                              </div>
+                              <div className="text-[10px] opacity-60 mt-2">默认模型: Tongyi-MAI/Z-Image-Turbo (通义万相极速版)</div>
                             </div>
                           </div>
                       </section>
@@ -3936,7 +4701,7 @@ function App() {
                     <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(e)=>setUseSdPromptConversion(e.target.checked)} />
                     自动扩写词条
                   </label>
-                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : 'ComfyUI 本地穿透'}</b></span>
+                  <span className="opacity-70">后端: <b>{settings?.image_backend === 'openai' ? 'OpenAI' : settings?.image_backend === 'modelscope' ? '魔搭社区' : 'ComfyUI 本地穿透'}</b></span>
                 </div>
                 <div className="modal-action flex gap-2">
                     <button className="btn btn-primary flex-1 shadow-lg" onClick={handleGenImageAction}>开始生成</button>
@@ -4077,17 +4842,14 @@ export function ImageStudio({
 }: Props) {
   const [prompt, setPrompt] = useState('');
   
-  // OpenAI 专属配置
   const [openAiSize, setOpenAiSize] = useState<string>('1024x1024');
   
-  // HF 高级配置（可选参数，通常放入 JSON 中传递）
   const [extraJson, setExtraJson] = useState<string>('');
 
   const [results, setResults] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
 
-  // --- 图片预览 ---
   const [viewerSrc, setViewerSrc] = useState<string>('');
   const [viewerZoom, setViewerZoom] = useState<number>(1);
   const [viewerOffset, setViewerOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -4095,7 +4857,7 @@ export function ImageStudio({
   const dragStart = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const viewerContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const backend = (settings?.image_backend || 'huggingface') as 'huggingface' | 'openai';
+  const backend = (settings?.image_backend || 'huggingface') as 'huggingface' | 'openai' | 'modelscope';
 
   const resolvePresetById = (id?: number) => presets.find(p => p.id === id);
   const currentPreset = presets.find(p => p.id === activePresetId);
@@ -4182,6 +4944,16 @@ export function ImageStudio({
           apiKey: settings.hf_keys,
           payload: { prompt: rawPrompt, ...extra }
         };
+      } else if (backend === 'modelscope') {
+        if (!settings.modelscope_api_key) throw new Error('请在系统设置中配置魔搭社区 API Key');
+        const modelId = settings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo';
+        
+        reqBody = {
+          backend: 'modelscope',
+          model: modelId,
+          apiKey: settings.modelscope_api_key,
+          payload: { prompt: rawPrompt, size: openAiSize || '1024x1024', n: 1, ...extra }
+        };
       } else {
         if (!resolvedImagePreset || !resolvedImageModel) throw new Error('请配置生图预设/模型（或在顶部选择）');
         reqBody = {
@@ -4221,14 +4993,27 @@ export function ImageStudio({
     }
   };
 
+  const getBackendBadge = () => {
+    switch (backend) {
+      case 'huggingface':
+        return { label: 'Hugging Face API', class: 'badge-accent' };
+      case 'modelscope':
+        return { label: 'ModelScope', class: 'badge-orange' };
+      default:
+        return { label: 'OpenAI Compatible', class: 'badge-info' };
+    }
+  };
+
+  const badgeInfo = getBackendBadge();
+
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
       <div className="max-w-5xl mx-auto space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="text-lg font-black text-primary flex items-center gap-2"><ImageIcon size={18}/> 生图工作台</div>
-            <div className={`badge badge-outline ${backend === 'huggingface' ? 'badge-accent' : 'badge-info'}`}>
-              {backend === 'huggingface' ? 'Hugging Face API' : 'OpenAI Compatible'}
+            <div className={`badge badge-outline ${badgeInfo.class}`}>
+              {badgeInfo.label}
             </div>
           </div>
           <div className="text-xs opacity-60">使用自然语言描述你想要生成的画面。</div>
@@ -4243,7 +5028,7 @@ export function ImageStudio({
                 <textarea className="textarea textarea-bordered w-full h-32" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="输入提示词（如: A cinematic shot of a cyberpunk city...）" />
               </div>
 
-              {backend === 'openai' && (
+              {(backend === 'openai' || backend === 'modelscope') && (
                 <div className="form-control">
                   <label className="label text-xs font-bold">生成尺寸 (Size)</label>
                   <select className="select select-bordered select-sm" value={openAiSize} onChange={e => setOpenAiSize(e.target.value)}>
@@ -4332,388 +5117,442 @@ export function ImageStudio({
     </div>
   );
 }
+
 ```
 
 
 ## File: src\components\lorebook\LorebookManager.tsx
 
 ```tsx
-import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
-import type { LorebookV2Entry } from '../../lib/db';
-import { api } from '../../lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { LorebookV2Entry, TriggerMode, MatchLogic, LorebookPosition } from '../../lib/db';
 
-interface Props {
+interface LorebookManagerProps {
   charId?: number;
   roomId?: number;
 }
 
-export function LorebookManager({ charId, roomId }: Props) {
+const triggerModeOptions: { value: TriggerMode; label: string; description: string }[] = [
+  { value: 'keyword', label: '关键词触发', description: '当文本中包含指定关键词时触发' },
+  { value: 'regex', label: '正则表达式', description: '使用正则表达式匹配文本' },
+  { value: 'constant', label: '常驻激活', description: '始终激活，无需触发条件' },
+];
+
+const matchLogicOptions: { value: MatchLogic; label: string; description: string }[] = [
+  { value: 'any', label: '任意匹配', description: '任一关键词匹配即触发' },
+  { value: 'all', label: '全部匹配', description: '所有关键词都匹配才触发' },
+  { value: 'not', label: '非匹配', description: '所有关键词都不匹配时触发' },
+  { value: 'expression', label: '表达式', description: '使用自定义表达式组合关键词' },
+];
+
+const positionOptions: { value: LorebookPosition; label: string }[] = [
+  { value: 'before_system', label: '系统提示前' },
+  { value: 'after_system', label: '系统提示后' },
+  { value: 'before_user', label: '用户消息前' },
+  { value: 'after_user', label: '用户消息后' },
+  { value: 'before_ai', label: 'AI回复前' },
+  { value: 'after_ai', label: 'AI回复后' },
+  { value: 'last', label: '最后' },
+];
+
+export function LorebookManager({ charId, roomId }: LorebookManagerProps) {
   const [entries, setEntries] = useState<LorebookV2Entry[]>([]);
-  const [showEditor, setShowEditor] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<LorebookV2Entry | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<LorebookV2Entry>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [charId, roomId]);
-
-  const loadData = async () => {
+  const fetchEntries = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await api.lorebookV2.list(charId, roomId);
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      const res = await fetch(`/api/lorebook-v2?${params}`);
+      const data = await res.json();
       setEntries(data);
     } catch (e) {
-      console.error('Failed to load lorebook', e);
+      console.error('Failed to fetch lorebook entries:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [charId, roomId]);
 
-  const handleAddEntry = async () => {
-    const newEntry: Partial<LorebookV2Entry> = {
-      name: '新条目',
-      content: '',
-      priority: 0,
-      position: 'before_system',
-      probability: 1.0,
-      use_once: false,
-      cooldown_messages: 0,
-      is_active: true
-    };
-    if (charId) newEntry.char_id = charId;
-    if (roomId) newEntry.room_id = roomId;
-    await api.lorebookV2.add(newEntry as LorebookV2Entry);
-    await loadData();
-  };
+  useEffect(() => {
+    fetchEntries();
+  }, [fetchEntries]);
 
-  const handleMigrate = async () => {
-    if (confirm('要从旧世界书迁移数据吗？这会复制所有条目。')) {
-      if (charId) await api.lorebookV2.migrateFromV1(charId);
-      await loadData();
+  const handleCreate = async () => {
+    try {
+      const res = await fetch('/api/lorebook-v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          char_id: charId,
+          room_id: roomId,
+          name: '新条目',
+          content: '',
+          trigger_mode: 'keyword',
+          match_logic: 'any',
+          position: 'before_system',
+          priority: 0,
+          probability: 1.0,
+          use_once: false,
+          cooldown_messages: 0,
+          trigger_count: -1,
+          scan_depth: 2,
+          is_active: true,
+          is_constant: false,
+        }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to create lorebook entry:', e);
     }
   };
 
   const handleUpdate = async (id: number, updates: Partial<LorebookV2Entry>) => {
-    await api.lorebookV2.update(id, updates);
-    await loadData();
+    try {
+      const res = await fetch('/api/lorebook-v2', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to update lorebook entry:', e);
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm('确定删除？')) {
-      await api.lorebookV2.delete(id);
-      await loadData();
+    if (!confirm('确定删除此条目？')) return;
+    try {
+      const res = await fetch(`/api/lorebook-v2?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to delete lorebook entry:', e);
     }
   };
 
-  const categories = Array.from(new Set(entries.map(e => e.category).filter(Boolean)));
-  const filteredEntries = entries.filter(e => {
-    const matchesSearch = !searchTerm || e.name.toLowerCase().includes(searchTerm.toLowerCase()) || e.keywords?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = !filterCategory || e.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
-
-  if (loading) return <div className="p-4">加载中...</div>;
-
-  return (
-    <div className="flex flex-col h-full bg-base-200">
-      <div className="p-4 border-b border-base-content/10">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="font-bold text-lg">世界书 v2</h2>
-          <div className="flex gap-2">
-            {charId && (
-              <button className="btn btn-sm btn-outline" onClick={handleMigrate}>迁移旧数据</button>
-            )}
-            <button className="btn btn-sm btn-primary" onClick={handleAddEntry}>
-              <Plus size={16} className="mr-1" /> 新增条目
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
-          <div className="form-control flex-1 min-w-48">
-            <div className="input-group">
-              <Search size={16} className="opacity-60" />
-              <input
-                type="text"
-                className="input input-bordered input-sm"
-                placeholder="搜索..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          </div>
-          {categories.length > 0 && (
-            <select
-              className="select select-bordered select-sm"
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-            >
-              <option value="">所有分类</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {filteredEntries.length === 0 ? (
-          <div className="text-center opacity-60 py-8">
-            {searchTerm || filterCategory ? '没有匹配的条目' : '还没有条目，点击上方按钮创建'}
-          </div>
-        ) : (
-          filteredEntries.map(entry => (
-            <LorebookEntryCard
-              key={entry.id || `temp-${Math.random()}`}
-              entry={entry}
-              onEdit={setEditingEntry}
-              onUpdate={handleUpdate}
-              onDelete={handleDelete}
-            />
-          ))
-        )}
-      </div>
-
-      {showEditor && editingEntry && editingEntry.id && (
-        <LorebookEntryEditor
-          entry={editingEntry}
-          onClose={() => { setShowEditor(false); setEditingEntry(null); }}
-          onSave={async (updates) => {
-            await handleUpdate(editingEntry.id!, updates);
-            setShowEditor(false);
-            setEditingEntry(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function LorebookEntryCard({
-  entry,
-  onEdit,
-  onUpdate,
-  onDelete
-}: {
-  entry: LorebookV2Entry;
-  onEdit: (e: LorebookV2Entry) => void;
-  onUpdate: (id: number, updates: Partial<LorebookV2Entry>) => void;
-  onDelete: (id: number) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  const handleEdit = () => {
-    if (entry.id) {
-      onEdit(entry);
+  const handleBulkUpdate = async (updates: Array<{ id: number; [key: string]: any }>) => {
+    try {
+      const res = await fetch('/api/lorebook-v2?action=bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      if (res.ok) {
+        fetchEntries();
+      }
+    } catch (e) {
+      console.error('Failed to bulk update lorebook entries:', e);
     }
   };
 
-  const handleDeleteClick = () => {
-    if (entry.id) {
-      onDelete(entry.id);
+  const startEdit = (entry: LorebookV2Entry) => {
+    setEditingId(entry.id ?? null);
+    setEditForm({ ...entry });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = async () => {
+    if (editingId) {
+      await handleUpdate(editingId, editForm);
+      cancelEdit();
     }
+  };
+
+  const toggleActive = async (entry: LorebookV2Entry) => {
+    await handleUpdate(entry.id!, { is_active: !entry.is_active });
   };
 
   return (
-    <div className={`card bg-base-100 border ${entry.is_active ? 'border-base-content/10' : 'border-error/30 opacity-60'}`}>
-      <div className="card-body p-4">
-        <div className="flex justify-between items-start">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold">{entry.name}</h3>
-              {entry.category && (
-                <span className="badge badge-outline badge-sm">{entry.category}</span>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">世界书</h3>
+        <button
+          onClick={handleCreate}
+          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          添加条目
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-4">加载中...</div>
+      ) : entries.length === 0 ? (
+        <div className="text-center py-4 text-gray-500">暂无条目</div>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((entry) => (
+            <div key={entry.id} className={`border rounded p-3 ${!entry.is_active ? 'opacity-60' : ''}`}>
+              {editingId === entry.id ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={editForm.name || ''}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="名称"
+                      className="px-2 py-1 border rounded"
+                    />
+                    <select
+                      value={editForm.trigger_mode || 'keyword'}
+                      onChange={(e) => setEditForm({ ...editForm, trigger_mode: e.target.value as TriggerMode })}
+                      className="px-2 py-1 border rounded"
+                    >
+                      {triggerModeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {(editForm.trigger_mode === 'keyword' || !editForm.trigger_mode) && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editForm.keywords || ''}
+                        onChange={(e) => setEditForm({ ...editForm, keywords: e.target.value })}
+                        placeholder="关键词（逗号或换行分隔）"
+                        className="w-full px-2 py-1 border rounded"
+                        rows={2}
+                      />
+                      <select
+                        value={editForm.match_logic || 'any'}
+                        onChange={(e) => setEditForm({ ...editForm, match_logic: e.target.value as MatchLogic })}
+                        className="w-full px-2 py-1 border rounded"
+                      >
+                        {matchLogicOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      {editForm.match_logic === 'expression' && (
+                        <input
+                          type="text"
+                          value={editForm.match_expression || ''}
+                          onChange={(e) => setEditForm({ ...editForm, match_expression: e.target.value })}
+                          placeholder="表达式 (如: k0 AND (k1 OR k2))"
+                          className="w-full px-2 py-1 border rounded"
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {editForm.trigger_mode === 'regex' && (
+                    <input
+                      type="text"
+                      value={editForm.regex_pattern || ''}
+                      onChange={(e) => setEditForm({ ...editForm, regex_pattern: e.target.value })}
+                      placeholder="正则表达式"
+                      className="w-full px-2 py-1 border rounded font-mono"
+                    />
+                  )}
+
+                  <textarea
+                    value={editForm.content || ''}
+                    onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                    placeholder="内容"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={4}
+                  />
+
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      {showAdvanced ? '隐藏高级选项' : '显示高级选项'}
+                    </button>
+                  </div>
+
+                  {showAdvanced && (
+                    <div className="space-y-2 border-t pt-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={editForm.position || 'before_system'}
+                          onChange={(e) => setEditForm({ ...editForm, position: e.target.value as LorebookPosition })}
+                          className="px-2 py-1 border rounded"
+                        >
+                          {positionOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          value={editForm.priority ?? 0}
+                          onChange={(e) => setEditForm({ ...editForm, priority: Number(e.target.value) })}
+                          placeholder="优先级"
+                          className="px-2 py-1 border rounded"
+                        />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-500">触发概率</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={editForm.probability ?? 1}
+                            onChange={(e) => setEditForm({ ...editForm, probability: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500">扫描深度</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={editForm.scan_depth ?? 2}
+                            onChange={(e) => setEditForm({ ...editForm, scan_depth: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500">冷却消息数</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={editForm.cooldown_messages ?? 0}
+                            onChange={(e) => setEditForm({ ...editForm, cooldown_messages: Number(e.target.value) })}
+                            className="w-full px-2 py-1 border rounded"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={editForm.use_once ?? false}
+                            onChange={(e) => setEditForm({ ...editForm, use_once: e.target.checked })}
+                          />
+                          仅触发一次
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={editForm.is_constant ?? false}
+                            onChange={(e) => setEditForm({ ...editForm, is_constant: e.target.checked })}
+                          />
+                          常驻
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        value={editForm.group_name || ''}
+                        onChange={(e) => setEditForm({ ...editForm, group_name: e.target.value })}
+                        placeholder="分组名称"
+                        className="w-full px-2 py-1 border rounded"
+                      />
+                      <input
+                        type="text"
+                        value={editForm.trigger_condition || ''}
+                        onChange={(e) => setEditForm({ ...editForm, trigger_condition: e.target.value })}
+                        placeholder="触发条件表达式 (如: variables.health > 50)"
+                        className="w-full px-2 py-1 border rounded font-mono text-sm"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveEdit}
+                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={entry.is_active}
+                          onChange={() => toggleActive(entry)}
+                          className="w-4 h-4"
+                        />
+                        <span className="font-medium">{entry.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-gray-100">
+                          {triggerModeOptions.find(t => t.value === entry.trigger_mode)?.label || '关键词'}
+                        </span>
+                        {entry.is_constant && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                            常驻
+                          </span>
+                        )}
+                        {entry.use_once && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
+                            一次性
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        优先级: {entry.priority} | 位置: {positionOptions.find(p => p.value === entry.position)?.label}
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => startEdit(entry)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDelete(entry.id!)}
+                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {entry.trigger_mode === 'keyword' && entry.keywords && (
+                    <div className="text-sm text-gray-600">
+                      关键词: {entry.keywords.split(/[,，\n]/).map(k => k.trim()).filter(k => k).join(', ')}
+                      <span className="ml-2 text-xs text-gray-400">
+                        ({matchLogicOptions.find(m => m.value === entry.match_logic)?.label})
+                      </span>
+                    </div>
+                  )}
+                  
+                  {entry.trigger_mode === 'regex' && entry.regex_pattern && (
+                    <div className="text-sm text-gray-600 font-mono">
+                      正则: {entry.regex_pattern}
+                    </div>
+                  )}
+                  
+                  <div className="text-sm text-gray-700 line-clamp-2">{entry.content}</div>
+                </div>
               )}
-              <span className="badge badge-sm opacity-60">优先级: {entry.priority}</span>
             </div>
-            {entry.keywords && (
-              <p className="text-sm opacity-60 font-mono mt-1">{entry.keywords}</p>
-            )}
-          </div>
-          <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
-              <Edit size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
-              <Trash2 size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
+          ))}
         </div>
-
-        {expanded && (
-          <div className="mt-4 pt-4 border-t border-base-content/10 space-y-3">
-            <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
-              {entry.content}
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs opacity-70">
-              {entry.regex_pattern && <span className="badge badge-ghost">正则匹配</span>}
-              {entry.trigger_condition && <span className="badge badge-ghost">条件触发</span>}
-              {entry.probability < 1 && <span className="badge badge-ghost">{(entry.probability * 100).toFixed(0)}% 概率</span>}
-              {entry.use_once && <span className="badge badge-ghost">仅一次</span>}
-              {entry.cooldown_messages > 0 && <span className="badge badge-ghost">冷却 {entry.cooldown_messages} 条</span>}
-              <span className="badge badge-ghost">位置: {entry.position}</span>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LorebookEntryEditor({
-  entry,
-  onClose,
-  onSave
-}: {
-  entry: LorebookV2Entry;
-  onClose: () => void;
-  onSave: (updates: Partial<LorebookV2Entry>) => void;
-}) {
-  const [form, setForm] = useState(entry);
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-4xl max-h-[90vh] overflow-y-auto">
-        <h3 className="font-bold text-lg mb-4">编辑条目</h3>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">名称</label>
-              <input
-                className="input input-bordered"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">分类</label>
-              <input
-                className="input input-bordered"
-                value={form.category ?? ''}
-                onChange={(e) => setForm({ ...form, category: e.target.value || undefined })}
-                placeholder="可选"
-              />
-            </div>
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">关键词（逗号分隔）</label>
-            <input
-              className="input input-bordered font-mono"
-              value={form.keywords ?? ''}
-              onChange={(e) => setForm({ ...form, keywords: e.target.value || undefined })}
-              placeholder="* 表示始终触发"
-            />
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">正则匹配</label>
-            <input
-              className="input input-bordered font-mono"
-              value={form.regex_pattern ?? ''}
-              onChange={(e) => setForm({ ...form, regex_pattern: e.target.value || undefined })}
-              placeholder="可选"
-            />
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">内容</label>
-            <textarea
-              className="textarea textarea-bordered h-48"
-              value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">优先级</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">触发概率</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                step="0.01"
-                min="0"
-                max="1"
-                value={form.probability}
-                onChange={(e) => setForm({ ...form, probability: parseFloat(e.target.value) || 1.0 })}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">注入位置</label>
-              <select
-                className="select select-bordered"
-                value={form.position}
-                onChange={(e) => setForm({ ...form, position: e.target.value as any })}
-              >
-                <option value="before_system">在系统提示词前</option>
-                <option value="after_system">在系统提示词后</option>
-                <option value="last">最后</option>
-              </select>
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">冷却（消息数）</label>
-              <input
-                type="number"
-                className="input input-bordered"
-                min="0"
-                value={form.cooldown_messages}
-                onChange={(e) => setForm({ ...form, cooldown_messages: parseInt(e.target.value) || 0 })}
-              />
-            </div>
-          </div>
-
-          <div className="form-control">
-            <label className="label font-bold text-sm">触发条件（JavaScript 表达式）</label>
-            <textarea
-              className="textarea textarea-bordered font-mono text-sm h-24"
-              value={form.trigger_condition ?? ''}
-              onChange={(e) => setForm({ ...form, trigger_condition: e.target.value || undefined })}
-              placeholder="例如: variables.affection > 50"
-            />
-          </div>
-
-          <div className="flex gap-4 flex-wrap">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.is_active}
-                onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-              />
-              <span className="text-sm">启用</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.use_once}
-                onChange={(e) => setForm({ ...form, use_once: e.target.checked })}
-              />
-              <span className="text-sm">仅触发一次</span>
-            </label>
-          </div>
-        </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -4724,277 +5563,350 @@ function LorebookEntryEditor({
 ## File: src\components\snapshots\SnapshotManager.tsx
 
 ```tsx
-import { useState, useEffect } from 'react';
-import { Plus, History, RotateCcw, GitBranch, Calendar, Clock, X, Trash2 } from 'lucide-react';
-import type { Snapshot, SnapshotMessage, SnapshotVariable, BranchInfo, AutoSnapshotRule } from '../../lib/db';
-import { api } from '../../lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { Snapshot, SnapshotType } from '../../lib/db';
 
-interface Props {
+interface SnapshotManagerProps {
   charId?: number;
   roomId?: number;
-  onRestore?: () => void;
+  onSnapshotRestore?: (snapshot: Snapshot) => void;
 }
 
-export function SnapshotManager({ charId, roomId, onRestore }: Props) {
+const snapshotTypeOptions: { value: SnapshotType; label: string }[] = [
+  { value: 'auto', label: '自动' },
+  { value: 'manual', label: '手动' },
+  { value: 'milestone', label: '里程碑' },
+];
+
+export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotManagerProps) {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [rules, setRules] = useState<AutoSnapshotRule[]>([]);
-  const [showViewer, setShowViewer] = useState(false);
-  const [viewingSnapshot, setViewingSnapshot] = useState<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] } | null>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
+  const [editingSnapshot, setEditingSnapshot] = useState<Snapshot | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [charId, roomId]);
-
-  const loadData = async () => {
+  const fetchSnapshots = useCallback(async () => {
+    setLoading(true);
     try {
-      const [s, b, r] = await Promise.all([
-        api.snapshots.list(charId, roomId),
-        api.branches.list(charId, roomId),
-        api.autoSnapshotRules.list(charId, roomId)
-      ]);
-      setSnapshots(s);
-      setBranches(b);
-      setRules(r);
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      const res = await fetch(`/api/snapshots?${params}`);
+      const data = await res.json();
+      setSnapshots(data.sort((a: Snapshot, b: Snapshot) => (b.snapshot_order || 0) - (a.snapshot_order || 0)));
     } catch (e) {
-      console.error('Failed to load snapshots', e);
+      console.error('Failed to fetch snapshots:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [charId, roomId]);
 
-  const handleCreateSnapshot = async (name: string, description?: string) => {
-    await api.snapshots.create({ char_id: charId, room_id: roomId, name, description });
-    await loadData();
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  const handleCreate = async () => {
+    try {
+      const res = await fetch('/api/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          char_id: charId,
+          room_id: roomId,
+          name: `快照 ${new Date().toLocaleString()}`,
+          snapshot_type: 'manual',
+        }),
+      });
+      if (res.ok) {
+        fetchSnapshots();
+      }
+    } catch (e) {
+      console.error('Failed to create snapshot:', e);
+    }
   };
 
   const handleRestore = async (snapshot: Snapshot) => {
-    if (confirm(`确定要恢复到快照 "${snapshot.name}" 吗？当前进度将会丢失。`)) {
-      if (snapshot.id) await api.snapshots.restore(snapshot.id);
-      await loadData();
-      onRestore?.();
+    if (!confirm(`确定恢复到快照 "${snapshot.name}"？这将删除此快照之后的所有快照。`)) return;
+    
+    try {
+      const res = await fetch('/api/snapshots-restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: snapshot.id }),
+      });
+      if (res.ok) {
+        onSnapshotRestore?.(snapshot);
+        fetchSnapshots();
+      }
+    } catch (e) {
+      console.error('Failed to restore snapshot:', e);
     }
   };
 
-  const handleView = async (snapshot: Snapshot) => {
-    if (snapshot.id) {
-      const data = await api.snapshots.get(snapshot.id);
-      setViewingSnapshot(data);
-      setShowViewer(true);
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定删除此快照？')) return;
+    try {
+      const res = await fetch(`/api/snapshots?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchSnapshots();
+        if (selectedSnapshot?.id === id) {
+          setSelectedSnapshot(null);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to delete snapshot:', e);
     }
   };
 
-  const handleDelete = async (snapshot: Snapshot) => {
-    if (confirm(`确定要删除快照 "${snapshot.name}" 吗？`)) {
-      if (snapshot.id) await api.snapshots.delete(snapshot.id);
-      await loadData();
+  const handleUpdate = async (snapshot: Snapshot) => {
+    try {
+      const res = await fetch('/api/snapshots', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      });
+      if (res.ok) {
+        fetchSnapshots();
+        setEditingSnapshot(null);
+      }
+    } catch (e) {
+      console.error('Failed to update snapshot:', e);
     }
   };
 
-  if (loading) return <div className="p-4">加载中...</div>;
+  const handleEdit = (snapshot: Snapshot) => {
+    setEditingSnapshot({ ...snapshot });
+  };
+
+  const handleViewDetail = async (snapshot: Snapshot) => {
+    try {
+      const res = await fetch(`/api/snapshots?id=${snapshot.id}`);
+      const data = await res.json();
+      setSelectedSnapshot(data);
+      setShowDetail(true);
+    } catch (e) {
+      console.error('Failed to fetch snapshot detail:', e);
+    }
+  };
+
+  const formatDate = (timestamp?: number) => {
+    if (!timestamp) return '-';
+    return new Date(timestamp).toLocaleString();
+  };
+
+  const getTypeLabel = (type?: SnapshotType) => {
+    return snapshotTypeOptions.find(t => t.value === type)?.label || type || '未知';
+  };
+
+  const getTypeColor = (type?: SnapshotType) => {
+    switch (type) {
+      case 'auto':
+        return 'bg-blue-100 text-blue-800';
+      case 'manual':
+        return 'bg-green-100 text-green-800';
+      case 'milestone':
+        return 'bg-purple-100 text-purple-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full bg-base-200">
-      <div className="p-4 border-b border-base-content/10">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="font-bold text-lg">快照管理</h2>
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => setShowCreateDialog(true)}
-          >
-            <Plus size={16} className="mr-1" /> 创建快照
-          </button>
-        </div>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">快照管理</h3>
+        <button
+          onClick={handleCreate}
+          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          创建快照
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="mb-6">
-          <h3 className="font-bold mb-3 flex items-center gap-2">
-            <History size={16} /> 快照
-          </h3>
-          <div className="space-y-2">
-            {snapshots.length === 0 ? (
-              <div className="text-center opacity-60 py-4">还没有快照</div>
-            ) : (
-              snapshots.map(s => (
-                <div key={s.id} className="card bg-base-100 border border-base-content/10">
-                  <div className="card-body p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-bold">{s.name}</h4>
-                        <div className="flex items-center gap-2 text-xs opacity-60 mt-1">
-                          <Calendar size={12} />
-                          {new Date(s.created_at!).toLocaleString()}
-                          <span className="badge badge-sm">{s.snapshot_type}</span>
-                          {s.message_count && <span className="badge badge-sm">{s.message_count} 条消息</span>}
-                        </div>
-                        {s.description && <p className="text-sm opacity-70 mt-1">{s.description}</p>}
-                      </div>
-                      <div className="flex gap-1">
-                        <button className="btn btn-ghost btn-sm" onClick={() => handleView(s)}>查看</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => handleRestore(s)}><RotateCcw size={14} /></button>
-                        <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDelete(s)}><Trash2 size={14} /></button>
-                      </div>
-                    </div>
+      {loading ? (
+        <div className="text-center py-4">加载中...</div>
+      ) : snapshots.length === 0 ? (
+        <div className="text-center py-4 text-gray-500">暂无快照</div>
+      ) : (
+        <div className="space-y-2">
+          {snapshots.map((snapshot, index) => (
+            <div
+              key={snapshot.id}
+              className={`border rounded p-3 ${selectedSnapshot?.id === snapshot.id ? 'border-blue-500 bg-blue-50' : ''}`}
+            >
+              {editingSnapshot?.id === snapshot.id ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editingSnapshot.name}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, name: e.target.value })}
+                    className="w-full px-2 py-1 border rounded"
+                  />
+                  <textarea
+                    value={editingSnapshot.description || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, description: e.target.value })}
+                    placeholder="描述"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={2}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={editingSnapshot.snapshot_type || 'manual'}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, snapshot_type: e.target.value as SnapshotType })}
+                      className="px-2 py-1 border rounded"
+                    >
+                      {snapshotTypeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={editingSnapshot.user_message || ''}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, user_message: e.target.value })}
+                      placeholder="用户消息"
+                      className="px-2 py-1 border rounded"
+                    />
+                  </div>
+                  <textarea
+                    value={editingSnapshot.ai_response || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, ai_response: e.target.value })}
+                    placeholder="AI回复"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleUpdate(editingSnapshot)}
+                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setEditingSnapshot(null)}
+                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      取消
+                    </button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div>
-          <h3 className="font-bold mb-3 flex items-center gap-2">
-            <GitBranch size={16} /> 分支
-          </h3>
-          <div className="space-y-2">
-            {branches.map(b => (
-              <div key={b.id} className="card bg-base-100 border border-base-content/10">
-                <div className="card-body p-4 flex justify-between items-center">
-                  <div>
-                    <h4 className="font-bold">{b.name}</h4>
-                    <div className="text-xs opacity-60">
-                      {new Date(b.created_at).toLocaleString()}
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{snapshot.name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${getTypeColor(snapshot.snapshot_type)}`}>
+                          {getTypeLabel(snapshot.snapshot_type)}
+                        </span>
+                        <span className="text-xs text-gray-500">#{snapshot.snapshot_order || index + 1}</span>
+                      </div>
+                      <div className="text-sm text-gray-500">{formatDate(snapshot.created_at)}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleViewDetail(snapshot)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        详情
+                      </button>
+                      <button
+                        onClick={() => handleEdit(snapshot)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleRestore(snapshot)}
+                        className="px-2 py-1 text-sm bg-yellow-100 rounded hover:bg-yellow-200"
+                      >
+                        回滚
+                      </button>
+                      <button
+                        onClick={() => handleDelete(snapshot.id!)}
+                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
+                      >
+                        删除
+                      </button>
                     </div>
                   </div>
-                  <button className="btn btn-ghost btn-sm">切换</button>
+                  {snapshot.description && (
+                    <div className="text-sm text-gray-600">{snapshot.description}</div>
+                  )}
+                  {(snapshot.user_message || snapshot.ai_response) && (
+                    <div className="text-sm text-gray-500 space-y-1">
+                      {snapshot.user_message && (
+                        <div className="truncate">
+                          <span className="font-medium">用户:</span> {snapshot.user_message}
+                        </div>
+                      )}
+                      {snapshot.ai_response && (
+                        <div className="truncate">
+                          <span className="font-medium">AI:</span> {snapshot.ai_response.substring(0, 100)}...
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="text-xs text-gray-400">
+                    消息数: {snapshot.message_count || 0}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showDetail && selectedSnapshot && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="text-lg font-semibold">快照详情</h4>
+              <button
+                onClick={() => setShowDetail(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="font-medium">名称</div>
+                <div>{selectedSnapshot.name}</div>
+              </div>
+              {selectedSnapshot.description && (
+                <div>
+                  <div className="font-medium">描述</div>
+                  <div>{selectedSnapshot.description}</div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="font-medium">类型</div>
+                  <div>{getTypeLabel(selectedSnapshot.snapshot_type)}</div>
+                </div>
+                <div>
+                  <div className="font-medium">创建时间</div>
+                  <div>{formatDate(selectedSnapshot.created_at)}</div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {showViewer && viewingSnapshot && (
-        <SnapshotViewer
-          snapshot={viewingSnapshot.snapshot}
-          messages={viewingSnapshot.messages}
-          variables={viewingSnapshot.variables}
-          onClose={() => { setShowViewer(false); setViewingSnapshot(null); }}
-          onRestore={() => handleRestore(viewingSnapshot.snapshot)}
-        />
-      )}
-
-      {showCreateDialog && (
-        <CreateSnapshotDialog
-          onClose={() => setShowCreateDialog(false)}
-          onCreate={async (name, desc) => {
-            await handleCreateSnapshot(name, desc);
-            setShowCreateDialog(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function SnapshotViewer({
-  snapshot,
-  messages,
-  variables,
-  onClose,
-  onRestore
-}: {
-  snapshot: Snapshot;
-  messages: SnapshotMessage[];
-  variables: SnapshotVariable[];
-  onClose: () => void;
-  onRestore: () => void;
-}) {
-  const [activeTab, setActiveTab] = useState<'messages' | 'variables'>('messages');
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center border-b border-base-content/10 pb-4 mb-4">
-          <h3 className="font-bold text-lg">{snapshot.name}</h3>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}><X size={18} /></button>
-        </div>
-
-        <div className="tabs tabs-boxed mb-4">
-          <button className={`tab ${activeTab === 'messages' ? 'tab-active' : ''}`} onClick={() => setActiveTab('messages')}>
-            消息 ({messages.length})
-          </button>
-          <button className={`tab ${activeTab === 'variables' ? 'tab-active' : ''}`} onClick={() => setActiveTab('variables')}>
-            变量 ({variables.length})
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {activeTab === 'messages' ? (
-            <div className="space-y-3">
-              {messages.map((m, i) => (
-                <div key={i} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'}`}>
-                  <div className="chat-bubble text-sm">{m.content}</div>
+              {selectedSnapshot.user_message && (
+                <div>
+                  <div className="font-medium">用户消息</div>
+                  <div className="bg-gray-100 p-2 rounded">{selectedSnapshot.user_message}</div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {variables.map((v, i) => (
-                <div key={i} className="card bg-base-200 p-3">
-                  <div className="flex justify-between">
-                    <span className="font-bold">{v.key}</span>
-                    <span className="font-mono">{JSON.stringify(v.value)}</span>
-                  </div>
+              )}
+              {selectedSnapshot.ai_response && (
+                <div>
+                  <div className="font-medium">AI回复</div>
+                  <div className="bg-gray-100 p-2 rounded whitespace-pre-wrap">{selectedSnapshot.ai_response}</div>
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="modal-action pt-4 border-t border-base-content/10 mt-4">
-          <button className="btn" onClick={onClose}>关闭</button>
-          <button className="btn btn-primary" onClick={onRestore}>恢复此快照</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreateSnapshotDialog({
-  onClose,
-  onCreate
-}: {
-  onClose: () => void;
-  onCreate: (name: string, description?: string) => void;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-
-  const defaultName = `快照 ${new Date().toLocaleString()}`;
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box">
-        <h3 className="font-bold text-lg mb-4">创建快照</h3>
-        <div className="space-y-4">
-          <div className="form-control">
-            <label className="label font-bold text-sm">名称</label>
-            <input
-              className="input input-bordered"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={defaultName}
-            />
-          </div>
-          <div className="form-control">
-            <label className="label font-bold text-sm">描述</label>
-            <textarea
-              className="textarea textarea-bordered"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="可选"
-            />
           </div>
         </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onCreate(name || defaultName, description)}>创建</button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -5005,492 +5917,400 @@ function CreateSnapshotDialog({
 ## File: src\components\variables\VariableManager.tsx
 
 ```tsx
-import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Settings, ChevronDown, ChevronUp } from 'lucide-react';
-import type { Variable, VariableStage, VariableThoughtConfig } from '../../lib/db';
-import { api } from '../../lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { Variable, VariableType } from '../../lib/db';
 
-interface Props {
+interface VariableManagerProps {
   charId?: number;
   roomId?: number;
+  onVariablesChange?: (variables: Variable[]) => void;
 }
 
-export function VariableManager({ charId, roomId }: Props) {
+const typeOptions: { value: VariableType; label: string }[] = [
+  { value: 'number', label: '数值' },
+  { value: 'string', label: '字符串' },
+  { value: 'boolean', label: '布尔值' },
+  { value: 'range', label: '范围' },
+  { value: 'dict', label: '字典' },
+  { value: 'list', label: '列表' },
+];
+
+export function VariableManager({ charId, roomId, onVariablesChange }: VariableManagerProps) {
   const [variables, setVariables] = useState<Variable[]>([]);
-  const [stages, setStages] = useState<Map<number, VariableStage[]>>(new Map());
-  const [thoughtConfig, setThoughtConfig] = useState<VariableThoughtConfig | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
-  const [editingVariable, setEditingVariable] = useState<Variable | null>(null);
-  const [showThoughtConfig, setShowThoughtConfig] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Variable>>({});
 
-  useEffect(() => {
-    loadData();
-  }, [charId, roomId]);
-
-  const loadData = async () => {
+  const fetchVariables = useCallback(async () => {
+    setLoading(true);
     try {
-      const vars = await api.variables.list(charId, roomId);
-      setVariables(vars);
-      for (const v of vars) {
-        if (v.id) {
-          const st = await api.variableStages.list(v.id);
-          setStages(prev => new Map(prev).set(v.id!, st));
-        }
-      }
-      const config = await api.variableThoughtConfig.get(charId, roomId);
-      setThoughtConfig(config);
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      const res = await fetch(`/api/variables?${params}`);
+      const data = await res.json();
+      setVariables(data);
+      onVariablesChange?.(data);
     } catch (e) {
-      console.error('Failed to load variables', e);
+      console.error('Failed to fetch variables:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [charId, roomId, onVariablesChange]);
 
-  const handleAddVariable = async () => {
-    const newVar: Partial<Variable> = {
-      name: '新变量',
-      key: 'new_var',
-      type: 'number',
-      value: 0,
-      is_persistent: true,
-      is_visible: true
-    };
-    if (charId) newVar.char_id = charId;
-    if (roomId) newVar.room_id = roomId;
-    await api.variables.add(newVar as Variable);
-    await loadData();
-  };
+  useEffect(() => {
+    fetchVariables();
+  }, [fetchVariables]);
 
-  const handleUpdateVariable = async (id: number, updates: Partial<Variable>) => {
-    await api.variables.update(id, updates);
-    await loadData();
-  };
-
-  const handleDeleteVariable = async (id: number) => {
-    if (confirm('确定要删除这个变量吗？')) {
-      await api.variables.delete(id);
-      await loadData();
-    }
-  };
-
-  if (loading) return <div className="p-4">加载中...</div>;
-
-  return (
-    <div className="flex flex-col h-full bg-base-200">
-      <div className="p-4 border-b border-base-content/10 flex justify-between items-center">
-        <h2 className="font-bold text-lg">变量管理</h2>
-        <div className="flex gap-2">
-          <button
-            className="btn btn-sm btn-outline"
-            onClick={() => setShowThoughtConfig(true)}
-          >
-            <Settings size={16} className="mr-1" /> 思考配置
-          </button>
-          <button className="btn btn-sm btn-primary" onClick={handleAddVariable}>
-            <Plus size={16} className="mr-1" /> 新增变量
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {variables.length === 0 ? (
-          <div className="text-center opacity-60 py-8">
-            还没有变量，点击上方按钮创建一个
-          </div>
-        ) : (
-          variables.map(v => (
-            <VariableCard
-              key={v.id || `temp-${Math.random()}`}
-              variable={v}
-              stages={stages.get(v.id!) || []}
-              onEdit={setEditingVariable}
-              onUpdate={handleUpdateVariable}
-              onDelete={handleDeleteVariable}
-            />
-          ))
-        )}
-      </div>
-
-      {showEditor && editingVariable && (
-        <VariableEditor
-          variable={editingVariable}
-          stages={stages.get(editingVariable.id!) || []}
-          onClose={() => { setShowEditor(false); setEditingVariable(null); }}
-          onSave={async (updates) => {
-            if (editingVariable.id) await handleUpdateVariable(editingVariable.id, updates);
-            setShowEditor(false);
-            setEditingVariable(null);
-          }}
-        />
-      )}
-
-      {showThoughtConfig && (
-        <ThoughtConfigModal
-          charId={charId}
-          roomId={roomId}
-          config={thoughtConfig}
-          onClose={() => setShowThoughtConfig(false)}
-          onSave={async (config) => {
-            await api.variableThoughtConfig.save(config);
-            await loadData();
-            setShowThoughtConfig(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function VariableCard({
-  variable,
-  stages,
-  onEdit,
-  onUpdate,
-  onDelete
-}: {
-  variable: Variable;
-  stages: VariableStage[];
-  onEdit: (v: Variable) => void;
-  onUpdate: (id: number, updates: Partial<Variable>) => void;
-  onDelete: (id: number) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [tempValue, setTempValue] = useState(variable.value);
-  const [isEditingValue, setIsEditingValue] = useState(false);
-
-  const getPercentage = () => {
-    if (variable.min_value !== undefined && variable.max_value !== undefined) {
-      const range = variable.max_value - variable.min_value;
-      if (range > 0) {
-        return Math.min(100, Math.max(0, ((variable.value - variable.min_value) / range) * 100));
-      }
-    }
-    return undefined;
-  };
-
-  const activeStage = stages.find(s => {
+  const handleCreate = async () => {
     try {
-      const func = new Function('v', `return ${s.condition};`);
-      return func(variable.value);
-    } catch {
-      return false;
-    }
-  });
-
-  const percentage = getPercentage();
-
-  const handleSaveValue = async () => {
-    if (variable.id) {
-      await onUpdate(variable.id, { value: tempValue });
-      setIsEditingValue(false);
+      const res = await fetch('/api/variables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          char_id: charId,
+          room_id: roomId,
+          name: '新变量',
+          key: `var_${Date.now()}`,
+          type: 'number',
+          value: 0,
+          is_persistent: true,
+          is_visible: true,
+        }),
+      });
+      if (res.ok) {
+        fetchVariables();
+      }
+    } catch (e) {
+      console.error('Failed to create variable:', e);
     }
   };
 
-  const handleEdit = () => {
-    onEdit(variable);
+  const handleUpdate = async (id: number, updates: Partial<Variable>) => {
+    try {
+      const res = await fetch('/api/variables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates }),
+      });
+      if (res.ok) {
+        fetchVariables();
+      }
+    } catch (e) {
+      console.error('Failed to update variable:', e);
+    }
   };
 
-  const handleDeleteClick = () => {
-    if (variable.id) {
-      onDelete(variable.id);
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定删除此变量？')) return;
+    try {
+      const res = await fetch(`/api/variables?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchVariables();
+      }
+    } catch (e) {
+      console.error('Failed to delete variable:', e);
+    }
+  };
+
+  const handleReset = async (id: number) => {
+    try {
+      const res = await fetch('/api/variables?action=reset&id=' + id, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVariables(prev => prev.map(v => v.id === id ? { ...v, value: data.value } : v));
+      }
+    } catch (e) {
+      console.error('Failed to reset variable:', e);
+    }
+  };
+
+  const handleBulkUpdate = async (updates: Array<{ id: number; value: any }>) => {
+    try {
+      const res = await fetch('/api/variables?action=bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      if (res.ok) {
+        fetchVariables();
+      }
+    } catch (e) {
+      console.error('Failed to bulk update variables:', e);
+    }
+  };
+
+  const startEdit = (variable: Variable) => {
+    setEditingId(variable.id ?? null);
+    setEditForm({ ...variable });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = async () => {
+    if (editingId) {
+      await handleUpdate(editingId, editForm);
+      cancelEdit();
+    }
+  };
+
+  const renderValueInput = (variable: Variable, onChange: (value: any) => void) => {
+    const value = variable.value;
+
+    switch (variable.type) {
+      case 'boolean':
+        return (
+          <select
+            value={value ? 'true' : 'false'}
+            onChange={(e) => onChange(e.target.value === 'true')}
+            className="w-full px-2 py-1 border rounded"
+          >
+            <option value="true">是</option>
+            <option value="false">否</option>
+          </select>
+        );
+
+      case 'range':
+        return (
+          <div className="space-y-1">
+            <input
+              type="range"
+              min={variable.min_value ?? 0}
+              max={variable.max_value ?? 100}
+              step={variable.step ?? 1}
+              value={Number(value) || 0}
+              onChange={(e) => onChange(Number(e.target.value))}
+              className="w-full"
+            />
+            <div className="text-center text-sm">{String(value)}</div>
+          </div>
+        );
+
+      case 'dict':
+        return (
+          <textarea
+            value={typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '{}')}
+            onChange={(e) => {
+              try {
+                onChange(JSON.parse(e.target.value));
+              } catch {}
+            }}
+            className="w-full px-2 py-1 border rounded font-mono text-sm"
+            rows={3}
+          />
+        );
+
+      case 'list':
+        return (
+          <textarea
+            value={Array.isArray(value) ? value.join('\n') : String(value ?? '')}
+            onChange={(e) => onChange(e.target.value.split('\n').filter(s => s.trim()))}
+            className="w-full px-2 py-1 border rounded font-mono text-sm"
+            rows={3}
+            placeholder="每行一个值"
+          />
+        );
+
+      case 'number':
+        return (
+          <input
+            type="number"
+            value={Number(value) || 0}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="w-full px-2 py-1 border rounded"
+          />
+        );
+
+      default:
+        return (
+          <input
+            type="text"
+            value={String(value ?? '')}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-2 py-1 border rounded"
+          />
+        );
+    }
+  };
+
+  const renderValueDisplay = (variable: Variable) => {
+    const { value, type } = variable;
+
+    switch (type) {
+      case 'boolean':
+        return value ? '是' : '否';
+      case 'dict':
+      case 'list':
+        return typeof value === 'object' ? JSON.stringify(value) : String(value);
+      default:
+        return String(value ?? '');
     }
   };
 
   return (
-    <div className="card bg-base-100 border border-base-content/10">
-      <div className="card-body p-4">
-        <div className="flex justify-between items-start">
-          <div>
-            <h3 className="font-bold">{variable.name}</h3>
-            <p className="text-sm opacity-60 font-mono">{variable.key}</p>
-          </div>
-          <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm" onClick={handleEdit}>
-              <Edit size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm text-error" onClick={handleDeleteClick}>
-              <Trash2 size={16} />
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
-        </div>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">变量管理</h3>
+        <button
+          onClick={handleCreate}
+          className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          添加变量
+        </button>
+      </div>
 
-        <div className="mt-3">
-          {variable.type === 'number' || variable.type === 'range' ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                {isEditingValue ? (
-                  <>
+      {loading ? (
+        <div className="text-center py-4">加载中...</div>
+      ) : variables.length === 0 ? (
+        <div className="text-center py-4 text-gray-500">暂无变量</div>
+      ) : (
+        <div className="space-y-2">
+          {variables.map((variable) => (
+            <div key={variable.id} className="border rounded p-3 space-y-2">
+              {editingId === variable.id ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <input
-                      type="number"
-                      className="input input-bordered input-sm w-24"
-                      value={tempValue}
-                      onChange={(e) => setTempValue(parseFloat(e.target.value))}
-                      step={variable.step || 1}
-                      min={variable.min_value}
-                      max={variable.max_value}
+                      type="text"
+                      value={editForm.name || ''}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="名称"
+                      className="px-2 py-1 border rounded"
                     />
-                    <button className="btn btn-sm btn-primary" onClick={handleSaveValue}>保存</button>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-lg">{variable.value}</span>
-                    <button className="btn btn-ghost btn-xs" onClick={() => setIsEditingValue(true)}>
-                      <Edit size={12} />
+                    <input
+                      type="text"
+                      value={editForm.key || ''}
+                      onChange={(e) => setEditForm({ ...editForm, key: e.target.value })}
+                      placeholder="键名"
+                      className="px-2 py-1 border rounded"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={editForm.type || 'number'}
+                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value as VariableType })}
+                      className="px-2 py-1 border rounded"
+                    >
+                      {typeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={editForm.is_persistent ?? true}
+                          onChange={(e) => setEditForm({ ...editForm, is_persistent: e.target.checked })}
+                        />
+                        持久化
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={editForm.is_visible ?? true}
+                          onChange={(e) => setEditForm({ ...editForm, is_visible: e.target.checked })}
+                        />
+                        可见
+                      </label>
+                    </div>
+                  </div>
+                  {(editForm.type === 'number' || editForm.type === 'range') && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="number"
+                        value={editForm.min_value ?? ''}
+                        onChange={(e) => setEditForm({ ...editForm, min_value: e.target.value ? Number(e.target.value) : undefined })}
+                        placeholder="最小值"
+                        className="px-2 py-1 border rounded"
+                      />
+                      <input
+                        type="number"
+                        value={editForm.max_value ?? ''}
+                        onChange={(e) => setEditForm({ ...editForm, max_value: e.target.value ? Number(e.target.value) : undefined })}
+                        placeholder="最大值"
+                        className="px-2 py-1 border rounded"
+                      />
+                      <input
+                        type="number"
+                        value={editForm.step ?? ''}
+                        onChange={(e) => setEditForm({ ...editForm, step: e.target.value ? Number(e.target.value) : undefined })}
+                        placeholder="步长"
+                        className="px-2 py-1 border rounded"
+                      />
+                    </div>
+                  )}
+                  <textarea
+                    value={editForm.description || ''}
+                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                    placeholder="描述"
+                    className="w-full px-2 py-1 border rounded"
+                    rows={2}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveEdit}
+                      className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+                    >
+                      取消
                     </button>
                   </div>
-                )}
-              </div>
-              {percentage !== undefined && (
-                <progress className="progress progress-primary w-full" value={percentage} max="100" />
-              )}
-              <div className="text-xs opacity-60 flex gap-2">
-                {variable.min_value !== undefined && <span>min: {variable.min_value}</span>}
-                {variable.max_value !== undefined && <span>max: {variable.max_value}</span>}
-              </div>
-            </div>
-          ) : variable.type === 'boolean' ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="toggle toggle-primary"
-                checked={Boolean(variable.value)}
-                onChange={(e) => variable.id && onUpdate(variable.id, { value: e.target.checked })}
-              />
-              <span>{variable.value ? '是' : '否'}</span>
-            </div>
-          ) : (
-            <div>
-              {isEditingValue ? (
-                <>
-                  <textarea
-                    className="textarea textarea-bordered w-full text-sm"
-                    value={tempValue}
-                    onChange={(e) => setTempValue(e.target.value)}
-                  />
-                  <button className="btn btn-sm btn-primary mt-2" onClick={handleSaveValue}>保存</button>
-                </>
+                </div>
               ) : (
-                <div className="flex items-start gap-2">
-                  <span className="font-mono">{variable.value}</span>
-                  <button className="btn btn-ghost btn-xs" onClick={() => setIsEditingValue(true)}>
-                    <Edit size={12} />
-                  </button>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-medium">{variable.name}</div>
+                      <div className="text-sm text-gray-500">键名: {variable.key}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => startEdit(variable)}
+                        className="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleReset(variable.id!)}
+                        className="px-2 py-1 text-sm bg-yellow-100 rounded hover:bg-yellow-200"
+                      >
+                        重置
+                      </button>
+                      <button
+                        onClick={() => handleDelete(variable.id!)}
+                        className="px-2 py-1 text-sm bg-red-100 rounded hover:bg-red-200"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">
+                      {typeOptions.find(t => t.value === variable.type)?.label || variable.type}:
+                    </span>
+                    {renderValueInput(variable, (value) => handleUpdate(variable.id!, { value }))}
+                  </div>
+                  {variable.description && (
+                    <div className="text-sm text-gray-500">{variable.description}</div>
+                  )}
                 </div>
               )}
             </div>
-          )}
+          ))}
         </div>
-
-        {activeStage && (
-          <div className="mt-3 p-2 bg-primary/10 rounded-lg border border-primary/20">
-            <span className="text-xs font-bold text-primary">当前阶段：{activeStage.name}</span>
-          </div>
-        )}
-
-        {expanded && (
-          <div className="mt-4 pt-4 border-t border-base-content/10">
-            {variable.description && (
-              <p className="text-sm opacity-70 mb-3">{variable.description}</p>
-            )}
-            {stages.length > 0 && (
-              <div className="space-y-2">
-                <h4 className="text-sm font-bold">阶段配置</h4>
-                {stages.map(s => (
-                  <div key={s.id} className="text-sm p-2 bg-base-200 rounded">
-                    <div className="font-bold">{s.name}</div>
-                    <div className="font-mono text-xs opacity-70">{s.condition}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function VariableEditor({
-  variable,
-  stages,
-  onClose,
-  onSave
-}: {
-  variable: Variable;
-  stages: VariableStage[];
-  onClose: () => void;
-  onSave: (updates: Partial<Variable>) => void;
-}) {
-  const [form, setForm] = useState(variable);
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-2xl">
-        <h3 className="font-bold text-lg mb-4">编辑变量</h3>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="form-control">
-              <label className="label font-bold text-sm">名称</label>
-              <input
-                className="input input-bordered"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="form-control">
-              <label className="label font-bold text-sm">键</label>
-              <input
-                className="input input-bordered font-mono"
-                value={form.key}
-                onChange={(e) => setForm({ ...form, key: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="form-control">
-            <label className="label font-bold text-sm">类型</label>
-            <select
-              className="select select-bordered"
-              value={form.type}
-              onChange={(e) => setForm({ ...form, type: e.target.value as any })}
-            >
-              <option value="number">数字</option>
-              <option value="range">范围</option>
-              <option value="string">字符串</option>
-              <option value="boolean">布尔</option>
-            </select>
-          </div>
-          {(form.type === 'number' || form.type === 'range') && (
-            <div className="grid grid-cols-3 gap-4">
-              <div className="form-control">
-                <label className="label font-bold text-sm">最小值</label>
-                <input
-                  type="number"
-                  className="input input-bordered"
-                  value={form.min_value ?? ''}
-                  onChange={(e) => setForm({ ...form, min_value: e.target.value ? parseFloat(e.target.value) : undefined })}
-                />
-              </div>
-              <div className="form-control">
-                <label className="label font-bold text-sm">最大值</label>
-                <input
-                  type="number"
-                  className="input input-bordered"
-                  value={form.max_value ?? ''}
-                  onChange={(e) => setForm({ ...form, max_value: e.target.value ? parseFloat(e.target.value) : undefined })}
-                />
-              </div>
-              <div className="form-control">
-                <label className="label font-bold text-sm">步长</label>
-                <input
-                  type="number"
-                  className="input input-bordered"
-                  value={form.step ?? ''}
-                  onChange={(e) => setForm({ ...form, step: e.target.value ? parseFloat(e.target.value) : undefined })}
-                />
-              </div>
-            </div>
-          )}
-          <div className="form-control">
-            <label className="label font-bold text-sm">描述</label>
-            <textarea
-              className="textarea textarea-bordered"
-              value={form.description ?? ''}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.is_persistent}
-                onChange={(e) => setForm({ ...form, is_persistent: e.target.checked })}
-              />
-              <span className="text-sm">持久化</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="checkbox"
-                checked={form.is_visible}
-                onChange={(e) => setForm({ ...form, is_visible: e.target.checked })}
-              />
-              <span className="text-sm">可见</span>
-            </label>
-          </div>
-        </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ThoughtConfigModal({
-  charId,
-  roomId,
-  config,
-  onClose,
-  onSave
-}: {
-  charId?: number;
-  roomId?: number;
-  config: VariableThoughtConfig | null;
-  onClose: () => void;
-  onSave: (config: VariableThoughtConfig) => void;
-}) {
-  const [form, setForm] = useState(config || {
-    char_id: charId,
-    room_id: roomId,
-    is_auto_update: false
-  });
-
-  return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-2xl">
-        <h3 className="font-bold text-lg mb-4">思考配置</h3>
-        <div className="space-y-4">
-          <div className="form-control">
-            <label className="label font-bold text-sm">自动更新</label>
-            <label className="label cursor-pointer">
-              <span className="text-sm">启用自动变量更新</span>
-              <input
-                type="checkbox"
-                className="toggle toggle-primary"
-                checked={form.is_auto_update}
-                onChange={(e) => setForm({ ...form, is_auto_update: e.target.checked })}
-              />
-            </label>
-          </div>
-          <div className="form-control">
-            <label className="label font-bold text-sm">更新间隔（N条消息后）</label>
-            <input
-              type="number"
-              className="input input-bordered"
-              value={form.update_interval ?? ''}
-              onChange={(e) => setForm({ ...form, update_interval: e.target.value ? parseInt(e.target.value) : undefined })}
-            />
-          </div>
-          <div className="form-control">
-            <label className="label font-bold text-sm">思考提示词</label>
-            <textarea
-              className="textarea textarea-bordered h-48 font-mono text-sm"
-              value={form.thought_prompt ?? ''}
-              onChange={(e) => setForm({ ...form, thought_prompt: e.target.value })}
-            />
-          </div>
-        </div>
-        <div className="modal-action">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)}>保存</button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -5503,10 +6323,11 @@ function ThoughtConfigModal({
 ```ts
 export type ApiMode = 'chat_completions' | 'responses';
 
-export type VariableType = 'number' | 'string' | 'boolean' | 'range';
+export type VariableType = 'number' | 'string' | 'boolean' | 'range' | 'dict' | 'list';
 export type SnapshotType = 'manual' | 'auto' | 'checkpoint';
 export type LorebookPosition = 'before_system' | 'after_system' | 'last';
-export type RuleType = 'interval' | 'turn_count' | 'variable_change';
+export type TriggerMode = 'constant' | 'keyword' | 'regex';
+export type MatchLogic = 'any' | 'all' | 'not' | 'expression';
 
 export interface Character {
   id?: number;
@@ -5566,7 +6387,9 @@ export interface ApiPreset {
 export interface Settings {
   id?: number;
   user_name?: string;
-  image_backend?: 'huggingface' | 'openai';
+  image_backend?: 'huggingface' | 'openai' | 'modelscope';
+  modelscope_api_key?: string;
+  modelscope_model?: string;
   image_preset_id?: number;
   image_model_id?: string;
   hf_keys?: string;
@@ -5588,7 +6411,7 @@ export interface LorebookEntry {
   content: string;
   is_active: boolean;
   priority?: number;
-  isActive?: boolean; // 向后兼容
+  isActive?: boolean;
 }
 
 export interface ImageRecord {
@@ -5602,10 +6425,6 @@ export interface ImageRecord {
   created_at?: number;
 }
 
-// ============================================
-// 新增: v3.0 类型定义
-// ============================================
-
 export interface Variable {
   id?: number;
   char_id?: number;
@@ -5614,12 +6433,14 @@ export interface Variable {
   key: string;
   type: VariableType;
   value?: any;
+  default_value?: any;
   min_value?: number;
   max_value?: number;
   step?: number;
   is_persistent: boolean;
   is_visible: boolean;
   description?: string;
+  tags?: string;
   created_at?: number;
   updated_at?: number;
 }
@@ -5631,6 +6452,7 @@ export interface VariableStage {
   condition: string;
   priority: number;
   stage_prompt?: string;
+  effects?: string;
   is_active: boolean;
   created_at?: number;
 }
@@ -5653,11 +6475,15 @@ export interface LorebookV2Entry {
   char_id?: number;
   room_id?: number;
   name: string;
+  trigger_mode?: TriggerMode;
   keywords?: string;
   regex_pattern?: string;
+  match_logic?: MatchLogic;
+  match_expression?: string;
   content: string;
   trigger_condition?: string;
   priority: number;
+  group_name?: string;
   category?: string;
   position: LorebookPosition;
   insertion_depth?: number;
@@ -5666,7 +6492,11 @@ export interface LorebookV2Entry {
   use_once: boolean;
   cooldown_messages: number;
   last_triggered_at?: number;
+  trigger_count?: number;
+  scan_depth?: number;
   is_active: boolean;
+  is_constant?: boolean;
+  sort_order?: number;
   created_at?: number;
   updated_at?: number;
 }
@@ -5677,9 +6507,13 @@ export interface Snapshot {
   room_id?: number;
   name: string;
   description?: string;
-  thumbnail?: string;
-  snapshot_type: SnapshotType;
+  snapshot_order?: number;
+  snapshot_type?: SnapshotType;
+  user_message?: string;
+  ai_response?: string;
   message_count?: number;
+  thumbnail?: string;
+  is_active?: boolean;
   created_at?: number;
 }
 
@@ -5705,17 +6539,14 @@ export interface SnapshotVariable {
   type?: string;
 }
 
-export interface AutoSnapshotRule {
+export interface LorebookGroup {
   id?: number;
   char_id?: number;
   room_id?: number;
   name: string;
-  rule_type: RuleType;
-  interval_minutes?: number;
-  turn_count?: number;
-  variable_key?: string;
-  keep_count: number;
+  description?: string;
   is_active: boolean;
+  sort_order?: number;
   created_at?: number;
 }
 
@@ -5738,6 +6569,15 @@ export interface BranchInfo {
 
 const API = '/api';
 const headers = { 'Content-Type': 'application/json' };
+
+function safeParse(val: any): any {
+  if (val == null) return null;
+  try {
+    return typeof val === 'string' ? JSON.parse(val) : val;
+  } catch {
+    return val;
+  }
+}
 
 export const api = {
   characters: {
@@ -5813,23 +6653,28 @@ export const api = {
     },
   },
 
-  // ============================================
-  // 新增: v3.0 API 客户端
-  // ============================================
-
   variables: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
       if (charId) params.set('char_id', String(charId));
       if (roomId) params.set('room_id', String(roomId));
-      return fetch(`${API}/variables?${params}`).then(r => r.json() as Promise<Variable[]>);
+      return fetch(`${API}/variables?${params}`).then(r => r.json() as Promise<Variable[]>).then(vars => vars.map(v => ({ ...v, value: safeParse(v.value), default_value: safeParse(v.default_value) })));
     },
-    get: (id: number) => fetch(`${API}/variables?id=${id}`).then(r => r.json() as Promise<Variable>),
-    add: (v: Variable) => fetch(`${API}/variables`, { method: 'POST', headers, body: JSON.stringify(v) }).then(r => r.json() as Promise<{ id: number }>),
-    update: (id: number, v: Partial<Variable>) => fetch(`${API}/variables`, { method: 'PUT', headers, body: JSON.stringify({ id, ...v }) }),
+    get: (id: number) => fetch(`${API}/variables?id=${id}`).then(r => r.json() as Promise<Variable>).then(v => ({ ...v, value: safeParse(v.value), default_value: safeParse(v.default_value) })),
+    add: (v: Variable) => {
+      const payload = { ...v, value: typeof v.value === 'object' ? JSON.stringify(v.value) : v.value, default_value: typeof v.default_value === 'object' ? JSON.stringify(v.default_value) : v.default_value };
+      return fetch(`${API}/variables`, { method: 'POST', headers, body: JSON.stringify(payload) }).then(r => r.json() as Promise<{ id: number }>);
+    },
+    update: (id: number, v: Partial<Variable>) => {
+      const payload: any = { id, ...v };
+      if (v.value !== undefined && typeof v.value === 'object') payload.value = JSON.stringify(v.value);
+      if (v.default_value !== undefined && typeof v.default_value === 'object') payload.default_value = JSON.stringify(v.default_value);
+      return fetch(`${API}/variables`, { method: 'PUT', headers, body: JSON.stringify(payload) });
+    },
     delete: (id: number) => fetch(`${API}/variables?id=${id}`, { method: 'DELETE' }),
     bulkUpdate: (updates: Array<{ id: number; value: any }>) =>
-      fetch(`${API}/variables?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates }) }),
+      fetch(`${API}/variables?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates: updates.map(u => ({ ...u, value: typeof u.value === 'object' ? JSON.stringify(u.value) : u.value })) }) }),
+    reset: (id: number) => fetch(`${API}/variables?action=reset&id=${id}`, { method: 'POST' }),
   },
 
   variableStages: {
@@ -5865,6 +6710,19 @@ export const api = {
     update: (id: number, entry: Partial<LorebookV2Entry>) => fetch(`${API}/lorebook-v2`, { method: 'PUT', headers, body: JSON.stringify({ id, ...entry }) }),
     delete: (id: number) => fetch(`${API}/lorebook-v2?id=${id}`, { method: 'DELETE' }),
     migrateFromV1: (charId: number) => fetch(`${API}/lorebook-v2?action=migrate&char_id=${charId}`, { method: 'POST' }),
+    bulkUpdate: (updates: Array<{ id: number; [key: string]: any }>) => fetch(`${API}/lorebook-v2?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates }) }),
+  },
+
+  lorebookGroups: {
+    list: (charId?: number, roomId?: number) => {
+      const params = new URLSearchParams();
+      if (charId) params.set('char_id', String(charId));
+      if (roomId) params.set('room_id', String(roomId));
+      return fetch(`${API}/lorebook-groups?${params}`).then(r => r.json() as Promise<LorebookGroup[]>);
+    },
+    add: (group: LorebookGroup) => fetch(`${API}/lorebook-groups`, { method: 'POST', headers, body: JSON.stringify(group) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, group: Partial<LorebookGroup>) => fetch(`${API}/lorebook-groups`, { method: 'PUT', headers, body: JSON.stringify({ id, ...group }) }),
+    delete: (id: number) => fetch(`${API}/lorebook-groups?id=${id}`, { method: 'DELETE' }),
   },
 
   snapshots: {
@@ -5875,11 +6733,16 @@ export const api = {
       return fetch(`${API}/snapshots?${params}`).then(r => r.json() as Promise<Snapshot[]>);
     },
     get: (id: number) => fetch(`${API}/snapshots?id=${id}`).then(r => r.json() as Promise<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] }>),
-    create: (body: { char_id?: number; room_id?: number; name: string; description?: string }) =>
+    create: (body: { char_id?: number; room_id?: number; name: string; description?: string; snapshot_type?: SnapshotType; user_message?: string; ai_response?: string }) =>
       fetch(`${API}/snapshots`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
+    update: (id: number, updates: Partial<Snapshot>) => fetch(`${API}/snapshots`, { method: 'PUT', headers, body: JSON.stringify({ id, ...updates }) }),
     delete: (id: number) => fetch(`${API}/snapshots?id=${id}`, { method: 'DELETE' }),
-    restore: (id: number) => fetch(`${API}/snapshots/restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }),
+    restore: (id: number) => fetch(`${API}/snapshots/restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }).then(r => r.json()),
+    edit: (id: number, updates: { user_message?: string; ai_response?: string; messages?: SnapshotMessage[] }) =>
+      fetch(`${API}/snapshots/edit`, { method: 'POST', headers, body: JSON.stringify({ id, ...updates }) }),
     createBranch: (id: number, name: string) => fetch(`${API}/snapshots/branch`, { method: 'POST', headers, body: JSON.stringify({ snapshot_id: id, name }) }).then(r => r.json() as Promise<{ branch_id: string }>),
+    autoCreate: (body: { char_id?: number; room_id?: number; user_message: string; ai_response: string }) =>
+      fetch(`${API}/snapshots?action=auto`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
   },
 
   branches: {
@@ -5892,19 +6755,9 @@ export const api = {
     switch: (branchId: string) => fetch(`${API}/branches/switch`, { method: 'POST', headers, body: JSON.stringify({ branch_id: branchId }) }),
     delete: (branchId: string) => fetch(`${API}/branches?branch_id=${encodeURIComponent(branchId)}`, { method: 'DELETE' }),
   },
-
-  autoSnapshotRules: {
-    list: (charId?: number, roomId?: number) => {
-      const params = new URLSearchParams();
-      if (charId) params.set('char_id', String(charId));
-      if (roomId) params.set('room_id', String(roomId));
-      return fetch(`${API}/auto-snapshot-rules?${params}`).then(r => r.json() as Promise<AutoSnapshotRule[]>);
-    },
-    add: (rule: AutoSnapshotRule) => fetch(`${API}/auto-snapshot-rules`, { method: 'POST', headers, body: JSON.stringify(rule) }).then(r => r.json() as Promise<{ id: number }>),
-    update: (id: number, rule: Partial<AutoSnapshotRule>) => fetch(`${API}/auto-snapshot-rules`, { method: 'PUT', headers, body: JSON.stringify({ id, ...rule }) }),
-    delete: (id: number) => fetch(`${API}/auto-snapshot-rules?id=${id}`, { method: 'DELETE' }),
-  }
 };
+
+export type { VariableType as VarType };
 
 ```
 
@@ -6168,14 +7021,15 @@ export class LorebookEngine {
     context: any = {}
   ): LorebookV2Entry[] {
     const triggered: LorebookV2Entry[] = [];
-    const contextText = (input + ' ' + history.map(m => m.content).join(' ')).toLowerCase();
+    const recentHistory = history.slice(-10);
+    const contextText = this.buildContextText(input, recentHistory);
 
     const activeEntries = this.entries
       .filter(e => e.is_active)
       .sort((a, b) => b.priority - a.priority);
 
     for (const entry of activeEntries) {
-      if (this.shouldTrigger(entry, contextText, history, variables, context)) {
+      if (this.shouldTrigger(entry, contextText, input, recentHistory, variables, context)) {
         triggered.push(entry);
         this.recordTrigger(entry.id!);
       }
@@ -6206,53 +7060,157 @@ export class LorebookEngine {
     return result;
   }
 
+  private buildContextText(input: string, history: Message[]): string {
+    const parts = [input.toLowerCase()];
+    for (const msg of history) {
+      if (msg.content) {
+        parts.push(msg.content.toLowerCase());
+      }
+    }
+    return parts.join(' ');
+  }
+
   private shouldTrigger(
     entry: LorebookV2Entry,
     contextText: string,
+    currentInput: string,
     history: Message[],
     variables: Record<string, any>,
     context: any
   ): boolean {
     const historyData = this.triggerHistory.get(entry.id!);
+    
     if (entry.use_once && historyData && historyData.count > 0) return false;
+    
     if (entry.cooldown_messages > 0 && historyData) {
       const messagesSince = this.totalMessageCount - historyData.lastTriggered;
       if (messagesSince < entry.cooldown_messages) return false;
     }
+
+    if (entry.trigger_count !== undefined && entry.trigger_count !== -1 && entry.trigger_count <= 0) {
+      return false;
+    }
+    
     if (entry.probability < 1 && Math.random() > entry.probability) return false;
 
-    let matchesKeywords = false;
-    if (entry.keywords) {
-      if (entry.keywords.trim() === '*') {
-        matchesKeywords = true;
-      } else {
-        const keywords = entry.keywords.split(/[,，\n]/).map(k => k.trim().toLowerCase()).filter(k => k);
-        matchesKeywords = keywords.some(k => contextText.includes(k));
-      }
+    const triggerMode = entry.trigger_mode || 'keyword';
+    
+    if (triggerMode === 'constant' || entry.is_constant) {
+      return this.evaluateCondition(entry, variables, history, context);
     }
 
-    let matchesRegex = false;
-    if (entry.regex_pattern) {
-      try {
-        const regex = new RegExp(entry.regex_pattern, 'i');
-        matchesRegex = regex.test(contextText);
-      } catch {
-        matchesRegex = false;
-      }
+    let matchesTrigger = false;
+    
+    switch (triggerMode) {
+      case 'keyword':
+        matchesTrigger = this.matchKeywords(entry, contextText, currentInput, history);
+        break;
+      case 'regex':
+        matchesTrigger = this.matchRegex(entry, contextText);
+        break;
+      default:
+        matchesTrigger = this.matchKeywords(entry, contextText, currentInput, history);
     }
 
-    let matchesCondition = true;
-    if (entry.trigger_condition) {
-      try {
-        const func = new Function('variables', 'history', 'context', `return ${entry.trigger_condition};`);
-        matchesCondition = func(variables, history, context);
-      } catch {
-        matchesCondition = false;
+    if (!matchesTrigger) return false;
+
+    return this.evaluateCondition(entry, variables, history, context);
+  }
+
+  private matchKeywords(
+    entry: LorebookV2Entry,
+    contextText: string,
+    currentInput: string,
+    history: Message[]
+  ): boolean {
+    if (!entry.keywords) return false;
+
+    const keywords = entry.keywords.split(/[,，\n]/).map(k => k.trim().toLowerCase()).filter(k => k);
+    if (keywords.length === 0) return false;
+
+    const scanDepth = entry.scan_depth ?? 2;
+    const scanTexts = [currentInput.toLowerCase()];
+    for (let i = 0; i < Math.min(scanDepth, history.length); i++) {
+      const msg = history[history.length - 1 - i];
+      if (msg?.content) {
+        scanTexts.push(msg.content.toLowerCase());
       }
     }
+    const scanText = scanTexts.join(' ');
 
-    const hasAnyMatch = entry.keywords || entry.regex_pattern ? (matchesKeywords || matchesRegex) : true;
-    return hasAnyMatch && matchesCondition;
+    const matchLogic = entry.match_logic || 'any';
+
+    switch (matchLogic) {
+      case 'any':
+        return keywords.some(k => scanText.includes(k));
+      
+      case 'all':
+        return keywords.every(k => scanText.includes(k));
+      
+      case 'not':
+        return !keywords.some(k => scanText.includes(k));
+      
+      case 'expression':
+        if (entry.match_expression) {
+          return this.evaluateMatchExpression(entry.match_expression, keywords, scanText);
+        }
+        return keywords.some(k => scanText.includes(k));
+      
+      default:
+        return keywords.some(k => scanText.includes(k));
+    }
+  }
+
+  private evaluateMatchExpression(expression: string, keywords: string[], text: string): boolean {
+    try {
+      const keywordMatches: Record<string, boolean> = {};
+      for (let i = 0; i < keywords.length; i++) {
+        keywordMatches[`k${i}`] = text.includes(keywords[i]);
+        keywordMatches[keywords[i]] = text.includes(keywords[i]);
+      }
+      
+      let evalExpr = expression
+        .replace(/\bAND\b/gi, '&&')
+        .replace(/\bOR\b/gi, '||')
+        .replace(/\bNOT\b/gi, '!');
+      
+      for (const [key, value] of Object.entries(keywordMatches)) {
+        const regex = new RegExp(`\\b${key}\\b`, 'g');
+        evalExpr = evalExpr.replace(regex, String(value));
+      }
+      
+      const func = new Function(`return (${evalExpr});`);
+      return func();
+    } catch {
+      return false;
+    }
+  }
+
+  private matchRegex(entry: LorebookV2Entry, contextText: string): boolean {
+    if (!entry.regex_pattern) return false;
+    
+    try {
+      const regex = new RegExp(entry.regex_pattern, 'i');
+      return regex.test(contextText);
+    } catch {
+      return false;
+    }
+  }
+
+  private evaluateCondition(
+    entry: LorebookV2Entry,
+    variables: Record<string, any>,
+    history: Message[],
+    context: any
+  ): boolean {
+    if (!entry.trigger_condition) return true;
+    
+    try {
+      const func = new Function('variables', 'history', 'context', `return ${entry.trigger_condition};`);
+      return func(variables, history, context);
+    } catch {
+      return false;
+    }
   }
 
   private recordTrigger(entryId: number) {
@@ -6287,6 +7245,10 @@ export class LorebookEngine {
     this.triggerHistory.clear();
     this.totalMessageCount = 0;
   }
+
+  getTriggerStats(): Map<number, { count: number; lastTriggered: number }> {
+    return new Map(this.triggerHistory);
+  }
 }
 
 ```
@@ -6300,6 +7262,7 @@ import type { Variable, VariableStage } from './db';
 export class VariableEngine {
   private variables: Variable[];
   private stages: Map<number, VariableStage[]>;
+  private changeListeners: Array<(key: string, oldValue: any, newValue: any) => void> = [];
 
   constructor(variables: Variable[] = [], stages: VariableStage[] = []) {
     this.variables = variables;
@@ -6319,37 +7282,73 @@ export class VariableEngine {
     return this.variables.find(v => v.key === key);
   }
 
+  getVariableById(id: number): Variable | undefined {
+    return this.variables.find(v => v.id === id);
+  }
+
   setVariable(key: string, value: any): Variable | null {
     const index = this.variables.findIndex(v => v.key === key);
     if (index === -1) return null;
+    
+    const oldValue = this.variables[index].value;
     this.variables[index] = { ...this.variables[index], value };
+    
+    this.notifyChange(key, oldValue, value);
     return this.variables[index];
   }
 
-  evaluateCondition(condition: string, value: any): boolean {
+  setVariableById(id: number, value: any): Variable | null {
+    const index = this.variables.findIndex(v => v.id === id);
+    if (index === -1) return null;
+    
+    const oldValue = this.variables[index].value;
+    this.variables[index] = { ...this.variables[index], value };
+    
+    this.notifyChange(this.variables[index].key, oldValue, value);
+    return this.variables[index];
+  }
+
+  onChange(listener: (key: string, oldValue: any, newValue: any) => void) {
+    this.changeListeners.push(listener);
+    return () => {
+      this.changeListeners = this.changeListeners.filter(l => l !== listener);
+    };
+  }
+
+  private notifyChange(key: string, oldValue: any, newValue: any) {
+    for (const listener of this.changeListeners) {
+      try {
+        listener(key, oldValue, newValue);
+      } catch (e) {
+        console.error('Variable change listener error:', e);
+      }
+    }
+  }
+
+  evaluateCondition(condition: string, value: any, context?: any): boolean {
     try {
-      const func = new Function('v', `return ${condition};`);
-      return func(value);
+      const func = new Function('v', 'context', `return ${condition};`);
+      return func(value, context);
     } catch {
       return false;
     }
   }
 
-  getActiveStage(variable: Variable): VariableStage | null {
+  getActiveStage(variable: Variable, context?: any): VariableStage | null {
     const stages = this.stages.get(variable.id!) || [];
     const activeStages = stages.filter(s => s.is_active).sort((a, b) => b.priority - a.priority);
     for (const stage of activeStages) {
-      if (this.evaluateCondition(stage.condition, variable.value)) {
+      if (this.evaluateCondition(stage.condition, variable.value, context)) {
         return stage;
       }
     }
     return null;
   }
 
-  getActiveStagePrompts(): string[] {
+  getActiveStagePrompts(context?: any): string[] {
     const prompts: string[] = [];
     for (const variable of this.variables) {
-      const stage = this.getActiveStage(variable);
+      const stage = this.getActiveStage(variable, context);
       if (stage && stage.stage_prompt) {
         prompts.push(stage.stage_prompt);
       }
@@ -6362,14 +7361,44 @@ export class VariableEngine {
     let result = text;
     for (const variable of this.variables) {
       const regex = new RegExp(`\\{\\{${variable.key}\\}\\}`, 'gi');
-      result = result.replace(regex, String(variable.value ?? ''));
+      const displayValue = this.formatValueForDisplay(variable);
+      result = result.replace(regex, displayValue);
     }
     return result;
   }
 
-  getVariableDisplay(variable: Variable): { value: any; percentage?: number; stage?: VariableStage } {
-    const stage = this.getActiveStage(variable);
+  private formatValueForDisplay(variable: Variable): string {
+    const { value, type } = variable;
+    
+    switch (type) {
+      case 'dict':
+      case 'list':
+        if (typeof value === 'object') {
+          return JSON.stringify(value);
+        }
+        return String(value ?? '');
+      
+      case 'boolean':
+        return value ? '是' : '否';
+      
+      case 'number':
+      case 'range':
+        return String(value ?? 0);
+      
+      default:
+        return String(value ?? '');
+    }
+  }
+
+  getVariableDisplay(variable: Variable, context?: any): { 
+    value: any; 
+    percentage?: number; 
+    stage?: VariableStage;
+    formattedValue: string;
+  } {
+    const stage = this.getActiveStage(variable, context);
     let percentage: number | undefined;
+    
     if (variable.type === 'number' || variable.type === 'range') {
       if (variable.min_value !== undefined && variable.max_value !== undefined) {
         const range = variable.max_value - variable.min_value;
@@ -6378,8 +7407,149 @@ export class VariableEngine {
         }
       }
     }
-    const resultStage = stage === null ? undefined : stage;
-    return { value: variable.value, percentage, stage: resultStage };
+    
+    const formattedValue = this.formatValueForDisplay(variable);
+    
+    return { 
+      value: variable.value, 
+      percentage, 
+      stage: stage === null ? undefined : stage,
+      formattedValue
+    };
+  }
+
+  validateValue(variable: Variable, newValue: any): { valid: boolean; error?: string; normalized?: any } {
+    const { type, min_value, max_value } = variable;
+    
+    switch (type) {
+      case 'number':
+      case 'range': {
+        const num = Number(newValue);
+        if (isNaN(num)) {
+          return { valid: false, error: '请输入有效数字' };
+        }
+        if (min_value !== undefined && num < min_value) {
+          return { valid: false, error: `值不能小于 ${min_value}` };
+        }
+        if (max_value !== undefined && num > max_value) {
+          return { valid: false, error: `值不能大于 ${max_value}` };
+        }
+        return { valid: true, normalized: num };
+      }
+      
+      case 'boolean': {
+        const bool = Boolean(newValue);
+        return { valid: true, normalized: bool };
+      }
+      
+      case 'string': {
+        return { valid: true, normalized: String(newValue ?? '') };
+      }
+      
+      case 'dict': {
+        if (typeof newValue === 'object' && !Array.isArray(newValue)) {
+          return { valid: true, normalized: newValue };
+        }
+        if (typeof newValue === 'string') {
+          try {
+            const parsed = JSON.parse(newValue);
+            if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+              return { valid: true, normalized: parsed };
+            }
+          } catch {}
+        }
+        return { valid: false, error: '请输入有效的JSON对象' };
+      }
+      
+      case 'list': {
+        if (Array.isArray(newValue)) {
+          return { valid: true, normalized: newValue };
+        }
+        if (typeof newValue === 'string') {
+          try {
+            const parsed = JSON.parse(newValue);
+            if (Array.isArray(parsed)) {
+              return { valid: true, normalized: parsed };
+            }
+          } catch {}
+          const items = newValue.split(/[,，\n]/).map(s => s.trim()).filter(s => s);
+          return { valid: true, normalized: items };
+        }
+        return { valid: false, error: '请输入有效的数组' };
+      }
+      
+      default:
+        return { valid: true, normalized: newValue };
+    }
+  }
+
+  getDefaultValue(variable: Variable): any {
+    if (variable.default_value !== undefined && variable.default_value !== null) {
+      return variable.default_value;
+    }
+    
+    switch (variable.type) {
+      case 'number':
+      case 'range':
+        return variable.min_value ?? 0;
+      case 'boolean':
+        return false;
+      case 'string':
+        return '';
+      case 'dict':
+        return {};
+      case 'list':
+        return [];
+      default:
+        return null;
+    }
+  }
+
+  resetVariable(variable: Variable): Variable {
+    const defaultValue = this.getDefaultValue(variable);
+    return { ...variable, value: defaultValue };
+  }
+
+  getVariablesMap(): Record<string, any> {
+    const map: Record<string, any> = {};
+    for (const v of this.variables) {
+      map[v.key] = v.value;
+    }
+    return map;
+  }
+
+  applyStageEffects(variable: Variable, context?: any): Variable {
+    const stage = this.getActiveStage(variable, context);
+    if (!stage || !stage.effects) return variable;
+    
+    try {
+      const effects = JSON.parse(stage.effects);
+      let newValue = variable.value;
+      
+      if (effects.set !== undefined) {
+        newValue = effects.set;
+      } else if (effects.add !== undefined && typeof variable.value === 'number') {
+        newValue = variable.value + effects.add;
+      } else if (effects.multiply !== undefined && typeof variable.value === 'number') {
+        newValue = variable.value * effects.multiply;
+      }
+      
+      const validation = this.validateValue(variable, newValue);
+      if (validation.valid) {
+        return { ...variable, value: validation.normalized };
+      }
+    } catch {}
+    
+    return variable;
+  }
+
+  batchUpdate(updates: Array<{ key: string; value: any }>): Variable[] {
+    const updated: Variable[] = [];
+    for (const { key, value } of updates) {
+      const result = this.setVariable(key, value);
+      if (result) updated.push(result);
+    }
+    return updated;
   }
 }
 

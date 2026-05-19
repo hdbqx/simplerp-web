@@ -1,8 +1,8 @@
 export type ApiMode = 'chat_completions' | 'responses';
 
 export type VariableType = 'number' | 'string' | 'boolean' | 'range' | 'dict' | 'list';
-export type SnapshotType = 'manual' | 'auto' | 'checkpoint';
-export type LorebookPosition = 'before_system' | 'after_system' | 'last';
+export type SnapshotType = 'manual' | 'auto' | 'checkpoint' | 'milestone';
+export type LorebookPosition = 'before_system' | 'after_system' | 'last' | 'before_user' | 'after_user' | 'before_ai' | 'after_ai';
 export type TriggerMode = 'constant' | 'keyword' | 'regex';
 export type MatchLogic = 'any' | 'all' | 'not' | 'expression';
 

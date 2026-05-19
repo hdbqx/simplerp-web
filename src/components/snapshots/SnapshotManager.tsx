@@ -173,21 +173,21 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
                 <div className="space-y-2">
                   <input
                     type="text"
-                    value={editingSnapshot.name}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, name: e.target.value })}
+                    value={editingSnapshot!.name}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, name: e.target.value })}
                     className="w-full px-2 py-1 border rounded"
                   />
                   <textarea
-                    value={editingSnapshot.description || ''}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, description: e.target.value })}
+                    value={editingSnapshot!.description || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, description: e.target.value })}
                     placeholder="描述"
                     className="w-full px-2 py-1 border rounded"
                     rows={2}
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <select
-                      value={editingSnapshot.snapshot_type || 'manual'}
-                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, snapshot_type: e.target.value as SnapshotType })}
+                      value={editingSnapshot!.snapshot_type || 'manual'}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, snapshot_type: e.target.value as SnapshotType })}
                       className="px-2 py-1 border rounded"
                     >
                       {snapshotTypeOptions.map((opt) => (
@@ -198,22 +198,22 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore }: SnapshotM
                     </select>
                     <input
                       type="text"
-                      value={editingSnapshot.user_message || ''}
-                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot, user_message: e.target.value })}
+                      value={editingSnapshot!.user_message || ''}
+                      onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, user_message: e.target.value })}
                       placeholder="用户消息"
                       className="px-2 py-1 border rounded"
                     />
                   </div>
                   <textarea
-                    value={editingSnapshot.ai_response || ''}
-                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot, ai_response: e.target.value })}
+                    value={editingSnapshot!.ai_response || ''}
+                    onChange={(e) => setEditingSnapshot({ ...editingSnapshot!, ai_response: e.target.value })}
                     placeholder="AI回复"
                     className="w-full px-2 py-1 border rounded"
                     rows={3}
                   />
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleUpdate(editingSnapshot)}
+                      onClick={() => handleUpdate(editingSnapshot!)}
                       className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
                     >
                       保存
