@@ -79,6 +79,8 @@ export interface Settings {
   thought_model_id?: string;
   thought_interval?: number;
   is_thought_auto_update?: boolean;
+  snapshot_trigger_interval?: number;  // 【新增】每X轮触发一次自动存储
+  snapshot_max_keep_count?: number;    // 【新增】对话快照保留的最大上限数
   temperature?: number;
   model_list?: string;
   active_preset_id?: number;
@@ -193,6 +195,7 @@ export interface Snapshot {
   user_message?: string;
   ai_response?: string;
   message_count?: number;
+  max_message_id?: number; // 【新增】最大消息指针
   thumbnail?: string;
   is_active?: boolean;
   created_at?: number;
@@ -216,7 +219,7 @@ export interface SnapshotVariable {
   snapshot_id: number;
   variable_id?: number;
   key: string;
-  value?: string;
+  value?: any;
   type?: string;
 }
 
@@ -261,6 +264,7 @@ function safeParse(val: any): any {
 }
 
 export const api = {
+  // ... 其他模块的方法保持不变
   characters: {
     list: () => fetch(`${API}/characters`).then(r => r.json() as Promise<Character[]>),
     add: (c: Character) => fetch(`${API}/characters`, { method: 'POST', headers, body: JSON.stringify(c) }).then(r => r.json() as Promise<{ id: number }>),
@@ -268,7 +272,6 @@ export const api = {
     update: (id: number, c: Partial<Character>) => fetch(`${API}/characters`, { method: 'PUT', headers, body: JSON.stringify({ id, ...c }) }),
     delete: (id: number) => fetch(`${API}/characters?id=${id}`, { method: 'DELETE' }),
   },
-  
   rooms: {
     list: () => fetch(`${API}/rooms`).then(r => r.json() as Promise<Room[]>),
     add: (room: Partial<Room>) => fetch(`${API}/rooms`, { method: 'POST', headers, body: JSON.stringify(room) }).then(r => r.json() as Promise<{ id: number }>),
@@ -277,14 +280,12 @@ export const api = {
     getMembers: (roomId: number) => fetch(`${API}/rooms?type=members&room_id=${roomId}`).then(r => r.json() as Promise<RoomMember[]>),
     updateMembers: (roomId: number, members: RoomMember[]) => fetch(`${API}/rooms?type=members`, { method: 'PUT', headers, body: JSON.stringify({ room_id: roomId, members }) }),
   },
-  
   roomMessages: {
     list: (roomId: number) => fetch(`${API}/room_messages?room_id=${roomId}`).then(r => r.json() as Promise<RoomMessage[]>),
     add: (m: RoomMessage) => fetch(`${API}/room_messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{ id: number }>),
     delete: (id: number) => fetch(`${API}/room_messages?id=${id}`, { method: 'DELETE' }),
     clear: (roomId: number) => fetch(`${API}/room_messages?room_id=${roomId}`, { method: 'DELETE' }),
   },
-  
   roomChat: {
     send: (body: { room_id: number; user_input?: string; speaker_char_id: number; fallback_preset_id?: number; fallback_model_id?: string; }) =>
       fetch(`${API}/room_chat`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async r => {
@@ -292,14 +293,12 @@ export const api = {
         return r.json();
       }),
   },
-  
   presets: {
     list: () => fetch(`${API}/presets`).then(r => r.json() as Promise<ApiPreset[]>),
     add: (p: ApiPreset) => fetch(`${API}/presets`, { method: 'POST', headers, body: JSON.stringify(p) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, p: ApiPreset) => fetch(`${API}/presets`, { method: 'PUT', headers, body: JSON.stringify({ id, ...p }) }),
     delete: (id: number) => fetch(`${API}/presets?id=${id}`, { method: 'DELETE' }),
   },
-  
   messages: {
     list: (charId?: number) => fetch(`${API}/messages?char_id=${charId}`).then(r => r.json() as Promise<Message[]>),
     add: (m: Message) => fetch(`${API}/messages`, { method: 'POST', headers, body: JSON.stringify(m) }).then(r => r.json() as Promise<{ id: number }>),
@@ -308,19 +307,16 @@ export const api = {
     clear: (charId?: number) => fetch(`${API}/messages?char_id=${charId}`, { method: 'DELETE' }),
     clearAllImages: () => fetch(`${API}/messages?type=all_images`, { method: 'DELETE' })
   },
-  
   settings: {
     get: () => fetch(`${API}/settings`).then(r => r.json() as Promise<Settings>),
     update: (s: Settings) => fetch(`${API}/settings`, { method: 'POST', headers, body: JSON.stringify(s) })
   },
-  
   lorebook: {
     list: (charId: number) => fetch(`${API}/lorebook?char_id=${charId}`).then(r => r.json() as Promise<LorebookEntry[]>),
     add: (l: LorebookEntry) => fetch(`${API}/lorebook`, { method: 'POST', headers, body: JSON.stringify(l) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, l: Partial<LorebookEntry>) => fetch(`${API}/lorebook`, { method: 'PUT', headers, body: JSON.stringify({ id, ...l }) }),
     delete: (id: number) => fetch(`${API}/lorebook?id=${id}`, { method: 'DELETE' }),
   },
-  
   images: {
     get: (key: string) => fetch(`${API}/images?key=${encodeURIComponent(key)}`),
     list: (charId?: number, roomId?: number) => fetch(`${API}/images?${charId ? `char_id=${charId}` : `room_id=${roomId}`}`).then(r => r.json() as Promise<ImageRecord[]>),
@@ -333,7 +329,6 @@ export const api = {
       return fetch(`${API}/images?${params}`, { method: 'DELETE' });
     },
   },
-
   variables: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -357,14 +352,12 @@ export const api = {
       fetch(`${API}/variables?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates: updates.map(u => ({ ...u, value: typeof u.value === 'object' ? JSON.stringify(u.value) : u.value })) }) }),
     reset: (id: number) => fetch(`${API}/variables?action=reset&id=${id}`, { method: 'POST' }),
   },
-
   variableStages: {
     list: (variableId: number) => fetch(`${API}/variables-stages?variable_id=${variableId}`).then(r => r.json() as Promise<VariableStage[]>),
     add: (s: VariableStage) => fetch(`${API}/variables-stages`, { method: 'POST', headers, body: JSON.stringify(s) }).then(r => r.json() as Promise<{ id: number }>),
     update: (id: number, s: Partial<VariableStage>) => fetch(`${API}/variables-stages`, { method: 'PUT', headers, body: JSON.stringify({ id, ...s }) }),
     delete: (id: number) => fetch(`${API}/variables-stages?id=${id}`, { method: 'DELETE' }),
   },
-
   variableThoughtConfig: {
     get: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -379,7 +372,6 @@ export const api = {
         return r.json();
       }),
   },
-
   lorebookV2: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -393,7 +385,6 @@ export const api = {
     migrateFromV1: (charId: number) => fetch(`${API}/lorebook-v2?action=migrate&char_id=${charId}`, { method: 'POST' }),
     bulkUpdate: (updates: Array<{ id: number; [key: string]: any }>) => fetch(`${API}/lorebook-v2?action=bulk`, { method: 'POST', headers, body: JSON.stringify({ updates }) }),
   },
-
   lorebookGroups: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -405,7 +396,6 @@ export const api = {
     update: (id: number, group: Partial<LorebookGroup>) => fetch(`${API}/lorebook-groups`, { method: 'PUT', headers, body: JSON.stringify({ id, ...group }) }),
     delete: (id: number) => fetch(`${API}/lorebook-groups?id=${id}`, { method: 'DELETE' }),
   },
-
   snapshots: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -416,16 +406,16 @@ export const api = {
     get: (id: number) => fetch(`${API}/snapshots?id=${id}`).then(r => r.json() as Promise<{ snapshot: Snapshot; messages: SnapshotMessage[]; variables: SnapshotVariable[] }>),
     create: (body: { char_id?: number; room_id?: number; name: string; description?: string; snapshot_type?: SnapshotType; user_message?: string; ai_response?: string }) =>
       fetch(`${API}/snapshots`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
-    update: (id: number, updates: Partial<Snapshot>) => fetch(`${API}/snapshots`, { method: 'PUT', headers, body: JSON.stringify({ id, ...updates }) }),
+    update: (id: number, updates: Partial<Snapshot> & { snapshot_variables?: Array<{ id: number; value: any }> }) => 
+      fetch(`${API}/snapshots`, { method: 'PUT', headers, body: JSON.stringify({ id, ...updates }) }).then(r => r.json()),
     delete: (id: number) => fetch(`${API}/snapshots?id=${id}`, { method: 'DELETE' }),
-    restore: (id: number) => fetch(`${API}/snapshots/restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }).then(r => r.json()),
+    restore: (id: number) => fetch(`${API}/snapshots-restore`, { method: 'POST', headers, body: JSON.stringify({ id }) }).then(r => r.json()),
     edit: (id: number, updates: { user_message?: string; ai_response?: string; messages?: SnapshotMessage[] }) =>
       fetch(`${API}/snapshots/edit`, { method: 'POST', headers, body: JSON.stringify({ id, ...updates }) }),
     createBranch: (id: number, name: string) => fetch(`${API}/snapshots/branch`, { method: 'POST', headers, body: JSON.stringify({ snapshot_id: id, name }) }).then(r => r.json() as Promise<{ branch_id: string }>),
     autoCreate: (body: { char_id?: number; room_id?: number; user_message: string; ai_response: string }) =>
       fetch(`${API}/snapshots?action=auto`, { method: 'POST', headers, body: JSON.stringify(body) }).then(r => r.json() as Promise<{ id: number }>),
   },
-
   branches: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();

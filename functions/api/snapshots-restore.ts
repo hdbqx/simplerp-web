@@ -1,8 +1,6 @@
 import { D1Database } from '@cloudflare/workers-types';
 
-interface Env {
-  DB: D1Database;
-}
+interface Env { DB: D1Database; }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
@@ -13,23 +11,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const snapshot: any = await context.env.DB.prepare('SELECT * FROM snapshots WHERE id = ?').bind(Number(id)).first();
     if (!snapshot) return new Response('Snapshot not found', { status: 404 });
 
+    // 清理此时间节点后的所有陈旧后续快照链
     await deleteLaterSnapshots(context, snapshot);
 
-    if (snapshot.char_id) {
-      await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
-
-      const [{ results: msgs }, { results: vars }] = await Promise.all([
-        context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all(),
-        context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all(),
-      ]);
-
-      const msgStatements = (msgs || []).map((msg: any) =>
-        context.env.DB.prepare(
-          'INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)'
-        ).bind(snapshot.char_id, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
-      );
-      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
-
+    if (snapshot.max_message_id) {
+      // 【全新增量恢复模式】一键裁切抹除大于当前时间线指针的未来消息
+      if (snapshot.char_id) {
+        await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ? AND id > ?').bind(snapshot.char_id, snapshot.max_message_id).run();
+      } else if (snapshot.room_id) {
+        await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ? AND id > ?').bind(snapshot.room_id, snapshot.max_message_id).run();
+      }
+      
+      // 完美回流 NPC 心理全局动态变量
+      const { results: vars } = await context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all();
       const varStatements = (vars || [])
         .filter((v: any) => v.variable_id)
         .map((sv: any) =>
@@ -37,17 +31,33 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             .bind(sv.value ?? null, Date.now(), sv.variable_id)
         );
       if (varStatements.length > 0) await context.env.DB.batch(varStatements);
-    }
-    else if (snapshot.room_id) {
-      await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
 
-      const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
-      const msgStatements = (msgs || []).map((msg: any) =>
-        context.env.DB.prepare(
-          'INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(snapshot.room_id, msg.char_id || null, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
-      );
-      if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
+    } else {
+      // 兼容回滚老版本包含全量消息副本的快照
+      if (snapshot.char_id) {
+        await context.env.DB.prepare('DELETE FROM messages WHERE char_id = ?').bind(snapshot.char_id).run();
+        const [{ results: msgs }, { results: vars }] = await Promise.all([
+          context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all(),
+          context.env.DB.prepare('SELECT * FROM snapshot_variables WHERE snapshot_id = ?').bind(Number(id)).all(),
+        ]);
+        const msgStatements = (msgs || []).map((msg: any) =>
+          context.env.DB.prepare('INSERT INTO messages (char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?)')
+            .bind(snapshot.char_id, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+        );
+        if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
+        const varStatements = (vars || []).filter((v: any) => v.variable_id).map((sv: any) =>
+          context.env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?').bind(sv.value ?? null, Date.now(), sv.variable_id)
+        );
+        if (varStatements.length > 0) await context.env.DB.batch(varStatements);
+      } else if (snapshot.room_id) {
+        await context.env.DB.prepare('DELETE FROM room_messages WHERE room_id = ?').bind(snapshot.room_id).run();
+        const { results: msgs } = await context.env.DB.prepare('SELECT * FROM snapshot_messages WHERE snapshot_id = ? ORDER BY order_index ASC').bind(Number(id)).all();
+        const msgStatements = (msgs || []).map((msg: any) =>
+          context.env.DB.prepare('INSERT INTO room_messages (room_id, char_id, role, content, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(snapshot.room_id, msg.char_id || null, msg.role || 'user', msg.content || '', msg.image || null, msg.timestamp || Date.now())
+        );
+        if (msgStatements.length > 0) await context.env.DB.batch(msgStatements);
+      }
     }
 
     return Response.json({ success: true, deleted_after: true });
