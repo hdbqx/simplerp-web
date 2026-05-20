@@ -26,7 +26,7 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
   const [variableEdits, setVariableEdits] = useState<Record<number, any>>({});
   const [isSavingVars, setIsSavingVars] = useState(false);
   
-  // 【神级优化】变量看板悬浮抽屉控制：默认关闭，点击后滑出，绝不干扰对话浏览
+  // 变量看板悬浮抽屉控制
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Message 局部修改缓存
@@ -80,7 +80,7 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
       });
       setVariableEdits(initialEdits);
       setEditingMessageIdx(null);
-      setSidebarOpen(false); // 重置侧边栏
+      setSidebarOpen(false); 
       setShowDetailModal(true);
     } catch (e) {
       alert("拉取快照历史数据失败");
@@ -105,7 +105,7 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
         messages: detailData.messages
       }).catch(() => {});
 
-      alert("✨ 历史对话与数值资产已完美保存修改！");
+      alert("✨ 历史文本与冷冻变量已成功写回云端沙箱！");
       setSidebarOpen(false);
     } catch (e) {
       alert("保存修改失败");
@@ -160,14 +160,12 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
     }
     if (v.type === 'number' || v.type === 'range') {
       return (
-        <div className="flex items-center gap-2 w-full">
-          <input 
-            type="number" 
-            className="input input-bordered input-sm w-full max-w-[120px] font-mono font-bold text-accent bg-base-300 text-center border-base-content/10"
-            value={currentValue ?? 0}
-            onChange={e => setVariableEdits({ ...variableEdits, [v.id!]: Number(e.target.value) })}
-          />
-        </div>
+        <input 
+          type="number" 
+          className="input input-bordered input-sm w-full font-mono font-bold text-accent bg-base-300 text-center border-base-content/10"
+          value={currentValue ?? 0}
+          onChange={e => setVariableEdits({ ...variableEdits, [v.id!]: Number(e.target.value) })}
+        />
       );
     }
     if (v.type === 'dict' || v.type === 'list') {
@@ -239,12 +237,12 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
 
       {/* 终极重构版快照大主控舱 */}
       {showDetailModal && detailData && (
-        <div className="modal modal-open z-50">
-          {/* 使用全尺寸视窗排布，完美适配移动端和PC宽屏，彻底隔绝页面滑动遮挡缺陷 */}
-          <div className="modal-box max-w-6xl w-[96vw] h-[90vh] flex flex-col p-0 overflow-hidden border border-primary/20 shadow-2xl bg-base-900 rounded-2xl relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          {/* 【彻底修复宽度与高度阻断限制】彻底抛弃 daisyui 默认 padding 影响，强制控制物理视窗 */}
+          <div className="w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden border border-primary/20 shadow-2xl bg-base-900 rounded-2xl relative">
             
             {/* 顶栏控制中枢 */}
-            <div className="p-4 bg-base-300/90 border-b border-base-200 flex items-center justify-between shadow-sm shrink-0 z-20">
+            <div className="p-4 bg-base-300 border-b border-base-200/60 flex items-center justify-between shadow-sm shrink-0 z-20">
               <div className="space-y-0.5 min-w-0 flex-1">
                 <h3 className="font-black text-sm md:text-base text-primary flex items-center gap-1.5 truncate">
                   <Layers size={16} className="text-accent animate-pulse" /> 
@@ -254,21 +252,17 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
               </div>
               
               {/* 操作按钮集 */}
-              <div className="flex items-center gap-2 shrink-0 ml-2">
-                {/* 核心亮点：新增独立的变量侧滑唤醒把手 */}
+              <div className="flex items-center gap-1.5 shrink-0 ml-2">
                 <button 
                   onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className={`btn btn-xs md:btn-sm gap-1 ${sidebarOpen ? 'btn-accent' : 'btn-outline border-base-content/20'} rounded-xl transition-all shadow`}
+                  className={`btn btn-xs md:btn-sm gap-1 px-2.5 ${sidebarOpen ? 'btn-accent' : 'btn-outline border-base-content/20'} rounded-xl transition-all shadow`}
                 >
                   <Sliders size={13} />
-                  <span className="hidden sm:inline">数值控制台</span>
-                  {detailData.variables.length > 0 && (
-                    <span className="badge badge-xs badge-neutral font-mono text-[9px]">{detailData.variables.length}</span>
-                  )}
+                  <span className="hidden sm:inline">变量面板</span>
                 </button>
 
                 <button className="btn btn-xs md:btn-sm btn-warning px-2 rounded-xl font-bold flex items-center gap-0.5" onClick={() => handleRestore(detailData.snapshot)}>
-                  <RotateCcw size={12}/> 恢复该存档
+                  <RotateCcw size={12}/> 恢复
                 </button>
                 
                 <button 
@@ -280,11 +274,11 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
               </div>
             </div>
 
-            {/* 核心展示区 (全屏画布，取消双栏并行，保证极简高纯净宽敞度) */}
-            <div className="flex-1 overflow-hidden relative bg-base-950/40">
+            {/* 核心展示区 */}
+            <div className="flex-1 overflow-hidden relative bg-base-950/20">
               
-              {/* 大屏独占：原汁原味自由对话气泡流 */}
-              <div className="w-full h-full p-4 md:p-6 overflow-y-auto flex flex-col space-y-4 custom-scrollbar pb-16">
+              {/* 历史对话气泡流容器 — 【彻底修复 PC 端横向撑满变形产生滚动条的痛点】 */}
+              <div className="w-full h-full p-3 md:p-5 overflow-y-auto flex flex-col space-y-4 custom-scrollbar pb-24">
                 {detailData.messages.length === 0 ? (
                   <div className="text-xs text-center py-16 opacity-40">此快照节点暂无任何对话线索</div>
                 ) : (
@@ -293,14 +287,14 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
                     const isEditingThis = editingMessageIdx === idx;
                     
                     return (
-                      <div key={idx} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group/msg relative w-full max-w-4xl mx-auto opacity-95`}>
+                      <div key={idx} className={`chat ${isUser ? 'chat-end' : 'chat-start'} group/msg relative w-full max-w-3xl mx-auto opacity-95 px-1`}>
                         <div className="chat-header text-[10px] opacity-40 mb-1 flex items-center gap-2">
-                          <span>{isUser ? '玩家 (朕)' : '角色'}</span>
+                          <span>{isUser ? '玩家' : '角色'}</span>
                           {!isEditingThis && (
                             <button 
                               onClick={() => startEditMessage(idx, m.content)}
                               className="opacity-0 group-hover/msg:opacity-100 text-info hover:text-primary transition-opacity p-0.5 rounded"
-                              title="点击篡改、修正本段发言"
+                              title="篡改发言"
                             >
                               <Pencil size={11} />
                             </button>
@@ -308,21 +302,20 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
                         </div>
 
                         {isEditingThis ? (
-                          <div className="chat-bubble p-2.5 bg-base-300 border border-info/40 shadow-inner w-full rounded-xl flex flex-col gap-2 my-1">
+                          <div className="chat-bubble p-2 bg-base-300 border border-info/40 shadow-inner w-full rounded-xl flex flex-col gap-1.5 my-1">
                             <textarea
-                              className="textarea textarea-bordered textarea-sm font-sans text-xs bg-base-100 w-full leading-relaxed h-28 focus:textarea-info"
+                              className="textarea textarea-bordered textarea-sm font-sans text-xs bg-base-100 w-full leading-relaxed h-24 focus:textarea-info"
                               value={editingMessageText}
                               onChange={e => setEditingMessageText(e.target.value)}
                             />
-                            <div className="flex justify-end gap-1.5">
+                            <div className="flex justify-end gap-1">
                               <button className="btn btn-ghost btn-xs text-[10px]" onClick={() => setEditingMessageIdx(null)}>取消</button>
-                              <button className="btn btn-info btn-xs text-[10px] gap-0.5 px-2.5" onClick={() => saveEditedMessage(idx)}>
-                                <Check size={11}/> 暂存内容
-                              </button>
+                              <button className="btn btn-info btn-xs text-[10px] px-2" onClick={() => saveEditedMessage(idx)}>确认修改</button>
                             </div>
                           </div>
                         ) : (
-                          <div className={`chat-bubble text-xs md:text-sm py-2 px-3.5 max-w-[88%] rounded-2xl shadow-sm border leading-relaxed break-words font-medium tracking-wide ${isUser ? 'chat-bubble-primary border-primary/30 text-primary-content' : 'bg-base-200 text-base-content border-base-300'}`}>
+                          /* 【核心优化】使用 max-w-full 与 break-words 强制截断，阻断任何横向拉开 */
+                          <div className={`chat-bubble text-xs md:text-sm py-2 px-3.5 rounded-2xl shadow-sm border leading-relaxed break-words font-medium tracking-wide max-w-full ${isUser ? 'chat-bubble-primary border-primary/30 text-primary-content' : 'bg-base-200 text-base-content border-base-300'}`}>
                             {m.content}
                           </div>
                         )}
@@ -332,26 +325,24 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
                 )}
               </div>
 
-              {/* 【全新核心抽屉：右侧侧滑高级变量修改面板】 */}
-              {/* 双端完美兼容：PC端作为悬浮侧栏，移动端一键全屏覆盖，极其规整，不再产生多级滚动冲突 */}
-              <div className={`absolute top-0 right-0 h-full w-full sm:w-[380px] bg-base-200/95 backdrop-blur-md border-l border-base-300/60 shadow-2xl transform transition-transform duration-300 ease-out z-30 flex flex-col ${sidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+              {/* 右侧侧滑变量抽屉控制台 — 移动端自适应 100% 宽度，PC端 340px 宽度 */}
+              <div className={`absolute top-0 right-0 h-full w-full sm:w-[340px] bg-base-200/95 backdrop-blur-md border-l border-base-300/60 shadow-2xl transform transition-transform duration-300 ease-out z-30 flex flex-col ${sidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                 <div className="p-3.5 border-b border-base-300 flex items-center justify-between bg-base-300/60 shrink-0">
                   <div className="flex items-center gap-1.5 text-xs font-black text-secondary-content">
-                    <Sliders size={14} className="text-accent" /> 冻结快照数值中心
+                    <Sliders size={14} className="text-accent" /> 变量微调库
                   </div>
                   <button className="btn btn-xs btn-circle btn-ghost" onClick={() => setSidebarOpen(false)}><X size={14}/></button>
                 </div>
                 
-                {/* 抽屉内部独立滑动带，绝不污染外面对话区域 */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3.5 custom-scrollbar pb-12">
+                <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar pb-24">
                   {detailData.variables.length === 0 ? (
                     <div className="text-xs text-center py-16 opacity-30">此节点未绑定任何剧本变量</div>
                   ) : (
                     detailData.variables.map((v) => (
-                      <div key={v.id} className="p-2.5 border border-base-content/5 rounded-xl bg-base-900/40 space-y-1.5 hover:border-accent/10 transition-colors">
+                      <div key={v.id} className="p-2.5 border border-base-content/5 rounded-xl bg-base-900/40 space-y-1 hover:border-accent/10 transition-colors">
                         <div className="flex justify-between items-center">
-                          <span className="text-xs font-black text-base-content/90 tracking-wide">{v.key}</span>
-                          <span className="text-[9px] opacity-40 font-mono uppercase bg-base-300 px-1 rounded">{v.type}</span>
+                          <span className="text-xs font-black text-base-content/90 tracking-wide truncate max-w-[150px]">{v.name || v.key}</span>
+                          <span className="text-[8px] opacity-40 font-mono uppercase bg-base-300 px-1 rounded shrink-0">{v.type}</span>
                         </div>
                         <div className="w-full flex items-center">
                           {renderInlineVariableEditor(v)}
@@ -364,27 +355,27 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
 
             </div>
 
-            {/* 【强力底层控制卡】使用绝对定位强制卡在弹窗最底部，绝不随页面滑动偏位，彻底断绝遮挡！ */}
-            <div className="absolute bottom-0 left-0 w-full p-3 bg-base-300/95 border-t border-base-200 flex items-center justify-between gap-3 shrink-0 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] backdrop-blur-sm">
+            {/* 【强力底层控制卡 —— 彻底治愈遮挡缺陷】 */}
+            {/* 弃用外部相对滚动，使用固定绝对底部底框，强制置于 modal-box 的最底部最前层 */}
+            <div className="absolute bottom-0 left-0 w-full p-3 bg-base-300 border-t border-base-200 flex items-center justify-between gap-3 shrink-0 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.4)]">
               <button 
                 type="button" 
-                className="btn btn-sm btn-ghost border border-base-content/10 px-4 text-xs rounded-xl flex items-center gap-1 text-base-content/70 hover:bg-base-200"
+                className="btn btn-sm btn-neutral border border-base-content/10 px-4 text-xs rounded-xl flex items-center gap-1"
                 onClick={() => { setShowDetailModal(false); setDetailData(null); }}
               >
                 <ArrowLeft size={13}/> 返回列表
               </button>
 
-              <div className="flex items-center gap-2">
-                {/* 如果局部变量尚未完全呈现，提示按钮引导用户直接改数 */}
+              <div className="flex items-center gap-1.5">
                 {!sidebarOpen && detailData.variables.length > 0 && (
-                  <button onClick={() => setSidebarOpen(true)} className="btn btn-xs btn-outline btn-accent border-dashed px-2.5 rounded-lg text-[11px]">
-                    ⚙️ 点此调变量
+                  <button onClick={() => setSidebarOpen(true)} className="btn btn-xs btn-outline btn-accent px-2.5 h-8 rounded-xl text-[11px] font-bold">
+                    ⚙️ 调整变量
                   </button>
                 )}
                 
                 <button 
                   type="button"
-                  className={`btn btn-primary btn-sm px-5 rounded-xl font-bold flex items-center gap-1 shadow-md shadow-primary/20 ${isSavingVars ? 'loading' : ''}`}
+                  className={`btn btn-primary btn-sm px-5 rounded-xl font-bold flex items-center gap-1 shadow-lg ${isSavingVars ? 'loading' : ''}`}
                   disabled={isSavingVars}
                   onClick={handleSaveAllChanges}
                 >
