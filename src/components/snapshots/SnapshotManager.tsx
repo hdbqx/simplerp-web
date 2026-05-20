@@ -340,10 +340,11 @@ export function SnapshotManager({ charId, roomId, onSnapshotRestore, latestMessa
                   ) : (
                     detailData.variables.map((v) => (
                       <div key={v.id} className="p-2.5 border border-base-content/5 rounded-xl bg-base-900/40 space-y-1 hover:border-accent/10 transition-colors">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-black text-base-content/90 tracking-wide truncate max-w-[150px]">{v.name || v.key}</span>
-                          <span className="text-[8px] opacity-40 font-mono uppercase bg-base-300 px-1 rounded shrink-0">{v.type}</span>
-                        </div>
+                  
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-black text-base-content/90 tracking-wide truncate max-w-[150px] font-mono">{v.key}</span>
+                              <span className="text-[8px] opacity-40 font-mono uppercase bg-base-300 px-1 rounded shrink-0">{v.type}</span>
+                            </div>
                         <div className="w-full flex items-center">
                           {renderInlineVariableEditor(v)}
                         </div>
