@@ -915,9 +915,7 @@ function App() {
                       <section>
                           <h4 className="text-sm font-black mb-3 text-primary uppercase">自动化快照控制策略</h4>
                           <div className="p-4 border border-base-300 rounded-xl bg-base-200/50 space-y-4">
-                            <p className="text-[11px] opacity-70 leading-relaxed text-secondary-content">
-                              引入增量快照指针存储技术。合理配置存储阈值与上限，既能给剧情提供完整的多结局悔棋回滚线，又能极大避免数据库过度爆满或操作卡顿。
-                            </p>
+                    
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="form-control">
                                 <label className="label text-xs font-bold">自动快照触发周期（每X轮对话）</label>
