@@ -897,20 +897,42 @@ function App() {
                                 <label className="label text-xs font-bold">预设</label>
                                 <select className="select select-bordered select-sm"
                                   value={settings.thought_preset_id ? String(settings.thought_preset_id) : ''}
-                                  onChange={e => { const v = e.target.value; setSettings({ ...settings, thought_preset_id: v ? Number(v) : undefined }); }}>
+                                  onChange={e => { 
+                                    const v = e.target.value; 
+                                    if (!v) {
+                                      setSettings({ ...settings, thought_preset_id: undefined, thought_model_id: '' });
+                                      return;
+                                    }
+                                    const pid = parseInt(v, 10);
+                                    setSettings({ ...settings, thought_preset_id: pid }); 
+                                    fetchPresetModels(pid); // 【加入核心联动】选择预设时，自动在后台拉取对应的模型资产列表
+                                  }}>
                                   <option value="">跟随顶部预设</option>
                                   {presets.map(p => <option key={`thought-preset-${p.id}`} value={String(p.id)}>{p.name}</option>)}
                                 </select>
                               </div>
+                              
+                              {/* 【核心优化】将原本死板的 input 文本框升级为智能联动下拉列表 */}
                               <div className="form-control md:col-span-2">
                                 <label className="label text-xs font-bold">模型</label>
-                                <input type="text" className="input input-bordered input-sm"
-                                  value={settings.thought_model_id ?? ''}
-                                  placeholder="留空跟随顶部模型"
-                                  onChange={e => setSettings({ ...settings, thought_model_id: e.target.value })} />
-                              </div>
-                            </div>
-                          </div>
+                                <select 
+                                  className="select select-bordered select-sm w-full" 
+                                  value={settings.thought_model_id || ''} 
+                                  onChange={(e) => setSettings({ ...settings, thought_model_id: e.target.value })}
+                                >
+                                  <option value="">留空跟随顶部模型</option>
+                                  {/* 1. 如果该预设成功通过 API 自动获取到了模型列表，优先进行极速渲染 */}
+                                  {settings.thought_preset_id && (presetModelsMap[settings.thought_preset_id] || []).map(m => (
+                                    <option key={`thought-model-${m}`} value={m}>{m}</option>
+                                  ))}
+                                  {/* 2. 备用安全降级：如果 API 获取为空或受限，则优雅读取备用手动模型列表进行渲染 */}
+                                  {settings.thought_preset_id && (presetModelsMap[settings.thought_preset_id]?.length || 0) === 0 && manualModels.map(m => (
+                                    <option key={`thought-manual-${m}`} value={m}>{m}</option>
+                                  ))}
+            </select>
+          </div>
+        </div>
+      </div>
                       </section>
                       <section>
                           <h4 className="text-sm font-black mb-3 text-primary uppercase">自动化快照控制策略</h4>
