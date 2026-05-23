@@ -118,6 +118,60 @@ function ValueBadge({ value }: { value: any }) {
   );
 }
 
+function ValueSurface({ value, mode }: { value: any; mode: 'current' | 'default' | 'inline' }) {
+  const isNumber = typeof value === 'number';
+  const isBoolean = typeof value === 'boolean';
+  const isText = typeof value === 'string';
+  const isArray = Array.isArray(value);
+  const isObject = isPlainObject(value);
+
+  const title = mode === 'default' ? '默认值' : mode === 'current' ? '当前值' : '值';
+  const base = 'rounded-2xl border px-4 py-3';
+
+  if (isNumber) {
+    return (
+      <div className={`${base} border-emerald-300/25 bg-gradient-to-br from-emerald-500/18 via-base-100/85 to-teal-500/12`}>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">{title}</div>
+        <div className="mt-1 text-2xl font-black tracking-tight text-emerald-50">{formatValue(value)}</div>
+      </div>
+    );
+  }
+
+  if (isBoolean) {
+    return (
+      <div className={`${base} border-amber-300/25 bg-gradient-to-br from-amber-500/18 via-base-100/85 to-orange-500/12`}>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-amber-100/75">{title}</div>
+        <div className="mt-1 text-2xl font-black text-amber-50">{value ? 'TRUE' : 'FALSE'}</div>
+      </div>
+    );
+  }
+
+  if (isText) {
+    return (
+      <div className={`${base} border-fuchsia-300/25 bg-gradient-to-br from-fuchsia-500/18 via-base-100/85 to-pink-500/12`}>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-fuchsia-100/75">{title}</div>
+        <div className="mt-2 break-words text-sm font-medium leading-relaxed text-fuchsia-50">{formatValue(value)}</div>
+      </div>
+    );
+  }
+
+  if (isArray || isObject) {
+    return (
+      <div className={`${base} border-sky-300/25 bg-gradient-to-br from-sky-500/18 via-base-100/85 to-cyan-500/12`}>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-sky-100/75">{title}</div>
+        <div className="mt-1 text-xl font-black text-sky-50">{formatValue(value)}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${base} border-base-300/40 bg-base-100/75`}>
+      <div className="text-[11px] uppercase tracking-[0.18em] text-base-content/45">{title}</div>
+      <div className="mt-1 break-all font-mono text-sm text-base-content/90">{formatValue(value)}</div>
+    </div>
+  );
+}
+
 function MiniStat({
   icon,
   label,
@@ -201,7 +255,6 @@ function ObjectCard({ title, value, depth = 0 }: { title: string; value: any; de
                 {title}
               </div>
               <div className="text-lg font-bold leading-tight">{displayName}</div>
-              {description && <div className="mt-2 text-xs leading-relaxed text-base-content/60">{description}</div>}
             </div>
             <div className="shrink-0 text-right">
               <StatusChip label={`${entries.length} 字段`} tone="cyan" />
@@ -228,6 +281,14 @@ function ObjectCard({ title, value, depth = 0 }: { title: string; value: any; de
         </div>
 
         <div className="space-y-2 p-4">
+          {description && (
+            <details className="group rounded-2xl border border-cyan-300/20 bg-white/5 px-4 py-3">
+              <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em] text-cyan-100/70">
+                说明 / Prompt Hint
+              </summary>
+              <div className="mt-3 text-xs leading-relaxed text-slate-100/78">{description}</div>
+            </details>
+          )}
           {extras.length === 0 ? (
             <div className="rounded-xl border border-dashed border-cyan-300/25 bg-base-100/50 px-3 py-4 text-xs text-base-content/45">无其他字段</div>
           ) : (
@@ -255,12 +316,16 @@ function ValueRow({ label, value, depth = 0 }: { label: string; value: any; dept
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-base-300/70 bg-base-100/75 px-3 py-2.5 backdrop-blur-sm">
-      <div className="min-w-0">
-        <div className="text-[11px] uppercase tracking-[0.16em] text-base-content/45">{label}</div>
-        <div className="break-all font-mono text-sm text-base-content/90">{formatValue(value)}</div>
+    <div className="rounded-xl border border-base-300/70 bg-base-100/75 px-3 py-2.5 backdrop-blur-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.16em] text-base-content/45">{label}</div>
+        </div>
+        <ValueBadge value={value} />
       </div>
-      <ValueBadge value={value} />
+      <div className="mt-2">
+        <ValueSurface value={value} mode="inline" />
+      </div>
     </div>
   );
 }
@@ -310,7 +375,7 @@ export function VariableOverview({ variables }: VariableOverviewProps) {
           暂无可展示变量
         </div>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-2">
+        <div className="grid gap-5">
           {visibleVariables.map(variable => {
             const tags = splitTags(variable.tags);
             const isNumeric = variable.type === 'number' || variable.type === 'range';
@@ -377,15 +442,9 @@ export function VariableOverview({ variables }: VariableOverviewProps) {
                 </div>
 
                 <div className="space-y-4 p-5">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-slate-950/25 p-4 backdrop-blur-sm">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">当前值</div>
-                      <div className="mt-2 break-words text-lg font-bold leading-snug text-white/95">{formatValue(variable.value)}</div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-slate-950/25 p-4 backdrop-blur-sm">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">默认值</div>
-                      <div className="mt-2 break-words text-lg font-bold leading-snug text-white/95">{formatValue(variable.default_value)}</div>
-                    </div>
+                  <div className="grid gap-3">
+                    <ValueSurface value={variable.value} mode="current" />
+                    <ValueSurface value={variable.default_value} mode="default" />
                   </div>
 
                   <div className="rounded-2xl border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm">
