@@ -500,7 +500,8 @@ function App() {
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     const hasPriorDialogue = currentHistory.some(m => m.role !== 'user');
     const shouldInjectFirstMessage = !hasPriorDialogue && !!char.first_message;
-    const firstMessageTimestamp = Date.now();
+    const firstUserMessage = shouldInjectFirstMessage ? currentHistory.find(m => m.role === 'user') : undefined;
+    const firstMessageTimestamp = firstUserMessage ? Math.max(1, firstUserMessage.timestamp - 1) : Date.now();
     const effectiveHistory = shouldInjectFirstMessage
       ? [
           { role: 'assistant' as const, content: char.first_message, timestamp: firstMessageTimestamp, char_id: char.id },
@@ -545,7 +546,15 @@ function App() {
         char_id: char.id,
         timestamp: firstMessageTimestamp,
       };
-      setMessages(prev => [...prev, firstMessage]);
+      setMessages(prev => {
+        const next = [...prev];
+        const insertAt = firstUserMessage
+          ? next.findIndex(m => m.role === 'user' && m.timestamp === firstUserMessage.timestamp)
+          : -1;
+        if (insertAt >= 0) next.splice(insertAt, 0, firstMessage);
+        else next.unshift(firstMessage);
+        return next;
+      });
       api.messages.add(firstMessage).then(res => {
         setMessages(prev => prev.map(m => m.timestamp === firstMessage.timestamp ? { ...m, id: res.id } : m));
       }).catch(console.error);
