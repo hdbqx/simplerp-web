@@ -15,7 +15,7 @@ interface VariableOverviewProps {
 }
 
 const MAX_DEPTH = 6;
-const META_KEYS = new Set(['name', 'description', 'level', 'max_level']);
+const META_KEYS = new Set(['name', 'level', 'max_level']);
 
 function isPlainObject(value: any): value is Record<string, any> {
   return Object.prototype.toString.call(value) === '[object Object]';
@@ -239,7 +239,6 @@ function ObjectCard({ title, value, depth = 0 }: { title: string; value: any; de
   if (isPlainObject(value)) {
     const entries = Object.entries(value);
     const displayName = typeof value.name === 'string' ? value.name : title;
-    const description = typeof value.description === 'string' ? value.description : '';
     const level = typeof value.level === 'number' ? value.level : undefined;
     const maxLevel = typeof value.max_level === 'number' && value.max_level > 0 ? value.max_level : undefined;
     const progress = level !== undefined && maxLevel ? Math.max(0, Math.min(level / maxLevel, 1)) : undefined;
@@ -281,14 +280,6 @@ function ObjectCard({ title, value, depth = 0 }: { title: string; value: any; de
         </div>
 
         <div className="space-y-2 p-4">
-          {description && (
-            <details className="group rounded-2xl border border-cyan-300/20 bg-white/5 px-4 py-3">
-              <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em] text-cyan-100/70">
-                说明 / Prompt Hint
-              </summary>
-              <div className="mt-3 text-xs leading-relaxed text-slate-100/78">{description}</div>
-            </details>
-          )}
           {extras.length === 0 ? (
             <div className="rounded-xl border border-dashed border-cyan-300/25 bg-base-100/50 px-3 py-4 text-xs text-base-content/45">无其他字段</div>
           ) : (
@@ -404,7 +395,6 @@ export function VariableOverview({ variables }: VariableOverviewProps) {
                         </span>
                         {variable.is_persistent && <StatusChip label="持久" tone="emerald" />}
                       </div>
-                      {variable.description && <div className="mt-2 text-xs leading-relaxed text-slate-200/78">{variable.description}</div>}
                     </div>
 
                     <div className="shrink-0 text-right">
@@ -438,6 +428,15 @@ export function VariableOverview({ variables }: VariableOverviewProps) {
                         />
                       </div>
                     </div>
+                  )}
+
+                  {variable.description && (
+                    <details className="mt-4 rounded-2xl border border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm">
+                      <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em] text-white/65">
+                        说明 / Prompt Hint
+                      </summary>
+                      <div className="mt-3 text-xs leading-relaxed text-slate-200/82">{variable.description}</div>
+                    </details>
                   )}
                 </div>
 
