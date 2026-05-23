@@ -5,6 +5,7 @@ import { VariableEngine } from './lib/variable-engine';
 import { LorebookEngine } from './lib/lorebook-engine';
 import { replaceVariables as replaceBuiltInVariables } from './lib/variables';
 import { ImageStudio } from './components/ImageStudio';
+import { VariableOverview } from './components/variables/VariableOverview';
 import { VariableManager } from './components/variables/VariableManager';
 import { SnapshotManager } from './components/snapshots/SnapshotManager';
 import { LorebookManager } from './components/lorebook/LorebookManager';
@@ -61,7 +62,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
-  const [charVariables, setCharVariables] = useState<any[]>([]);
+  const [charVariables, setCharVariables] = useState<Variable[]>([]);
   const [charLorebookEntries, setCharLorebookEntries] = useState<LorebookV2Entry[]>([]);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
@@ -989,7 +990,7 @@ function App() {
 
       {showSettings && settings && (
           <div className="modal modal-open text-base-content">
-              <div className="modal-box max-w-4xl h-[85vh] flex flex-col p-0 overflow-hidden">
+              <div className="modal-box max-w-6xl h-[88vh] flex flex-col p-0 overflow-hidden">
                   <div className="p-6 border-b bg-base-200 font-bold flex justify-between items-center">系统配置<button className="btn btn-sm btn-circle btn-ghost" onClick={()=>setShowSettings(false)}><X/></button></div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                       <section>
@@ -1268,10 +1269,13 @@ function App() {
                         </div>
                       )}
                       {charEditTab === 'variables' && (
-                        <VariableManager
-                          charId={selectedCharId}
-                          onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
-                        />
+                        <div className="space-y-6">
+                          <VariableOverview variables={charVariables} />
+                          <VariableManager
+                            charId={selectedCharId}
+                            onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
+                          />
+                        </div>
                       )}
                       {charEditTab === 'snapshots' && (
                         <SnapshotManager
