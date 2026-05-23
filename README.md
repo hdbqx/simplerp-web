@@ -46,22 +46,3 @@ npm run dev
  3. 连接你的 GitHub 仓库到 Cloudflare Pages，构建命令填 npm run build，输出目录填 dist，并绑定 D1 数据库。
 **安全提醒**：部署后，请务必在 Cloudflare Pages 的「Settings -> Environment variables」中配置 AUTH_USER 和 AUTH_PASS，以启用网页的基础密码访问保护。
 
-## 角色档案导入导出
-
-可导出并直接编辑 JSON 后再导入，格式如下：
-
-```json
-{
-  "version": 1,
-  "character": {
-    "name": "角色名",
-    "description": "人设/世界观",
-    "first_message": "第一条消息",
-    "summary": "长期记忆"
-  },
-  "variables": [],
-  "lorebook_v2": []
-}
-```
-
-导入会覆盖当前角色的基础设定、关联变量和关联世界书。

@@ -17,13 +17,17 @@ export interface Character {
 
 export interface CharacterExportPayload {
   version: 1;
+  meta?: {
+    format: 'simplerp-character-archive';
+    exported_at?: string;
+  };
   character: {
     name: string;
     description: string;
     first_message: string;
     summary: string;
   };
-  variables: Variable[];
+  variables: Array<Variable & { stages?: VariableStage[] }>;
   lorebook_v2: LorebookV2Entry[];
 }
 

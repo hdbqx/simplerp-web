@@ -56,13 +56,13 @@ function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
   const [charVariables, setCharVariables] = useState<any[]>([]);
   const [charLorebookEntries, setCharLorebookEntries] = useState<LorebookV2Entry[]>([]);
-  const [importText, setImportText] = useState('');
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
@@ -183,7 +183,6 @@ function App() {
     setCharVariables(vars);
     setGlobalVariables(vars);
     setCharLorebookEntries(lore as LorebookV2Entry[]);
-    setImportText('');
   };
 
   const exportCharacter = async () => {
@@ -194,15 +193,25 @@ function App() {
       api.variables.list(selectedCharId, undefined),
       api.lorebookV2.list(selectedCharId, undefined),
     ]);
+    const variablesWithStages = await Promise.all(
+      variables.map(async (variable) => ({
+        ...variable,
+        stages: variable.id ? await api.variableStages.list(variable.id) : [],
+      }))
+    );
     const payload: CharacterExportPayload = {
       version: 1,
+      meta: {
+        format: 'simplerp-character-archive',
+        exported_at: new Date().toISOString(),
+      },
       character: {
         name: char.name,
         description: char.description || '',
         first_message: char.first_message || '',
         summary: char.summary || '',
       },
-      variables,
+      variables: variablesWithStages,
       lorebook_v2: lorebook_v2 as LorebookV2Entry[],
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
@@ -214,14 +223,14 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const importCharacterArchive = async () => {
+  const importCharacterArchive = async (text: string) => {
     if (!selectedCharId) return;
-    const text = importText.trim();
-    if (!text) return alert('请先粘贴 JSON');
+    const trimmedText = text.trim();
+    if (!trimmedText) return alert('请选择一个 JSON 档案文件');
 
     let payload: CharacterExportPayload;
     try {
-      payload = JSON.parse(text);
+      payload = JSON.parse(trimmedText);
     } catch {
       return alert('JSON 解析失败');
     }
@@ -245,12 +254,20 @@ function App() {
       if (v.id) await api.variables.delete(v.id);
     }
     for (const v of payload.variables || []) {
-      await api.variables.add({
-        ...v,
+      const { stages = [], ...variableData } = v as Variable & { stages?: VariableStage[] };
+      const created = await api.variables.add({
+        ...variableData,
         id: undefined,
         char_id: selectedCharId,
         room_id: undefined,
       });
+      for (const stage of stages) {
+        await api.variableStages.add({
+          ...stage,
+          id: undefined,
+          variable_id: created.id,
+        });
+      }
     }
 
     const existingLore = await api.lorebookV2.list(selectedCharId, undefined);
@@ -269,6 +286,17 @@ function App() {
     await loadData();
     await loadCharArchive();
     alert('导入完成');
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await importCharacterArchive(text);
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
@@ -442,6 +470,18 @@ function App() {
     abortControllerRef.current = controller;
     setIsTyping(true);
     const tempTs = Date.now() + 1;
+    if (effectiveHistory.length > 0 && currentHistory.length === 0 && char.first_message) {
+      const firstMessage: Message = {
+        role: 'assistant',
+        content: char.first_message,
+        char_id: char.id,
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, firstMessage]);
+      api.messages.add(firstMessage).then(res => {
+        setMessages(prev => prev.map(m => m.timestamp === firstMessage.timestamp ? { ...m, id: res.id } : m));
+      }).catch(console.error);
+    }
     setMessages(prev => [...prev, { role: 'assistant', content: '', char_id: char.id, timestamp: tempTs }]);
     
     const llm = new LLMClient(currentPreset.api_base, currentPreset.api_key, getPresetMode(currentPreset));
@@ -1144,9 +1184,9 @@ function App() {
                           </div>
                           <div className="form-control">
                             <label className="label font-bold text-xs">导入角色档案 JSON</label>
-                            <textarea className="textarea textarea-bordered h-48 font-mono text-xs" value={importText} onChange={e=>setImportText(e.target.value)} placeholder={`{\n  "version": 1,\n  "character": {\n    "name": "角色名",\n    "description": "人设/世界观",\n    "first_message": "第一条消息",\n    "summary": "长期记忆"\n  },\n  "variables": [],\n  "lorebook_v2": []\n}`} />
-                            <p className="mt-2 text-[11px] opacity-60">可直接修改 JSON 后导入，变量和世界书会被一并覆盖。</p>
-                            <button className="btn btn-primary mt-3" onClick={importCharacterArchive}>导入并覆盖当前角色</button>
+                            <input ref={importFileRef} type="file" accept="application/json,.json" className="file-input file-input-bordered file-input-sm w-full" onChange={handleImportFile} />
+                            <p className="mt-2 text-[11px] opacity-60">选择一个 JSON 文件即可导入，变量与世界书会被一并覆盖。</p>
+                            <button className="btn btn-primary mt-3" onClick={() => importFileRef.current?.click()}>选择并导入档案</button>
                           </div>
                         </div>
                       )}
