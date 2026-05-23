@@ -359,9 +359,13 @@ function App() {
               const nextCount = prev + 1;
               const interval = settings?.thought_interval ?? 5;
               if (settings?.is_thought_auto_update && nextCount >= interval) {
+                const thoughtHistory = [
+                  ...currentHistory.slice(-9),
+                  { role: 'assistant', content: fullContent, timestamp: tempTs, char_id: char.id },
+                ];
                 api.variableThoughtConfig.triggerThought({
                   char_id: char.id,
-                  history: currentHistory.slice(-10),
+                  history: thoughtHistory,
                   user_input: textOverride,
                   preset_id: settings?.thought_preset_id,
                   model: settings?.thought_model_id || activeModel,
