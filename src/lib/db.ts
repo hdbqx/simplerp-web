@@ -15,6 +15,18 @@ export interface Character {
   created_at?: number;
 }
 
+export interface CharacterExportPayload {
+  version: 1;
+  character: {
+    name: string;
+    description: string;
+    first_message: string;
+    summary: string;
+  };
+  variables: Variable[];
+  lorebook_v2: LorebookV2Entry[];
+}
+
 export interface Message {
   id?: number;
   char_id?: number;

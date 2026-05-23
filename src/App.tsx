@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { api, type Message, type Character, type Settings, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage, type Variable, type VariableStage, type VariableThoughtConfig } from './lib/db';
+import { api, type Message, type Character, type Settings, type ApiPreset, type ApiMode, type Room, type RoomMember, type RoomMessage, type Variable, type VariableStage, type VariableThoughtConfig, type LorebookV2Entry, type CharacterExportPayload } from './lib/db';
 import { LLMClient } from './lib/llm';
 import { VariableEngine } from './lib/variable-engine';
 import { LorebookEngine } from './lib/lorebook-engine';
@@ -61,6 +61,8 @@ function App() {
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [charEditTab, setCharEditTab] = useState<'basic' | 'variables' | 'snapshots'>('basic');
   const [charVariables, setCharVariables] = useState<any[]>([]);
+  const [charLorebookEntries, setCharLorebookEntries] = useState<LorebookV2Entry[]>([]);
+  const [importText, setImportText] = useState('');
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
@@ -159,6 +161,8 @@ function App() {
         }
       }
       setGlobalStages(allStages);
+      const lore = await api.lorebookV2.list(selectedCharId, undefined);
+      setCharLorebookEntries(lore as LorebookV2Entry[]);
     } catch (e) {
       console.error('Failed to load char data', e);
     }
@@ -168,6 +172,103 @@ function App() {
     if (!selectedCharId) return;
     const entries = await api.lorebookV2.list(selectedCharId, undefined);
     setLorebookEntries(entries as any);
+  };
+
+  const loadCharArchive = async () => {
+    if (!selectedCharId) return;
+    const [vars, lore] = await Promise.all([
+      api.variables.list(selectedCharId, undefined),
+      api.lorebookV2.list(selectedCharId, undefined),
+    ]);
+    setCharVariables(vars);
+    setGlobalVariables(vars);
+    setCharLorebookEntries(lore as LorebookV2Entry[]);
+    setImportText('');
+  };
+
+  const exportCharacter = async () => {
+    if (!selectedCharId) return;
+    const char = characters.find(c => c.id === selectedCharId);
+    if (!char) return;
+    const [variables, lorebook_v2] = await Promise.all([
+      api.variables.list(selectedCharId, undefined),
+      api.lorebookV2.list(selectedCharId, undefined),
+    ]);
+    const payload: CharacterExportPayload = {
+      version: 1,
+      character: {
+        name: char.name,
+        description: char.description || '',
+        first_message: char.first_message || '',
+        summary: char.summary || '',
+      },
+      variables,
+      lorebook_v2: lorebook_v2 as LorebookV2Entry[],
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${char.name || 'character'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importCharacterArchive = async () => {
+    if (!selectedCharId) return;
+    const text = importText.trim();
+    if (!text) return alert('请先粘贴 JSON');
+
+    let payload: CharacterExportPayload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return alert('JSON 解析失败');
+    }
+
+    if (payload.version !== 1 || !payload.character) {
+      return alert('档案格式不正确');
+    }
+
+    const targetChar = characters.find(c => c.id === selectedCharId);
+    if (!targetChar) return;
+
+    await api.characters.update(selectedCharId, {
+      name: payload.character.name || targetChar.name,
+      description: payload.character.description || '',
+      first_message: payload.character.first_message || '',
+      summary: payload.character.summary || '',
+    });
+
+    const existingVars = await api.variables.list(selectedCharId, undefined);
+    for (const v of existingVars) {
+      if (v.id) await api.variables.delete(v.id);
+    }
+    for (const v of payload.variables || []) {
+      await api.variables.add({
+        ...v,
+        id: undefined,
+        char_id: selectedCharId,
+        room_id: undefined,
+      });
+    }
+
+    const existingLore = await api.lorebookV2.list(selectedCharId, undefined);
+    for (const e of existingLore) {
+      if (e.id) await api.lorebookV2.delete(e.id);
+    }
+    for (const e of payload.lorebook_v2 || []) {
+      await api.lorebookV2.add({
+        ...e,
+        id: undefined,
+        char_id: selectedCharId,
+        room_id: undefined,
+      } as LorebookV2Entry);
+    }
+
+    await loadData();
+    await loadCharArchive();
+    alert('导入完成');
   };
 
   const refreshModels = async (base: string, key: string, keepModelId?: string, manualListStr?: string, mode: ApiMode = 'chat_completions') => {
@@ -303,9 +404,16 @@ function App() {
     const varEngine = new VariableEngine(globalVariables, globalStages);
     const loreEngine = new LorebookEngine(lorebookEntries);
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
+    const hasPriorDialogue = currentHistory.some(m => m.role !== 'user');
+    const effectiveHistory = !hasPriorDialogue && char.first_message
+      ? [
+          { role: 'assistant' as const, content: char.first_message, timestamp: Date.now(), char_id: char.id },
+          ...currentHistory,
+        ]
+      : currentHistory;
 
     // 2. 世界书动态扫描与注入组装
-    const triggeredLorebook = loreEngine.scan(textOverride || "", currentHistory, varEngine.getVariablesMap(), {});
+    const triggeredLorebook = loreEngine.scan(textOverride || "", effectiveHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
     if (triggeredLorebook.length > 0) {
       showToast("已激活世界书：" + triggeredLorebook.map((l: any) => l.name || l.keywords).join(', '));
@@ -341,7 +449,7 @@ function App() {
 
     try {
       // 传入组装好的完整 System Prompt
-      const stream = llm.chatStream(char, currentHistory, textOverride || "", settings, activeModel, fullSystemContent, undefined, controller);
+      const stream = llm.chatStream(char, effectiveHistory, textOverride || "", settings, activeModel, fullSystemContent, undefined, controller);
       for await (const chunk of stream) {
         fullContent += chunk;
         setMessages(prev => prev.map(m => m.timestamp === tempTs ? { ...m, content: fullContent } : m));
@@ -360,8 +468,8 @@ function App() {
               const interval = settings?.thought_interval ?? 5;
               if (settings?.is_thought_auto_update && nextCount >= interval) {
                 const thoughtHistory = [
-                  ...currentHistory.slice(-9),
-                  { role: 'assistant', content: fullContent, timestamp: tempTs, char_id: char.id },
+                  ...effectiveHistory.slice(-9),
+                  { role: 'assistant' as const, content: fullContent, timestamp: tempTs, char_id: char.id },
                 ];
                 api.variableThoughtConfig.triggerThought({
                   char_id: char.id,
@@ -1029,6 +1137,17 @@ function App() {
                           <div className="form-control"><label className="label font-bold text-xs">角色姓名</label><input className="input input-bordered" value={characters.find(c=>c.id===selectedCharId)?.name} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, name:e.target.value}:c))} /></div>
                           <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
                           <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
+                          <div className="form-control"><label className="label font-bold text-xs text-accent">开场白 / First Message</label><textarea className="textarea textarea-bordered h-24 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.first_message || ''} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, first_message:e.target.value}:c))} placeholder="当对话没有历史记录时，会作为第一条消息注入。" /></div>
+                          <div className="grid md:grid-cols-2 gap-3">
+                            <button className="btn btn-outline" onClick={exportCharacter}>导出角色档案</button>
+                            <button className="btn btn-outline btn-primary" onClick={loadCharArchive}>刷新导入数据</button>
+                          </div>
+                          <div className="form-control">
+                            <label className="label font-bold text-xs">导入角色档案 JSON</label>
+                            <textarea className="textarea textarea-bordered h-48 font-mono text-xs" value={importText} onChange={e=>setImportText(e.target.value)} placeholder={`{\n  "version": 1,\n  "character": {\n    "name": "角色名",\n    "description": "人设/世界观",\n    "first_message": "第一条消息",\n    "summary": "长期记忆"\n  },\n  "variables": [],\n  "lorebook_v2": []\n}`} />
+                            <p className="mt-2 text-[11px] opacity-60">可直接修改 JSON 后导入，变量和世界书会被一并覆盖。</p>
+                            <button className="btn btn-primary mt-3" onClick={importCharacterArchive}>导入并覆盖当前角色</button>
+                          </div>
                         </div>
                       )}
                       {charEditTab === 'variables' && (
