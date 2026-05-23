@@ -499,9 +499,11 @@ function App() {
     const loreEngine = new LorebookEngine(lorebookEntries);
     const currentHistory = (historyOverride || messages).filter(m => m.content || m.role === 'user');
     const hasPriorDialogue = currentHistory.some(m => m.role !== 'user');
-    const effectiveHistory = !hasPriorDialogue && char.first_message
+    const shouldInjectFirstMessage = !hasPriorDialogue && !!char.first_message;
+    const firstMessageTimestamp = Date.now();
+    const effectiveHistory = shouldInjectFirstMessage
       ? [
-          { role: 'assistant' as const, content: char.first_message, timestamp: Date.now(), char_id: char.id },
+          { role: 'assistant' as const, content: char.first_message, timestamp: firstMessageTimestamp, char_id: char.id },
           ...currentHistory,
         ]
       : currentHistory;
@@ -536,12 +538,12 @@ function App() {
     abortControllerRef.current = controller;
     setIsTyping(true);
     const tempTs = Date.now() + 1;
-    if (effectiveHistory.length > 0 && currentHistory.length === 0 && char.first_message) {
+    if (shouldInjectFirstMessage) {
       const firstMessage: Message = {
         role: 'assistant',
         content: char.first_message,
         char_id: char.id,
-        timestamp: Date.now(),
+        timestamp: firstMessageTimestamp,
       };
       setMessages(prev => [...prev, firstMessage]);
       api.messages.add(firstMessage).then(res => {
