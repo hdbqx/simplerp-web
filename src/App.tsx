@@ -1256,6 +1256,16 @@ function App() {
                           <div className="form-control"><label className="label font-bold text-xs">人设/世界观描述</label><textarea className="textarea textarea-bordered h-48 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.description} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, description:e.target.value}:c))} /></div>
                           <div className="form-control"><label className="label font-bold text-xs text-primary">个人长期记忆 (Summary)</label><textarea className="textarea textarea-bordered h-32 font-mono text-xs" value={characters.find(c=>c.id===selectedCharId)?.summary} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, summary:e.target.value}:c))} /></div>
                           <div className="form-control"><label className="label font-bold text-xs text-accent">开场白 / First Message</label><textarea className="textarea textarea-bordered h-24 font-mono text-sm" value={characters.find(c=>c.id===selectedCharId)?.first_message || ''} onChange={e=>setCharacters(characters.map(c=>c.id===selectedCharId?{...c, first_message:e.target.value}:c))} placeholder="当对话没有历史记录时，会作为第一条消息注入。" /></div>
+                          <div className="rounded-[2rem] border border-base-300 bg-gradient-to-br from-primary/10 via-base-100 to-secondary/10 p-5 shadow-sm">
+                            <div className="mb-4 flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-bold">变量只读预览</div>
+                                <p className="mt-2 text-xs leading-relaxed opacity-65">在基础设定中直接查看当前角色可见变量的层级、类型与数值，便于同步调整人设文风与设定联动。</p>
+                              </div>
+                              <div className="badge badge-outline badge-sm">Read Only</div>
+                            </div>
+                            <VariableOverview variables={charVariables} />
+                          </div>
                           <div className="grid md:grid-cols-2 gap-3">
                             <button className="btn btn-outline" onClick={exportCharacter}>导出角色档案</button>
                             <button className="btn btn-outline btn-primary" onClick={loadCharArchive}>刷新导入数据</button>
@@ -1269,13 +1279,10 @@ function App() {
                         </div>
                       )}
                       {charEditTab === 'variables' && (
-                        <div className="space-y-6">
-                          <VariableOverview variables={charVariables} />
-                          <VariableManager
-                            charId={selectedCharId}
-                            onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
-                          />
-                        </div>
+                        <VariableManager
+                          charId={selectedCharId}
+                          onVariablesChange={(vars) => { setCharVariables(vars); setGlobalVariables(vars); }}
+                        />
                       )}
                       {charEditTab === 'snapshots' && (
                         <SnapshotManager
