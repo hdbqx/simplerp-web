@@ -1,17 +1,17 @@
-# Character Archive Guidance
+﻿# Character Archive Guidance
 
-## 目标
+## How references work
 
-用一份 JSON 同时定义角色基础设定、变量联动和世界书规则。
+Do not write database ids by hand.
+Use `ref` and `parent_ref` as stable identifiers inside the JSON. The app creates new database ids during import and rebuilds all links automatically.
 
-## 格式
+## Minimal example
 
 ```json
 {
   "version": 1,
   "meta": {
-    "format": "simplerp-character-archive",
-    "exported_at": "2026-05-23T00:00:00.000Z"
+    "format": "simplerp-character-archive"
   },
   "character": {
     "name": "角色名",
@@ -21,6 +21,7 @@
   },
   "variables": [
     {
+      "ref": "mood",
       "name": "情绪值",
       "key": "mood",
       "type": "number",
@@ -35,6 +36,7 @@
       "tags": "emotion",
       "stages": [
         {
+          "ref": "mood_low",
           "name": "低落",
           "condition": "v < 30",
           "priority": 10,
@@ -47,6 +49,7 @@
   ],
   "lorebook_v2": [
     {
+      "ref": "secret_1",
       "name": "家族秘密",
       "trigger_mode": "keyword",
       "keywords": "家族,血脉,继承",
@@ -69,34 +72,22 @@
 }
 ```
 
-## 角色字段
+## Rules
 
-- `description` 是基础人设和表达风格。
-- `first_message` 是无历史时注入的第一条消息。
-- `summary` 是长期记忆，适合写关系、经历、身份变化。
+- `ref` is the identity inside the archive file.
+- `parent_ref` links lorebook entries together.
+- On import, the app creates fresh DB ids and maps references automatically.
+- You can edit the JSON by hand without knowing any database ids.
+- Variable `stages` are restored after the parent variable is created.
+- Lorebook links are restored after all entries are created.
 
-## 变量字段
+## Meaning of fields
 
-- `type` 支持 `number`、`string`、`boolean`、`range`、`dict`、`list`。
-- `value` 是当前值，`default_value` 是重置值。
-- `stages` 用来定义阶段联动。
-
-### stage 说明
-
-- `condition` 用 `v` 代表变量当前值。
-- `stage_prompt` 会进入系统提示词，影响角色说话和行为。
-- `effects` 是 JSON 字符串，可写 `set`、`add`、`multiply`。
-
-## 世界书字段
-
-- `trigger_mode` 支持 `keyword`、`regex`、`constant`。
-- `match_logic` 支持 `any`、`all`、`not`、`expression`。
-- `trigger_condition` 可访问 `variables`、`history`、`context`。
-- `position` 决定注入位置。
-
-## 导入规则
-
-- 只要 JSON 满足上述结构即可导入。
-- 导入会覆盖当前角色的基础设定、变量和世界书。
-- 变量的 `stages` 会一起恢复。
-- 你可以直接手写 JSON，不需要先在界面里逐项创建。
+- `description`: persona, tone, background, taboo, relationships.
+- `first_message`: shown as the first assistant message when there is no history.
+- `summary`: long-term memory and relationship evolution.
+- `stages.condition`: uses `v` as the current variable value.
+- `stage_prompt`: enters the system prompt and influences style/behavior.
+- `effects`: JSON string, usually `set`, `add`, or `multiply`.
+- `trigger_condition`: can use `variables`, `history`, `context`.
+- `position`: decides where lorebook text is injected.

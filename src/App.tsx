@@ -193,10 +193,34 @@ function App() {
       api.variables.list(selectedCharId, undefined),
       api.lorebookV2.list(selectedCharId, undefined),
     ]);
+    const lorebookById = new Map<number, string>();
+    for (const entry of lorebook_v2) {
+      if (entry.id) lorebookById.set(entry.id, `lore_${entry.id}`);
+    }
     const variablesWithStages = await Promise.all(
-      variables.map(async (variable) => ({
-        ...variable,
-        stages: variable.id ? await api.variableStages.list(variable.id) : [],
+      variables.map(async (variable, idx) => ({
+        ref: `var_${variable.id ?? idx + 1}`,
+        name: variable.name,
+        key: variable.key,
+        type: variable.type,
+        value: variable.value,
+        default_value: variable.default_value,
+        min_value: variable.min_value,
+        max_value: variable.max_value,
+        step: variable.step,
+        is_persistent: variable.is_persistent,
+        is_visible: variable.is_visible,
+        description: variable.description,
+        tags: variable.tags,
+        stages: variable.id ? (await api.variableStages.list(variable.id)).map((stage, sIdx) => ({
+          ref: `stage_${stage.id ?? `${idx + 1}_${sIdx + 1}`}`,
+          name: stage.name,
+          condition: stage.condition,
+          priority: stage.priority,
+          stage_prompt: stage.stage_prompt,
+          effects: stage.effects,
+          is_active: stage.is_active,
+        })) : [],
       }))
     );
     const payload: CharacterExportPayload = {
@@ -212,7 +236,31 @@ function App() {
         summary: char.summary || '',
       },
       variables: variablesWithStages,
-      lorebook_v2: lorebook_v2 as LorebookV2Entry[],
+      lorebook_v2: (lorebook_v2 as LorebookV2Entry[]).map((entry, idx) => ({
+        ref: `lore_${entry.id ?? idx + 1}`,
+        name: entry.name,
+        trigger_mode: entry.trigger_mode,
+        keywords: entry.keywords,
+        regex_pattern: entry.regex_pattern,
+        match_logic: entry.match_logic,
+        match_expression: entry.match_expression,
+        content: entry.content,
+        trigger_condition: entry.trigger_condition,
+        priority: entry.priority,
+        group_name: entry.group_name,
+        category: entry.category,
+        position: entry.position,
+        insertion_depth: entry.insertion_depth,
+        probability: entry.probability,
+        use_once: entry.use_once,
+        cooldown_messages: entry.cooldown_messages,
+        trigger_count: entry.trigger_count,
+        scan_depth: entry.scan_depth,
+        is_active: entry.is_active,
+        is_constant: entry.is_constant,
+        sort_order: entry.sort_order,
+        parent_ref: entry.parent_id ? lorebookById.get(entry.parent_id) : undefined,
+      })),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -253,19 +301,25 @@ function App() {
     for (const v of existingVars) {
       if (v.id) await api.variables.delete(v.id);
     }
-    for (const v of payload.variables || []) {
-      const { stages = [], ...variableData } = v as Variable & { stages?: VariableStage[] };
+    const variableIdMap = new Map<string, number>();
+    for (const [idx, v] of (payload.variables || []).entries()) {
+      const { stages = [], ref, ...variableData } = v as any;
       const created = await api.variables.add({
         ...variableData,
         id: undefined,
         char_id: selectedCharId,
         room_id: undefined,
       });
-      for (const stage of stages) {
+      variableIdMap.set(ref || `var_${idx + 1}`, created.id);
+    }
+    for (const [idx, v] of (payload.variables || []).entries()) {
+      const variableId = variableIdMap.get(v.ref || `var_${idx + 1}`);
+      if (!variableId) continue;
+      for (const stage of v.stages || []) {
         await api.variableStages.add({
           ...stage,
           id: undefined,
-          variable_id: created.id,
+          variable_id: variableId,
         });
       }
     }
@@ -274,13 +328,25 @@ function App() {
     for (const e of existingLore) {
       if (e.id) await api.lorebookV2.delete(e.id);
     }
-    for (const e of payload.lorebook_v2 || []) {
-      await api.lorebookV2.add({
-        ...e,
+    const loreIdMap = new Map<string, number>();
+    for (const [idx, e] of (payload.lorebook_v2 || []).entries()) {
+      const { ref, parent_ref, ...entryData } = e as any;
+      const created = await api.lorebookV2.add({
+        ...entryData,
         id: undefined,
         char_id: selectedCharId,
         room_id: undefined,
+        parent_id: undefined,
       } as LorebookV2Entry);
+      loreIdMap.set(ref || `lore_${idx + 1}`, created.id);
+    }
+    for (const [idx, e] of (payload.lorebook_v2 || []).entries()) {
+      const createdId = loreIdMap.get(e.ref || `lore_${idx + 1}`);
+      if (!createdId) continue;
+      const parentId = e.parent_ref ? loreIdMap.get(e.parent_ref) : undefined;
+      if (parentId) {
+        await api.lorebookV2.update(createdId, { parent_id: parentId });
+      }
     }
 
     await loadData();

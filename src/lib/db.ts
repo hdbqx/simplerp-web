@@ -27,8 +27,14 @@ export interface CharacterExportPayload {
     first_message: string;
     summary: string;
   };
-  variables: Array<Variable & { stages?: VariableStage[] }>;
-  lorebook_v2: LorebookV2Entry[];
+  variables: Array<(Omit<Variable, 'id' | 'char_id' | 'room_id'> & {
+    ref: string;
+    stages?: Array<Omit<VariableStage, 'id' | 'variable_id'> & { ref?: string }>;
+  })>;
+  lorebook_v2: Array<(Omit<LorebookV2Entry, 'id' | 'char_id' | 'room_id' | 'parent_id'> & {
+    ref: string;
+    parent_ref?: string;
+  })>;
 }
 
 export interface Message {
