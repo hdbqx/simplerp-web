@@ -157,7 +157,7 @@ SimpleRP Cloud 的角色档案 (`.json`) 远不止是一张静态的角色卡，
       "match_logic": "any",
       "content": "【系统设定：洞察之眼】\n效果：玩家使用该技能时，你可以向玩家精准播报目标对象的隐藏数值（如：实际感染度、对玩家的真实隐秘想法），甚至透视其衣物下的伤口状态。",
       "trigger_condition": "variables.player_session.unlocked_skills.includes('洞察之眼')",
-      "priority": 90,
+      "priority": 80,
       "position": "after_user",
       "is_active": true,
       "is_constant": false
