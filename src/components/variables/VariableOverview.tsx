@@ -245,48 +245,56 @@ function ObjectCard({ title, value, depth = 0 }: { title: string; value: any; de
     const extras = entries.filter(([key]) => !META_KEYS.has(key));
 
     return (
-      <section className="overflow-hidden rounded-2xl border border-cyan-300/25 bg-gradient-to-br from-cyan-500/10 via-base-100/95 to-sky-500/10 shadow-sm">
-        <div className="border-b border-cyan-300/20 px-4 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-base-content/50">
-                <Layers3 className="h-3.5 w-3.5 text-cyan-300" />
-                {title}
-              </div>
-              <div className="text-lg font-bold leading-tight">{displayName}</div>
-            </div>
-            <div className="shrink-0 text-right">
-              <StatusChip label={`${entries.length} 字段`} tone="cyan" />
-              {level !== undefined && maxLevel !== undefined && (
-                <div className="mt-2 text-[11px] font-mono text-cyan-100/80">Lv.{level}/{maxLevel}</div>
-              )}
-            </div>
+      <details
+        className="group overflow-hidden rounded-2xl border border-cyan-300/25 bg-gradient-to-br from-cyan-500/10 via-base-100/95 to-sky-500/10 shadow-sm"
+        open={depth < 1}
+      >
+        <summary className="flex cursor-pointer list-none items-start gap-3 px-4 py-4">
+          <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-200">
+            <ChevronDown className="h-4 w-4 opacity-80 transition-transform group-open:rotate-180" />
           </div>
-
-          {progress !== undefined && (
-            <div className="mt-4 space-y-1">
-              <div className="flex justify-between text-[11px] text-base-content/50">
-                <span>成长进度</span>
-                <span className="font-mono">{Math.round(progress * 100)}%</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-base-content/50">
+                  <Layers3 className="h-3.5 w-3.5 text-cyan-300" />
+                  {title}
+                </div>
+                <div className="text-lg font-bold leading-tight">{displayName}</div>
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-cyan-950/40">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-sky-300 to-blue-400 shadow-[0_0_18px_rgba(56,189,248,0.45)]"
-                  style={{ width: `${progress * 100}%` }}
-                />
+              <div className="shrink-0 text-right">
+                <StatusChip label={`${entries.length} 字段`} tone="cyan" />
+                {level !== undefined && maxLevel !== undefined && (
+                  <div className="mt-2 text-[11px] font-mono text-cyan-100/80">Lv.{level}/{maxLevel}</div>
+                )}
               </div>
             </div>
-          )}
-        </div>
 
-        <div className="space-y-2 p-4">
+            {progress !== undefined && (
+              <div className="mt-4 space-y-1">
+                <div className="flex justify-between text-[11px] text-base-content/50">
+                  <span>成长进度</span>
+                  <span className="font-mono">{Math.round(progress * 100)}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-cyan-950/40">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-sky-300 to-blue-400 shadow-[0_0_18px_rgba(56,189,248,0.45)]"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </summary>
+
+        <div className="space-y-2 border-t border-cyan-300/20 p-4">
           {extras.length === 0 ? (
             <div className="rounded-xl border border-dashed border-cyan-300/25 bg-base-100/50 px-3 py-4 text-xs text-base-content/45">无其他字段</div>
           ) : (
             extras.map(([key, val]) => <ValueRow key={`${title}-${key}`} label={key} value={val} depth={depth + 1} />)
           )}
         </div>
-      </section>
+      </details>
     );
   }
 
