@@ -1,0 +1,137 @@
+import { Pencil, Users } from 'lucide-react';
+import { ImageStudio } from '../ImageStudio';
+import { ChatInput } from './ChatInput';
+import { MessageList } from './MessageList';
+import type { ApiMode, ApiPreset, Character, Message, RoomMessage, Settings } from '../../lib/db';
+
+type GroupMember = {
+  id: number;
+  name: string;
+};
+
+type ChatWorkspaceProps = {
+  viewMode: 'char' | 'group' | 'image';
+  selectedCharId?: number;
+  selectedRoomId?: number;
+  roomMessages: RoomMessage[];
+  settings?: Settings;
+  currentCharacter?: Character;
+  characterNameById: Map<number, string>;
+  isTyping: boolean;
+  groupMembers: GroupMember[];
+  activePresetId?: number;
+  activeModel?: string;
+  presets: ApiPreset[];
+  manualModels: string[];
+  getPresetMode: (preset?: ApiPreset) => ApiMode;
+  fetchPresetModels: (presetId?: number, force?: boolean) => Promise<void>;
+  presetModelsMap: Record<number, string[]>;
+  presetModelsLoading: Record<number, boolean>;
+  onRegenerate: () => Promise<void>;
+  onDeleteCharMessage: (message: Message) => Promise<void>;
+  onEditCharMessage: (messageId: number, content: string) => Promise<void>;
+  onSaveCharImage: (message: Message) => Promise<void>;
+  onSend: (text: string) => Promise<boolean>;
+  onSendAsMember: (text: string, memberId: number | null) => Promise<boolean>;
+  onOpenImageGen: () => void;
+  onStop: () => void;
+};
+
+export function ChatWorkspace({
+  viewMode,
+  selectedCharId,
+  selectedRoomId,
+  roomMessages,
+  settings,
+  currentCharacter,
+  characterNameById,
+  isTyping,
+  groupMembers,
+  activePresetId,
+  activeModel,
+  presets,
+  manualModels,
+  getPresetMode,
+  fetchPresetModels,
+  presetModelsMap,
+  presetModelsLoading,
+  onRegenerate,
+  onDeleteCharMessage,
+  onEditCharMessage,
+  onSaveCharImage,
+  onSend,
+  onSendAsMember,
+  onOpenImageGen,
+  onStop,
+}: ChatWorkspaceProps) {
+  if (viewMode === 'image') {
+    return (
+      <ImageStudio
+        settings={settings}
+        presets={presets}
+        activePresetId={activePresetId}
+        activeModel={activeModel || ''}
+        manualModels={manualModels}
+        getPresetMode={getPresetMode}
+        fetchPresetModels={fetchPresetModels}
+        presetModelsMap={presetModelsMap}
+        presetModelsLoading={presetModelsLoading}
+      />
+    );
+  }
+
+  if (viewMode === 'char' && !selectedCharId) {
+    return (
+      <div className="flex flex-1 items-center justify-center opacity-60">
+        <div className="text-center">
+          <Pencil size={48} className="mx-auto mb-4 opacity-30" />
+          <p>Select a character in the sidebar to start chatting.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (viewMode === 'group' && !selectedRoomId) {
+    return (
+      <div className="flex flex-1 items-center justify-center opacity-60">
+        <div className="text-center">
+          <Users size={48} className="mx-auto mb-4 opacity-30" />
+          <p>Select a room in the sidebar to start the group chat.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <MessageList
+        viewMode={viewMode}
+        roomMessages={roomMessages}
+        settings={settings}
+        currentCharacter={currentCharacter}
+        characterNameById={characterNameById}
+        isTyping={isTyping}
+        onRegenerate={onRegenerate}
+        onDeleteCharMessage={onDeleteCharMessage}
+        onEditCharMessage={onEditCharMessage}
+        onSaveCharImage={onSaveCharImage}
+      />
+
+      <ChatInput
+        viewMode={viewMode}
+        isTyping={isTyping}
+        placeholder={
+          viewMode === 'group'
+            ? 'Type a message, or use the member buttons above.'
+            : 'Type a message...'
+        }
+        scopeKey={`${viewMode}:${selectedCharId || selectedRoomId || 0}`}
+        groupMembers={groupMembers}
+        onSend={onSend}
+        onSendAsMember={onSendAsMember}
+        onOpenImageGen={onOpenImageGen}
+        onStop={onStop}
+      />
+    </>
+  );
+}
