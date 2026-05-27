@@ -53,7 +53,7 @@ export const MessageList = memo(function MessageList({
   }, [viewMode, currentCharacter?.id]);
 
   return (
-    <div className="custom-scrollbar flex-1 space-y-5 overflow-y-auto px-3 py-4 md:px-6 md:py-6">
+    <div className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-4">
       {renderMessages.map((message, index) => {
         const isUser = message.role === 'user' || ('sender_type' in message && message.sender_type === 'user');
         const headerName = isUser ? settings?.user_name || '玩家' : characterNameById.get(message.char_id || 0) || 'AI';
@@ -67,13 +67,13 @@ export const MessageList = memo(function MessageList({
             key={`${message.id || message.timestamp}-${index}`}
             className={`chat group animate-message ${isUser ? 'chat-end' : 'chat-start'}`}
           >
-            <div className="chat-header mb-1.5 flex items-center gap-2 px-1 text-[10px] opacity-55">
+            <div className="chat-header mb-1 flex items-center gap-2 text-[10px] opacity-50">
               {headerName}
               {viewMode === 'char' && (
                 <div className="flex gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                   {!!message.id && !message.image && (
                     <button
-                      className="rounded-md p-1 hover:bg-base-300 hover:text-primary"
+                      className="hover:text-primary"
                       onClick={() => {
                         setEditingMsgId(message.id!);
                         setEditContent(message.content);
@@ -83,17 +83,11 @@ export const MessageList = memo(function MessageList({
                     </button>
                   )}
                   {isLastCharAssistant && (
-                    <button
-                      className="rounded-md p-1 hover:bg-base-300 hover:text-primary"
-                      onClick={() => void onRegenerate()}
-                    >
+                    <button className="hover:text-primary" onClick={() => void onRegenerate()}>
                       <RefreshCw size={10} />
                     </button>
                   )}
-                  <button
-                    className="rounded-md p-1 hover:bg-base-300 hover:text-error"
-                    onClick={() => void onDeleteCharMessage(message as Message)}
-                  >
+                  <button className="hover:text-error" onClick={() => void onDeleteCharMessage(message as Message)}>
                     <Trash2 size={10} />
                   </button>
                 </div>
@@ -101,8 +95,8 @@ export const MessageList = memo(function MessageList({
             </div>
 
             {message.image ? (
-              <div className="group/img relative max-w-[min(84vw,34rem)] overflow-hidden rounded-[1.6rem] border border-base-300/70 bg-base-200/90 p-1.5 shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
-                <img src={message.image} className="max-w-full rounded-[1.1rem]" />
+              <div className="group/img relative overflow-hidden chat-bubble border-base-300 bg-base-200 p-1 shadow-xl">
+                <img src={message.image} className="max-w-xs rounded-lg md:max-w-md" />
                 {viewMode === 'char' && !message.id && (
                   <div className="absolute right-2 top-2 opacity-100 transition-opacity md:opacity-0 md:group-hover/img:opacity-100">
                     <button
@@ -117,14 +111,12 @@ export const MessageList = memo(function MessageList({
               </div>
             ) : (
               <div
-                className={`max-w-[min(84vw,42rem)] rounded-[1.6rem] border px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.12)] ${
-                  isUser
-                    ? 'border-primary/70 bg-primary text-primary-content'
-                    : 'border-base-300/70 bg-base-200/92 text-base-content'
+                className={`chat-bubble border shadow-lg ${
+                  isUser ? 'chat-bubble-primary border-primary' : 'border-base-300 bg-base-200 text-base-content'
                 }`}
               >
                 {viewMode === 'char' && editingMsgId === message.id ? (
-                  <div className="flex min-w-[220px] flex-col gap-2">
+                  <div className="flex min-w-[200px] flex-col gap-2">
                     <textarea
                       className="textarea textarea-bordered textarea-sm w-full bg-base-100"
                       value={editContent}
@@ -161,13 +153,10 @@ export const MessageList = memo(function MessageList({
 
       {isTyping && (
         <div className="chat chat-start animate-pulse opacity-50">
-          <div className="rounded-[1.4rem] border border-base-300/70 bg-base-200/92 px-4 py-3 shadow-md">
-            思考中...
-          </div>
+          <div className="chat-bubble">思考中...</div>
         </div>
       )}
-
-      <div ref={bottomRef} className="h-8 md:h-10" />
+      <div ref={bottomRef} className="h-20" />
     </div>
   );
 });

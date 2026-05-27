@@ -211,7 +211,7 @@ function App() {
           onChange={(event) => setMobileMenuOpen(event.target.checked)}
         />
 
-        <div className="drawer-content relative flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_35%),linear-gradient(180deg,_rgba(15,23,42,0.08),_transparent_22%)]">
+        <div className="drawer-content relative flex h-full min-h-0 flex-col overflow-hidden bg-base-100">
           <AppHeader
             mobileMenuOpen={mobileMenuOpen}
             setMobileMenuOpen={setMobileMenuOpen}
