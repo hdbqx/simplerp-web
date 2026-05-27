@@ -95,7 +95,7 @@ export function CharEditModal({
             {charEditTab === 'basic' && (
               <div className="space-y-6">
                 <div className="form-control">
-                  <label className="label text-xs font-bold">角色姓名</label>
+                  <label className="label text-xs font-bold">角色名称</label>
                   <input
                     className="input input-bordered"
                     value={currentCharacter.name}
@@ -110,7 +110,7 @@ export function CharEditModal({
                 </div>
 
                 <div className="form-control">
-                  <label className="label text-xs font-bold">人设/世界观描述</label>
+                  <label className="label text-xs font-bold">人设 / 世界观描述</label>
                   <textarea
                     className="textarea textarea-bordered h-48 font-mono text-sm"
                     value={currentCharacter.description}
@@ -127,7 +127,7 @@ export function CharEditModal({
                 </div>
 
                 <div className="form-control">
-                  <label className="label text-xs font-bold text-primary">个人长期记忆 (Summary)</label>
+                  <label className="label text-xs font-bold text-primary">长期记忆（Summary）</label>
                   <textarea
                     className="textarea textarea-bordered h-32 font-mono text-xs"
                     value={currentCharacter.summary}
@@ -155,7 +155,7 @@ export function CharEditModal({
                         ),
                       )
                     }
-                    placeholder="当对话没有历史记录时，会作为第一条消息注入。"
+                    placeholder="当对话没有历史记录时，会作为第一条消息写入对话，引导 AI 文风。"
                   />
                 </div>
 

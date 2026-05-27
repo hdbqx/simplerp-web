@@ -38,7 +38,7 @@ export function SettingsModal({
     <div className="modal modal-open text-base-content">
       <div className="modal-box flex h-[88vh] max-w-6xl flex-col overflow-hidden p-0">
         <div className="flex items-center justify-between border-b bg-base-200 p-6 font-bold">
-          系统配置
+          系统设置
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>
             <X />
           </button>
@@ -46,13 +46,13 @@ export function SettingsModal({
 
         <div className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-6">
           <section>
-            <h4 className="mb-3 text-sm font-black uppercase text-primary">基础与沉浸</h4>
+            <h4 className="mb-3 text-sm font-black uppercase text-primary">基础信息</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="form-control">
-                <label className="label text-xs font-bold">玩家姓名</label>
+                <label className="label text-xs font-bold">玩家名称</label>
                 <input
                   className="input input-bordered"
-                  placeholder="如：林"
+                  placeholder="例如：林舟"
                   value={settings.user_name || ''}
                   onChange={(event) => updateSettings({ user_name: event.target.value })}
                 />
@@ -64,7 +64,7 @@ export function SettingsModal({
                   value={settings.image_backend || 'huggingface'}
                   onChange={(event) => updateSettings({ image_backend: event.target.value as Settings['image_backend'] })}
                 >
-                  <option value="huggingface">ComfyUI 本地穿透（利用 HF 通道）</option>
+                  <option value="huggingface">ComfyUI 本地穿透（通过 HF 通道）</option>
                   <option value="openai">OpenAI 兼容端点</option>
                   <option value="modelscope">魔搭社区 ModelScope</option>
                 </select>
@@ -79,10 +79,10 @@ export function SettingsModal({
                 <div className="mb-3 text-xs font-black text-accent">ComfyUI 本地穿透参数</div>
                 <div className="grid grid-cols-1 gap-4">
                   <div className="form-control">
-                    <label className="label text-xs font-bold">Cloudflare Tunnel URL</label>
+                    <label className="label text-xs font-bold">Cloudflare Tunnel 地址</label>
                     <textarea
                       className="textarea textarea-bordered h-12 font-mono text-xs"
-                      placeholder="如：https://xxx.trycloudflare.com"
+                      placeholder="例如：https://xxx.trycloudflare.com"
                       value={settings.hf_keys || ''}
                       onChange={(event) => updateSettings({ hf_keys: event.target.value })}
                     />
@@ -236,7 +236,7 @@ export function SettingsModal({
               </div>
 
               <div className="rounded-xl border border-base-300 p-4">
-                <div className="mb-3 text-xs font-black">SD 转换模型（生图描述翻译与丰富）</div>
+                <div className="mb-3 text-xs font-black">SD 转换模型（用于生图提示词翻译与扩写）</div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="form-control">
                     <label className="label text-xs font-bold">预设</label>
@@ -382,7 +382,7 @@ export function SettingsModal({
                   />
                 </div>
                 <div className="form-control">
-                  <label className="label text-xs font-bold">单会话最大快照留存总数（个）</label>
+                  <label className="label text-xs font-bold">单会话最大快照保留数量（个）</label>
                   <input
                     type="number"
                     min={1}
@@ -402,7 +402,7 @@ export function SettingsModal({
                 className="btn btn-xs btn-primary"
                 onClick={() =>
                   api.presets
-                    .add({ name: 'New Preset', api_base: '', api_key: '', api_mode: 'chat_completions' })
+                    .add({ name: '新预设', api_base: '', api_key: '', api_mode: 'chat_completions' })
                     .then(() => loadData())
                 }
               >
@@ -485,7 +485,7 @@ export function SettingsModal({
                         <button
                           className="btn btn-ghost btn-xs text-error"
                           onClick={() => {
-                            if (!confirm('删除？')) return;
+                            if (!confirm('确认删除该预设？')) return;
                             api.presets.delete(preset.id!).then(() => loadData());
                           }}
                         >
@@ -538,7 +538,7 @@ export function SettingsModal({
               await loadData();
             }}
           >
-            保存配置
+            保存设置
           </button>
         </div>
       </div>

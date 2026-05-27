@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { Variable, VariableStage, VariableType } from '../../lib/db';
+import { X } from 'lucide-react';
 import { api } from '../../lib/db';
+import type { Variable, VariableStage, VariableType } from '../../lib/db';
 
 interface VariableManagerProps {
   charId?: number;
@@ -10,8 +11,8 @@ interface VariableManagerProps {
 
 const typeOptions: { value: VariableType; label: string }[] = [
   { value: 'number', label: '数值' },
-  { value: 'string', label: '字符串' },
-  { value: 'boolean', label: '布尔值' },
+  { value: 'string', label: '文本' },
+  { value: 'boolean', label: '布尔' },
   { value: 'range', label: '范围' },
   { value: 'dict', label: '字典' },
   { value: 'list', label: '列表' },
@@ -42,7 +43,7 @@ const defaultValueForType = (type: VariableType): any => {
   }
 };
 
-const DICT_PLACEHOLDER = '{"name":"主角","skills":["技能A","技能B"],"party":[{"name":"角色1","favor":1}]}';
+const DICT_PLACEHOLDER = '{"name":"主角","skills":["常识修改","时停三秒"],"party":[{"name":"角色1","favor":1}]}';
 
 function valuesEqual(a: any, b: any) {
   try {
@@ -108,7 +109,7 @@ function InlineValueEditor({
 
   if (variable.type === 'range') {
     return (
-      <div className="flex items-center gap-2 flex-1">
+      <div className="flex flex-1 items-center gap-2">
         <input
           type="range"
           min={variable.min_value ?? 0}
@@ -133,7 +134,7 @@ function InlineValueEditor({
           }}
           className="range range-primary range-xs flex-1"
         />
-        <span className="text-sm font-mono w-10 text-right">{String(draft)}</span>
+        <span className="w-10 text-right font-mono text-sm">{String(draft)}</span>
       </div>
     );
   }
@@ -298,7 +299,7 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此变量？')) return;
+    if (!confirm('确定删除这个变量吗？')) return;
     await api.variables.delete(id);
     await fetchVariables();
   };
@@ -367,19 +368,21 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <h3 className="font-bold text-sm opacity-70">变量列表</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold opacity-70">变量列表</h3>
         <button onClick={handleCreate} className="btn btn-primary btn-sm">+ 添加变量</button>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-8"><span className="loading loading-spinner loading-md" /></div>
+        <div className="flex justify-center py-8">
+          <span className="loading loading-spinner loading-md" />
+        </div>
       ) : variables.length === 0 ? (
-        <div className="text-center py-8 opacity-50 text-sm">暂无变量，点击右上角添加</div>
+        <div className="py-8 text-center text-sm opacity-50">暂无变量，点击右上角添加</div>
       ) : (
         <div className="space-y-2">
           {variables.map((variable) => (
-            <div key={variable.id} className="card bg-base-200 shadow-sm border border-base-300">
+            <div key={variable.id} className="card border border-base-300 bg-base-200 shadow-sm">
               <div className="card-body p-3">
                 {editingId === variable.id ? (
                   <div className="space-y-2">
@@ -408,10 +411,14 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
                         }}
                         className="select select-bordered select-sm"
                       >
-                        {typeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {typeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                       <div className="flex items-center gap-3">
-                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                        <label className="flex cursor-pointer items-center gap-1 text-xs">
                           <input
                             type="checkbox"
                             className="checkbox checkbox-xs"
@@ -420,7 +427,7 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
                           />
                           持久化
                         </label>
-                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                        <label className="flex cursor-pointer items-center gap-1 text-xs">
                           <input
                             type="checkbox"
                             className="checkbox checkbox-xs"
@@ -470,15 +477,15 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-sm">{variable.name}</span>
+                    <div className="flex items-start justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">{variable.name}</span>
                         <span className={`badge badge-sm ${typeBadgeColor[variable.type] || 'badge-ghost'}`}>
                           {typeOptions.find((t) => t.value === variable.type)?.label || variable.type}
                         </span>
                         <span className="font-mono text-xs opacity-50">{variable.key}</span>
                       </div>
-                      <div className="flex gap-1 shrink-0">
+                      <div className="flex shrink-0 gap-1">
                         <button onClick={() => openStages(variable.id!)} className="btn btn-ghost btn-xs">阶段</button>
                         <button onClick={() => startEdit(variable)} className="btn btn-ghost btn-xs">编辑</button>
                         <button onClick={() => handleReset(variable.id!)} className="btn btn-ghost btn-xs text-warning">重置</button>
@@ -504,24 +511,28 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
 
       {stagesVarId !== null && (
         <div className="modal modal-open">
-          <div className="modal-box max-w-2xl flex flex-col max-h-[80vh]">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-lg">阶段管理 - {stagesVar?.name}</h3>
-              <button className="btn btn-sm btn-circle btn-ghost" onClick={() => setStagesVarId(null)}>×</button>
+          <div className="modal-box flex max-h-[80vh] max-w-2xl flex-col">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold">阶段管理 - {stagesVar?.name}</h3>
+              <button className="btn btn-circle btn-ghost btn-sm" onClick={() => setStagesVarId(null)}>
+                <X size={16} />
+              </button>
             </div>
 
             {stagesLoading ? (
-              <div className="flex justify-center py-4"><span className="loading loading-spinner" /></div>
+              <div className="flex justify-center py-4">
+                <span className="loading loading-spinner" />
+              </div>
             ) : (
-              <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-                {stages.length === 0 && <div className="text-center py-4 opacity-50 text-sm">暂无阶段</div>}
+              <div className="mb-4 flex-1 space-y-2 overflow-y-auto">
+                {stages.length === 0 && <div className="py-4 text-center text-sm opacity-50">暂无阶段</div>}
                 {stages.map((stage) => (
-                  <div key={stage.id} className="card bg-base-200 border border-base-300">
-                    <div className="card-body p-3 space-y-1">
-                      <div className="flex justify-between items-center">
+                  <div key={stage.id} className="card border border-base-300 bg-base-200">
+                    <div className="card-body space-y-1 p-3">
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm">{stage.name}</span>
-                          <span className="badge badge-xs badge-outline">优先级 {stage.priority}</span>
+                          <span className="text-sm font-semibold">{stage.name}</span>
+                          <span className="badge badge-outline badge-xs">优先级 {stage.priority}</span>
                           <span className={`badge badge-xs ${stage.is_active ? 'badge-success' : 'badge-ghost'}`}>
                             {stage.is_active ? '启用' : '禁用'}
                           </span>
@@ -531,16 +542,16 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
                           <button onClick={() => deleteStage(stage.id!)} className="btn btn-ghost btn-xs text-error">删除</button>
                         </div>
                       </div>
-                      <div className="text-xs font-mono opacity-70">条件: {stage.condition}</div>
-                      {stage.stage_prompt && <div className="text-xs opacity-60 truncate">提示: {stage.stage_prompt}</div>}
-                      {stage.effects && <div className="text-xs font-mono opacity-60">效果: {stage.effects}</div>}
+                      <div className="font-mono text-xs opacity-70">条件: {stage.condition}</div>
+                      {stage.stage_prompt && <div className="truncate text-xs opacity-60">提示: {stage.stage_prompt}</div>}
+                      {stage.effects && <div className="font-mono text-xs opacity-60">效果: {stage.effects}</div>}
                     </div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="border-t pt-4 space-y-2">
+            <div className="space-y-2 border-t pt-4">
               <div className="text-xs font-bold opacity-60">{editingStageId ? '编辑阶段' : '新增阶段'}</div>
               <div className="grid grid-cols-2 gap-2">
                 <input
@@ -580,7 +591,7 @@ export function VariableManager({ charId, roomId, onVariablesChange }: VariableM
                 className="input input-bordered input-sm w-full font-mono"
               />
               <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     className="toggle toggle-success toggle-sm"

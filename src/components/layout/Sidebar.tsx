@@ -155,9 +155,7 @@ export function Sidebar({ setMobileMenuOpen, setDesktopSidebarOpen, setShowSetti
                     <ImageIcon size={16} />
                     生图工作台
                   </div>
-                  <div>
-                    可以基于最近对话生成图片，也可以在系统设置里切换不同生图后端。
-                  </div>
+                  <div>可以基于最近对话生成图片，也可以在系统设置中切换不同的生图后端。</div>
                 </div>
               )}
 

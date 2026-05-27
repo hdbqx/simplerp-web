@@ -46,7 +46,7 @@ export function GroupEditModal({
         <div className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-6">
           <section className="grid grid-cols-1 gap-4">
             <div className="form-control">
-              <label className="label font-bold">房间名</label>
+              <label className="label font-bold">房间名称</label>
               <input
                 className="input input-bordered"
                 value={room.name || ''}
@@ -68,12 +68,12 @@ export function GroupEditModal({
                     ),
                   )
                 }
-                placeholder="例如：这是庭前会议，气氛严肃..."
+                placeholder="例如：这是一次庭前会议，气氛严肃..."
               />
             </div>
 
             <div className="form-control">
-              <label className="label text-xs font-bold text-info">全局剧情记忆 (Summary)</label>
+              <label className="label text-xs font-bold text-info">全局剧情记忆（Summary）</label>
               <textarea
                 className="textarea textarea-bordered h-40 font-mono text-xs"
                 value={room.summary || ''}
@@ -84,7 +84,7 @@ export function GroupEditModal({
                     ),
                   )
                 }
-                placeholder="点击顶部界面的【书本】图标可以自动总结对话并追加到这里..."
+                placeholder="点击顶部的总结按钮，可以自动把对话进展追加到这里..."
               />
             </div>
           </section>
