@@ -82,8 +82,8 @@ export function ChatWorkspace({
 
   if (viewMode === 'char' && !selectedCharId) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 opacity-60">
-        <div className="max-w-md rounded-[2rem] border border-base-300/60 bg-base-100/60 p-8 text-center shadow-xl backdrop-blur">
+      <div className="flex flex-1 items-center justify-center px-6">
+        <div className="max-w-md rounded-[2rem] border border-base-300 bg-base-100 p-8 text-center shadow-xl">
           <Pencil size={48} className="mx-auto mb-4 opacity-30" />
           <p>Select a character in the sidebar to start chatting.</p>
         </div>
@@ -93,8 +93,8 @@ export function ChatWorkspace({
 
   if (viewMode === 'group' && !selectedRoomId) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 opacity-60">
-        <div className="max-w-md rounded-[2rem] border border-base-300/60 bg-base-100/60 p-8 text-center shadow-xl backdrop-blur">
+      <div className="flex flex-1 items-center justify-center px-6">
+        <div className="max-w-md rounded-[2rem] border border-base-300 bg-base-100 p-8 text-center shadow-xl">
           <Users size={48} className="mx-auto mb-4 opacity-30" />
           <p>Select a room in the sidebar to start the group chat.</p>
         </div>
