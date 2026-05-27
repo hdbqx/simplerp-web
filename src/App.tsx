@@ -57,6 +57,7 @@ function App() {
   );
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showCharEdit, setShowCharEdit] = useState(false);
   const [charEditTab, setCharEditTab] = useState<CharEditTab>('basic');
@@ -202,7 +203,11 @@ function App() {
 
   return (
     <>
-      <div className="drawer fixed inset-0 w-full overflow-hidden bg-base-100 text-base-content md:drawer-open">
+      <div
+        className={`drawer fixed inset-0 w-full overflow-hidden bg-base-100 text-base-content ${
+          desktopSidebarOpen ? 'md:drawer-open' : ''
+        }`}
+      >
         <input
           id="my-drawer"
           type="checkbox"
@@ -215,6 +220,8 @@ function App() {
           <AppHeader
             mobileMenuOpen={mobileMenuOpen}
             setMobileMenuOpen={setMobileMenuOpen}
+            desktopSidebarOpen={desktopSidebarOpen}
+            setDesktopSidebarOpen={setDesktopSidebarOpen}
             viewMode={viewMode}
             characters={characters}
             rooms={rooms}
@@ -271,10 +278,14 @@ function App() {
         <div className="drawer-side z-50">
           <label
             htmlFor="my-drawer"
-            className="drawer-overlay bg-slate-950/45 backdrop-blur-[2px]"
+            className="drawer-overlay bg-slate-950/45"
             onClick={() => setMobileMenuOpen(false)}
           ></label>
-          <Sidebar setMobileMenuOpen={setMobileMenuOpen} setShowSettings={setShowSettings} />
+          <Sidebar
+            setMobileMenuOpen={setMobileMenuOpen}
+            setDesktopSidebarOpen={setDesktopSidebarOpen}
+            setShowSettings={setShowSettings}
+          />
         </div>
 
         <SettingsModal

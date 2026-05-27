@@ -5,10 +5,11 @@ import { useAppStore } from '../../lib/store';
 
 type SidebarProps = {
   setMobileMenuOpen: (open: boolean) => void;
+  setDesktopSidebarOpen: (open: boolean) => void;
   setShowSettings: (open: boolean) => void;
 };
 
-export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
+export function Sidebar({ setMobileMenuOpen, setDesktopSidebarOpen, setShowSettings }: SidebarProps) {
   const {
     viewMode,
     characters,
@@ -34,18 +35,24 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
   );
 
   return (
-    <div className="safe-pb safe-pt flex h-full w-[84vw] max-w-80 flex-col overflow-hidden border-r border-base-content/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] p-4 shadow-[0_24px_60px_rgba(15,23,42,0.35)] backdrop-blur-2xl md:w-80">
+    <div className="safe-pb safe-pt flex h-full w-[84vw] max-w-80 flex-col overflow-hidden border-r border-base-content/10 bg-base-200 p-4 shadow-xl md:w-80">
       <div className="mb-6 flex items-center justify-between pl-1">
         <div>
           <h2 className="text-xl font-black tracking-tight text-primary">SimpleRP Cloud</h2>
           <div className="text-[11px] uppercase tracking-[0.22em] text-base-content/45">Roleplay Console</div>
         </div>
-        <button className="btn btn-ghost btn-sm rounded-2xl md:hidden" onClick={() => setMobileMenuOpen(false)}>
+        <button
+          className="btn btn-ghost btn-sm rounded-2xl"
+          onClick={() => {
+            setMobileMenuOpen(false);
+            setDesktopSidebarOpen(false);
+          }}
+        >
           <X />
         </button>
       </div>
 
-      <div className="tabs tabs-boxed mb-6 rounded-2xl bg-base-100/60 p-1 shadow-inner">
+      <div className="tabs tabs-boxed mb-6 rounded-2xl bg-base-100 p-1 shadow-inner">
         <button
           className={`tab flex-1 rounded-xl transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`}
           onClick={() => setViewMode('char')}
@@ -78,7 +85,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                 className={`group flex cursor-pointer items-center justify-between rounded-2xl border p-3.5 transition-all ${
                   selectedCharId === character.id
                     ? 'border-primary/40 bg-primary text-primary-content shadow-lg shadow-primary/20'
-                    : 'border-base-300/60 bg-base-100/55 hover:-translate-y-0.5 hover:bg-base-300/80'
+                    : 'border-base-300 bg-base-100 hover:-translate-y-0.5 hover:bg-base-300'
                 }`}
               >
                 <span className="max-w-[140px] truncate font-bold">{character.name}</span>
@@ -122,7 +129,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                   className={`group flex cursor-pointer items-center justify-between rounded-2xl border p-3.5 transition-all ${
                     selectedRoomId === room.id
                       ? 'border-secondary/40 bg-secondary text-secondary-content shadow-lg shadow-secondary/20'
-                      : 'border-base-300/60 bg-base-100/55 hover:-translate-y-0.5 hover:bg-base-300/80'
+                      : 'border-base-300 bg-base-100 hover:-translate-y-0.5 hover:bg-base-300'
                   }`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
@@ -143,7 +150,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                 </div>
               ))
             : (
-                <div className="rounded-2xl border border-base-300/60 bg-base-100/55 p-4 text-xs leading-relaxed shadow-sm">
+                <div className="rounded-2xl border border-base-300 bg-base-100 p-4 text-xs leading-relaxed shadow-sm">
                   <div className="mb-2 flex items-center gap-2 font-black">
                     <ImageIcon size={16} />
                     生图工作台
@@ -156,7 +163,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
 
         {(viewMode === 'char' || viewMode === 'group') && (
           <button
-            className="btn btn-outline btn-sm btn-block mt-4 rounded-2xl border-dashed bg-base-100/40"
+            className="btn btn-outline btn-sm btn-block mt-4 rounded-2xl border-dashed bg-base-100"
             onClick={async () => {
               const name = prompt('名称？');
               if (!name) return;

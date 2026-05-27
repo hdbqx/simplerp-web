@@ -1,10 +1,12 @@
-import { Book, BookOpen, Eraser, Menu, Pencil, RefreshCw, Users } from 'lucide-react';
+import { Book, BookOpen, Eraser, Pencil, RefreshCw, Users, X } from 'lucide-react';
 import type { ApiPreset, Character, Room } from '../../lib/db';
 import type { ViewMode } from '../../lib/store';
 
 type AppHeaderProps = {
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
+  desktopSidebarOpen: boolean;
+  setDesktopSidebarOpen: (open: boolean) => void;
   viewMode: ViewMode;
   characters: Character[];
   rooms: Room[];
@@ -29,6 +31,8 @@ type AppHeaderProps = {
 export function AppHeader({
   mobileMenuOpen,
   setMobileMenuOpen,
+  desktopSidebarOpen,
+  setDesktopSidebarOpen,
   viewMode,
   characters,
   rooms,
@@ -61,7 +65,16 @@ export function AppHeader({
       <div className="navbar min-h-[3rem] px-2 md:px-4">
         <div className="flex-none md:hidden">
           <button className="btn btn-square btn-sm btn-ghost" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
-            <Menu size={20} />
+            <X size={20} />
+          </button>
+        </div>
+        <div className="hidden flex-none md:block">
+          <button
+            className="btn btn-square btn-sm btn-ghost"
+            onClick={() => setDesktopSidebarOpen(!desktopSidebarOpen)}
+            title={desktopSidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          >
+            <X size={20} />
           </button>
         </div>
         <div className="flex-1 truncate px-2 text-base font-bold md:text-lg">{title}</div>

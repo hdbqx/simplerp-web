@@ -14,7 +14,7 @@ export function LorebookModal({ show, charId, onClose }: LorebookModalProps) {
     <div className="modal modal-open text-base-content">
       <div className="modal-box flex h-[75vh] max-w-2xl flex-col overflow-hidden p-0">
         <div className="flex items-center justify-between border-b bg-base-200 p-4 font-bold">
-          涓栫晫涔?(Worldbook)
+          {"\u4e16\u754c\u4e66"}
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>
             <X />
           </button>
