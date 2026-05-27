@@ -202,7 +202,7 @@ function App() {
 
   return (
     <>
-      <div className="drawer drawer-open fixed inset-0 w-full overflow-hidden bg-base-100 text-base-content md:drawer-open">
+      <div className="drawer fixed inset-0 w-full overflow-hidden bg-base-100 text-base-content md:drawer-open">
         <input
           id="my-drawer"
           type="checkbox"
@@ -211,7 +211,7 @@ function App() {
           onChange={(event) => setMobileMenuOpen(event.target.checked)}
         />
 
-        <div className="drawer-content relative flex h-full flex-col overflow-hidden">
+        <div className="drawer-content relative flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_35%),linear-gradient(180deg,_rgba(15,23,42,0.08),_transparent_22%)]">
           <AppHeader
             mobileMenuOpen={mobileMenuOpen}
             setMobileMenuOpen={setMobileMenuOpen}
@@ -269,7 +269,11 @@ function App() {
         </div>
 
         <div className="drawer-side z-50">
-          <label htmlFor="my-drawer" className="drawer-overlay"></label>
+          <label
+            htmlFor="my-drawer"
+            className="drawer-overlay bg-slate-950/45 backdrop-blur-[2px]"
+            onClick={() => setMobileMenuOpen(false)}
+          ></label>
           <Sidebar setMobileMenuOpen={setMobileMenuOpen} setShowSettings={setShowSettings} />
         </div>
 

@@ -60,37 +60,41 @@ export const ChatInput = memo(function ChatInput({
   };
 
   return (
-    <div className="safe-pb shrink-0 border-t border-base-300 bg-base-100 p-2 md:p-4">
-      <div className="mx-auto flex max-w-4xl flex-col gap-2">
+    <div className="safe-pb shrink-0 border-t border-base-300/70 bg-base-100/90 px-2 pb-2 pt-2 shadow-[0_-16px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl md:px-4 md:pb-4">
+      <div className="mx-auto flex max-w-5xl flex-col gap-2">
         {viewMode === 'group' && (
-          <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+          <div className="no-scrollbar flex gap-2 overflow-x-auto px-1 pb-1">
             <button
               onClick={() => sendGroupMemberMessage(null)}
               disabled={isTyping || !input.trim()}
-              className="btn btn-sm btn-outline whitespace-nowrap rounded-full"
+              className="btn btn-sm btn-outline whitespace-nowrap rounded-full border-base-300/70 bg-base-100/70"
             >
-              发送（玩家发言）
+              玩家发言
             </button>
             {groupMembers.map((member) => (
               <button
                 key={member.id}
                 onClick={() => sendGroupMemberMessage(member.id)}
                 disabled={isTyping || !input.trim()}
-                className="btn btn-sm btn-secondary whitespace-nowrap rounded-full"
+                className="btn btn-sm btn-secondary whitespace-nowrap rounded-full shadow-sm"
               >
-                @{member.name} 回复
+                @{member.name}
               </button>
             ))}
           </div>
         )}
 
-        <div className="flex items-end gap-2 rounded-2xl border border-base-300 bg-base-200 p-1.5 shadow-inner md:p-2">
-          <button className="btn btn-circle btn-ghost btn-sm mb-1 shrink-0 text-accent" onClick={onOpenImageGen}>
+        <div className="flex items-end gap-2 rounded-[1.8rem] border border-base-300/70 bg-base-200/90 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_12px_32px_rgba(15,23,42,0.08)]">
+          <button
+            className="btn btn-circle btn-sm mb-1 shrink-0 border border-base-300/60 bg-base-100/80 text-accent shadow-sm"
+            onClick={onOpenImageGen}
+          >
             <ImageIcon size={22} />
           </button>
+
           <textarea
             ref={inputRef}
-            className="textarea textarea-ghost max-h-32 min-h-[2.5rem] flex-1 resize-none px-1 py-2 text-base leading-relaxed focus:outline-none md:max-h-48"
+            className="textarea textarea-ghost max-h-32 min-h-[2.75rem] flex-1 resize-none px-2 py-2 text-[15px] leading-relaxed focus:outline-none md:max-h-48 md:text-base"
             rows={1}
             value={input}
             onChange={(event) => {
@@ -105,14 +109,15 @@ export const ChatInput = memo(function ChatInput({
               }
             }}
           />
+
           {isTyping ? (
-            <button className="btn btn-circle btn-error btn-sm mb-1 shrink-0 shadow-lg" onClick={onStop}>
+            <button className="btn btn-circle btn-error btn-sm mb-1 shrink-0 shadow-lg md:btn-md" onClick={onStop}>
               <Square size={18} fill="currentColor" />
             </button>
           ) : (
             viewMode === 'char' && (
               <button
-                className="btn btn-circle btn-primary btn-sm mb-1 shrink-0 shadow-lg"
+                className="btn btn-circle btn-primary btn-sm mb-1 shrink-0 shadow-lg md:btn-md"
                 onClick={sendPlayerMessage}
                 disabled={!input.trim()}
               >

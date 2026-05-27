@@ -2,58 +2,153 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
-  height: 100%; 
-  width: 100vw;
-  overflow: hidden; 
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: #0f172a; 
-  background-image: none;    
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background-color: #0f172a;
+  background-image:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 32%),
+    linear-gradient(180deg, #0f172a 0%, #111827 100%);
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
-  overscroll-behavior-y: none; /* 彻底禁止下拉刷新和橡皮筋回弹 */
+  overscroll-behavior-y: none;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  isolation: isolate;
 }
 
 .solid-panel {
-  @apply bg-base-200 border border-base-content/10 shadow-lg;
+  @apply border border-base-content/10 bg-base-200 shadow-lg;
 }
 
 @keyframes messageIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
+
 .animate-message {
   animation: messageIn 0.2s ease-out forwards;
 }
 
-.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { @apply bg-base-content/20 rounded-full; }
-.no-scrollbar::-webkit-scrollbar { display: none; }
-.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-.overflow-y-auto { -webkit-overflow-scrolling: touch; }
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
 
-.prose { @apply text-base-content/90 max-w-none leading-relaxed text-[15px]; }
-.prose p { @apply mb-2; }
-.prose blockquote { @apply not-italic border-l-4 border-primary bg-base-300 rounded-r-lg py-2 px-3 my-3 shadow-sm; border-left-color: oklch(var(--p)); }
-.prose hr { @apply border-0 h-[1px] bg-base-content/10 my-4; }
-.prose ul { @apply list-disc list-outside ml-4 my-2 opacity-90; }
-.prose ol { @apply list-decimal list-outside ml-4 my-2 opacity-90; }
-.prose li { @apply my-0.5 pl-1; }
-.prose strong { @apply text-primary font-bold; }
-.prose h1, .prose h2, .prose h3 { @apply font-bold text-base-content mt-4 mb-2; }
-.prose code { @apply bg-base-300 px-1 py-0.5 rounded text-xs font-mono text-secondary; }
-.prose pre { @apply bg-[#1e1e1e] p-2 rounded-lg overflow-x-auto text-xs my-2 border border-white/5; }
-.prose pre code { @apply bg-transparent text-gray-300 p-0; }
-.prose table { @apply w-full text-xs my-2 border-collapse; }
-.prose th { @apply text-left p-2 border-b border-base-content/20 text-primary; }
-.prose td { @apply p-2 border-b border-base-content/10; }
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-/* iOS 底部小黑条与顶部刘海安全区适配 */
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-base-content/20;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (pointer: coarse) {
+  .chat .group-hover\:opacity-100,
+  .group .group-hover\:opacity-100,
+  .group\/img .group-hover\/img\:opacity-100 {
+    opacity: 1 !important;
+  }
+}
+
+.prose {
+  @apply max-w-none text-[15px] leading-relaxed text-base-content/90;
+}
+
+.prose p {
+  @apply mb-2;
+}
+
+.prose blockquote {
+  @apply my-3 rounded-r-lg border-l-4 bg-base-300 px-3 py-2 not-italic shadow-sm;
+  border-left-color: oklch(var(--p));
+}
+
+.prose hr {
+  @apply my-4 h-[1px] border-0 bg-base-content/10;
+}
+
+.prose ul {
+  @apply my-2 ml-4 list-disc list-outside opacity-90;
+}
+
+.prose ol {
+  @apply my-2 ml-4 list-decimal list-outside opacity-90;
+}
+
+.prose li {
+  @apply my-0.5 pl-1;
+}
+
+.prose strong {
+  @apply font-bold text-primary;
+}
+
+.prose h1,
+.prose h2,
+.prose h3 {
+  @apply mb-2 mt-4 font-bold text-base-content;
+}
+
+.prose code {
+  @apply rounded bg-base-300 px-1 py-0.5 font-mono text-xs text-secondary;
+}
+
+.prose pre {
+  @apply my-2 overflow-x-auto rounded-lg border border-white/5 bg-[#1e1e1e] p-2 text-xs;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0 text-gray-300;
+}
+
+.prose table {
+  @apply my-2 w-full border-collapse text-xs;
+}
+
+.prose th {
+  @apply border-b border-base-content/20 p-2 text-left text-primary;
+}
+
+.prose td {
+  @apply border-b border-base-content/10 p-2;
+}
+
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .safe-pb {
     padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem) !important;
   }
+
   .safe-pt {
     padding-top: env(safe-area-inset-top) !important;
   }

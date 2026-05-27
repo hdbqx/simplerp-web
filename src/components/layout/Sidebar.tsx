@@ -19,42 +19,47 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
     setSelectedCharId,
     setSelectedRoomId,
     loadData,
-  } = useAppStore(useShallow((state) => ({
-    viewMode: state.viewMode,
-    characters: state.characters,
-    rooms: state.rooms,
-    selectedCharId: state.selectedCharId,
-    selectedRoomId: state.selectedRoomId,
-    setViewMode: state.setViewMode,
-    setSelectedCharId: state.setSelectedCharId,
-    setSelectedRoomId: state.setSelectedRoomId,
-    loadData: state.loadData,
-  })));
+  } = useAppStore(
+    useShallow((state) => ({
+      viewMode: state.viewMode,
+      characters: state.characters,
+      rooms: state.rooms,
+      selectedCharId: state.selectedCharId,
+      selectedRoomId: state.selectedRoomId,
+      setViewMode: state.setViewMode,
+      setSelectedCharId: state.setSelectedCharId,
+      setSelectedRoomId: state.setSelectedRoomId,
+      loadData: state.loadData,
+    })),
+  );
 
   return (
-    <div className="flex h-full w-80 flex-col overflow-hidden border-r border-base-content/10 bg-base-200 p-4 shadow-xl">
-      <div className="mb-6 flex items-center justify-between pl-2">
-        <h2 className="text-xl font-black tracking-tight text-primary">SimpleRP Cloud</h2>
-        <button className="btn btn-ghost btn-xs md:hidden" onClick={() => setMobileMenuOpen(false)}>
+    <div className="safe-pb safe-pt flex h-full w-[84vw] max-w-80 flex-col overflow-hidden border-r border-base-content/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] p-4 shadow-[0_24px_60px_rgba(15,23,42,0.35)] backdrop-blur-2xl md:w-80">
+      <div className="mb-6 flex items-center justify-between pl-1">
+        <div>
+          <h2 className="text-xl font-black tracking-tight text-primary">SimpleRP Cloud</h2>
+          <div className="text-[11px] uppercase tracking-[0.22em] text-base-content/45">Roleplay Console</div>
+        </div>
+        <button className="btn btn-ghost btn-sm rounded-2xl md:hidden" onClick={() => setMobileMenuOpen(false)}>
           <X />
         </button>
       </div>
 
-      <div className="tabs tabs-boxed mb-6">
+      <div className="tabs tabs-boxed mb-6 rounded-2xl bg-base-100/60 p-1 shadow-inner">
         <button
-          className={`tab flex-1 transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`}
+          className={`tab flex-1 rounded-xl transition-all ${viewMode === 'char' ? 'tab-active font-bold' : ''}`}
           onClick={() => setViewMode('char')}
         >
-          单人
+          角色
         </button>
         <button
-          className={`tab flex-1 transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`}
+          className={`tab flex-1 rounded-xl transition-all ${viewMode === 'group' ? 'tab-active font-bold' : ''}`}
           onClick={() => setViewMode('group')}
         >
-          剧场
+          群聊
         </button>
         <button
-          className={`tab flex-1 transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`}
+          className={`tab flex-1 rounded-xl transition-all ${viewMode === 'image' ? 'tab-active font-bold' : ''}`}
           onClick={() => setViewMode('image')}
         >
           生图
@@ -70,20 +75,20 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                   setSelectedCharId(character.id);
                   setMobileMenuOpen(false);
                 }}
-                className={`group flex cursor-pointer items-center justify-between rounded-xl p-3 ${
+                className={`group flex cursor-pointer items-center justify-between rounded-2xl border p-3.5 transition-all ${
                   selectedCharId === character.id
-                    ? 'bg-primary text-primary-content shadow-lg'
-                    : 'hover:bg-base-300'
+                    ? 'border-primary/40 bg-primary text-primary-content shadow-lg shadow-primary/20'
+                    : 'border-base-300/60 bg-base-100/55 hover:-translate-y-0.5 hover:bg-base-300/80'
                 }`}
               >
                 <span className="max-w-[140px] truncate font-bold">{character.name}</span>
-                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                   <button
-                    className="p-1 hover:text-info"
-                    title="创建副本"
+                    className="rounded-lg p-1.5 hover:bg-black/10 hover:text-info"
+                    title="复制"
                     onClick={async (event) => {
                       event.stopPropagation();
-                      const newName = prompt('新角色名称:', `${character.name} (Copy)`);
+                      const newName = prompt('新角色名？', `${character.name}（副本）`);
                       if (!newName || !character.id) return;
                       await api.characters.duplicate(character.id, newName);
                       await loadData();
@@ -92,7 +97,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                     <Copy size={14} />
                   </button>
                   <button
-                    className="p-1 hover:text-error"
+                    className="rounded-lg p-1.5 hover:bg-black/10 hover:text-error"
                     title="删除"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -114,42 +119,46 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
                     setSelectedRoomId(room.id);
                     setMobileMenuOpen(false);
                   }}
-                  className={`group flex cursor-pointer items-center justify-between rounded-xl p-3 ${
+                  className={`group flex cursor-pointer items-center justify-between rounded-2xl border p-3.5 transition-all ${
                     selectedRoomId === room.id
-                      ? 'bg-secondary text-secondary-content shadow-lg'
-                      : 'hover:bg-base-300'
+                      ? 'border-secondary/40 bg-secondary text-secondary-content shadow-lg shadow-secondary/20'
+                      : 'border-base-300/60 bg-base-100/55 hover:-translate-y-0.5 hover:bg-base-300/80'
                   }`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-bold">{room.name}</span>
                   </div>
-                  <Trash2
-                    size={14}
-                    className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-error"
+                  <button
+                    className="rounded-lg p-1.5 opacity-100 transition-opacity hover:bg-black/10 hover:text-error md:opacity-0 md:group-hover:opacity-100"
+                    title="删除"
                     onClick={(event) => {
                       event.stopPropagation();
                       if (!room.id) return;
                       if (!confirm(`删除房间 ${room.name}？`)) return;
                       api.rooms.delete(room.id).then(() => loadData());
                     }}
-                  />
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))
             : (
-                <div className="rounded-xl border border-base-300 bg-base-100/40 p-3 text-xs leading-relaxed">
+                <div className="rounded-2xl border border-base-300/60 bg-base-100/55 p-4 text-xs leading-relaxed shadow-sm">
                   <div className="mb-2 flex items-center gap-2 font-black">
                     <ImageIcon size={16} />
                     生图工作台
                   </div>
-                  <div>支持本地 ComfyUI 异步穿透生图，以及 OpenAI 兼容端点生图。</div>
+                  <div>
+                    可以基于最近对话生成图片，也可以在系统设置里切换不同生图后端。
+                  </div>
                 </div>
               )}
 
         {(viewMode === 'char' || viewMode === 'group') && (
           <button
-            className="btn btn-outline btn-sm btn-block mt-4 border-dashed"
+            className="btn btn-outline btn-sm btn-block mt-4 rounded-2xl border-dashed bg-base-100/40"
             onClick={async () => {
-              const name = prompt('名称?');
+              const name = prompt('名称？');
               if (!name) return;
               if (viewMode === 'char') {
                 await api.characters.add({ name, description: '', first_message: '你好', summary: '' });
@@ -166,7 +175,7 @@ export function Sidebar({ setMobileMenuOpen, setShowSettings }: SidebarProps) {
 
       <div className="mt-4 border-t border-base-content/10 pt-4">
         <button
-          className="btn btn-ghost btn-sm btn-block justify-start"
+          className="btn btn-ghost btn-sm btn-block justify-start rounded-2xl"
           onClick={() => {
             setShowSettings(true);
             setMobileMenuOpen(false);
