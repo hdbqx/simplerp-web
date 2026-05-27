@@ -89,6 +89,10 @@ body {
   @apply mb-2;
 }
 
+.prose p:last-child {
+  @apply mb-0;
+}
+
 .prose blockquote {
   @apply my-3 rounded-r-lg border-l-4 bg-base-300 px-3 py-2 not-italic shadow-sm;
   border-left-color: oklch(var(--p));
@@ -110,30 +114,56 @@ body {
   @apply my-0.5 pl-1;
 }
 
+.prose ul.contains-task-list,
+.prose ol.contains-task-list {
+  @apply ml-0 list-none;
+}
+
+.prose li.task-list-item {
+  @apply flex items-start gap-2 pl-0;
+}
+
 .prose strong {
   @apply font-bold text-primary;
 }
 
 .prose h1,
 .prose h2,
-.prose h3 {
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
   @apply mb-2 mt-4 font-bold text-base-content;
+}
+
+.prose a {
+  @apply break-all;
 }
 
 .prose code {
   @apply rounded bg-base-300 px-1 py-0.5 font-mono text-xs text-secondary;
+  word-break: break-word;
 }
 
 .prose pre {
-  @apply my-2 overflow-x-auto rounded-lg border border-white/5 bg-[#1e1e1e] p-2 text-xs;
+  @apply my-3 overflow-x-auto rounded-xl border border-white/5 bg-[#1e1e1e] p-3 text-xs shadow-inner;
 }
 
 .prose pre code {
   @apply bg-transparent p-0 text-gray-300;
+  white-space: pre;
+}
+
+.prose img {
+  @apply w-full max-w-full;
+}
+
+.prose del {
+  @apply opacity-70;
 }
 
 .prose table {
-  @apply my-2 w-full border-collapse text-xs;
+  @apply my-0 w-full border-collapse text-xs;
 }
 
 .prose th {

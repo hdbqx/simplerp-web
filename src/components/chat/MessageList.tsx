@@ -1,6 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import { Pencil, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { type Character, type Message, type RoomMessage, type Settings } from '../../lib/db';
 import { replaceVariables as replaceBuiltInVariables } from '../../lib/variables';
@@ -17,6 +20,18 @@ type MessageListProps = {
   onDeleteCharMessage: (message: Message) => Promise<void>;
   onEditCharMessage: (messageId: number, content: string) => Promise<void>;
   onSaveCharImage: (message: Message) => Promise<void>;
+};
+
+const markdownSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames || []), 'input'],
+  attributes: {
+    ...defaultSchema.attributes,
+    a: [...(defaultSchema.attributes?.a || []), 'target', 'rel'],
+    code: [...(defaultSchema.attributes?.code || []), 'className'],
+    img: [...(defaultSchema.attributes?.img || []), 'src', 'alt', 'title'],
+    input: ['type', 'checked', 'disabled'],
+  },
 };
 
 export const MessageList = memo(function MessageList({
@@ -39,6 +54,51 @@ export const MessageList = memo(function MessageList({
   const renderMessages = useMemo(
     () => (viewMode === 'group' ? roomMessages : charMessages),
     [charMessages, roomMessages, viewMode],
+  );
+  const markdownComponents = useMemo(
+    () => ({
+      a: ({ href, children, ...props }: any) => (
+        <a
+          {...props}
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="font-medium text-info underline decoration-dotted underline-offset-4 transition hover:text-primary"
+        >
+          {children}
+        </a>
+      ),
+      table: ({ children, ...props }: any) => (
+        <div className="my-3 overflow-x-auto rounded-xl border border-base-content/10">
+          <table {...props} className="table table-xs table-zebra w-full min-w-[24rem]">
+            {children}
+          </table>
+        </div>
+      ),
+      input: ({ type, checked, ...props }: any) =>
+        type === 'checkbox' ? (
+          <input
+            {...props}
+            type="checkbox"
+            checked={checked}
+            disabled
+            readOnly
+            className="checkbox checkbox-xs mr-2 align-middle"
+          />
+        ) : (
+          <input {...props} type={type} />
+        ),
+      img: ({ src, alt, ...props }: any) => (
+        <img
+          {...props}
+          src={src}
+          alt={alt || 'markdown image'}
+          className="my-3 max-h-[28rem] rounded-2xl border border-base-content/10 object-contain shadow-lg"
+          loading="lazy"
+        />
+      ),
+    }),
+    [],
   );
 
   const lastMessage = renderMessages[renderMessages.length - 1];
@@ -140,7 +200,11 @@ export const MessageList = memo(function MessageList({
                   </div>
                 ) : (
                   <div className="prose prose-sm break-words">
-                    <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                      rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSchema]]}
+                      components={markdownComponents}
+                    >
                       {replaceBuiltInVariables(message.content, settings || {}, currentCharacter)}
                     </ReactMarkdown>
                   </div>
