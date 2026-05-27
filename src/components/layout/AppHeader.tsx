@@ -55,7 +55,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const title =
     viewMode === 'image'
-      ? 'Image Studio'
+      ? '生图工坊'
       : (viewMode === 'char'
           ? characters.find((character) => character.id === selectedCharId)?.name
           : rooms.find((room) => room.id === selectedRoomId)?.name) || 'SimpleRP';
@@ -72,7 +72,7 @@ export function AppHeader({
           <button
             className="btn btn-square btn-sm btn-ghost"
             onClick={() => setDesktopSidebarOpen(!desktopSidebarOpen)}
-            title={desktopSidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            title={desktopSidebarOpen ? '隐藏侧栏' : '显示侧栏'}
           >
             <Menu size={20} />
           </button>
@@ -87,7 +87,7 @@ export function AppHeader({
           onChange={(event) => onPresetChange(event.target.value)}
         >
           <option value="" disabled>
-            Select preset...
+            选择预设...
           </option>
           {presets.map((preset) => (
             <option key={preset.id} value={preset.id}>
@@ -103,9 +103,9 @@ export function AppHeader({
             onChange={(event) => onModelChange(event.target.value)}
             disabled={!activePresetId}
           >
-            {manualModels.length === 0 && availableModels.length === 0 && <option value="">No models</option>}
+            {manualModels.length === 0 && availableModels.length === 0 && <option value="">暂无模型</option>}
             {manualModels.length > 0 && (
-              <optgroup label="Manual">
+              <optgroup label="手动填写">
                 {manualModels.map((model) => (
                   <option key={`man-${model}`} value={model}>
                     {model}
@@ -114,7 +114,7 @@ export function AppHeader({
               </optgroup>
             )}
             {availableModels.length > 0 && (
-              <optgroup label="Detected">
+              <optgroup label="自动获取">
                 {availableModels.map((model) => (
                   <option key={`auto-${model}`} value={model}>
                     {model}
@@ -125,7 +125,7 @@ export function AppHeader({
           </select>
           <button
             className={`btn btn-xs join-item btn-ghost md:btn-sm ${isFetchingModels ? 'loading' : ''}`}
-            title="Refresh models"
+            title="刷新模型列表"
             onClick={onRefreshModels}
             disabled={!activePresetId}
           >
@@ -137,7 +137,7 @@ export function AppHeader({
           {viewMode !== 'image' && (
             <button
               className="btn btn-xs btn-ghost text-error md:btn-sm"
-              title="Clear conversation"
+              title="清空对话"
               onClick={onClearConversation}
             >
               <Eraser size={16} />
@@ -147,7 +147,7 @@ export function AppHeader({
           {(viewMode === 'char' || viewMode === 'group') && (selectedCharId || selectedRoomId) && (
             <button
               className="btn btn-xs btn-ghost text-info md:btn-sm"
-              title="Summarize progress"
+              title="总结进展"
               onClick={onSummarizeProgress}
             >
               <BookOpen size={16} />
@@ -156,7 +156,7 @@ export function AppHeader({
 
           {viewMode === 'char' && selectedCharId && (
             <>
-              <button className="btn btn-xs btn-ghost text-warning md:btn-sm" title="Lorebook" onClick={onOpenLorebook}>
+              <button className="btn btn-xs btn-ghost text-warning md:btn-sm" title="世界书" onClick={onOpenLorebook}>
                 <Book size={16} />
               </button>
               <button className="btn btn-xs btn-primary md:btn-sm" onClick={onOpenCharEdit}>
@@ -166,7 +166,7 @@ export function AppHeader({
           )}
 
           {viewMode === 'group' && selectedRoomId && (
-            <button className="btn btn-xs btn-secondary md:btn-sm" title="Room settings" onClick={onOpenGroupEdit}>
+            <button className="btn btn-xs btn-secondary md:btn-sm" title="群聊设置" onClick={onOpenGroupEdit}>
               <Users size={16} />
             </button>
           )}

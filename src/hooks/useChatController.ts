@@ -14,6 +14,7 @@ import {
 } from '../lib/db';
 import { LLMClient } from '../lib/llm';
 import { LorebookEngine } from '../lib/lorebook-engine';
+import { getActivePromptProfile } from '../lib/prompt-profiles';
 import { VariableEngine } from '../lib/variable-engine';
 import { replaceVariables as replaceBuiltInVariables } from '../lib/variables';
 import { useChatStore } from '../lib/chat-store';
@@ -98,7 +99,7 @@ export function useChatController({
   const sendRoomChat = async (userText: string, speakerCharId: number | null): Promise<boolean> => {
     if (!settings) return false;
     if (!selectedRoomId) {
-      alert('Please select a room first.');
+      alert('请先选择一个群聊房间。');
       return false;
     }
 
@@ -106,7 +107,7 @@ export function useChatController({
     try {
       if (speakerCharId) {
         if (!activePresetId || !activeModel) {
-          alert('Please select a preset and model first.');
+          alert('请先选择预设与模型。');
           return false;
         }
         await api.roomChat.send({
@@ -140,16 +141,17 @@ export function useChatController({
   const triggerAI = async (char: Character, textOverride?: string, historyOverride?: Message[]) => {
     if (isTyping || !settings) return;
     if (!activePresetId || !activeModel) {
-      alert('Please select a preset and model first.');
+      alert('请先选择预设与模型。');
       return;
     }
 
     const currentPreset = presets.find((preset) => preset.id === activePresetId);
     if (!currentPreset) {
-      alert('Invalid preset.');
+      alert('当前预设无效。');
       return;
     }
 
+    const promptProfile = getActivePromptProfile(settings);
     const varEngine = new VariableEngine(globalVariables, globalStages);
     const loreEngine = new LorebookEngine(lorebookEntries);
     const currentHistory = (historyOverride || getCharMessages()).filter(
@@ -176,16 +178,14 @@ export function useChatController({
     const triggeredLorebook = loreEngine.scan(textOverride || '', effectiveHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
     if (triggeredLorebook.length > 0) {
-      showToast(
-        `Lorebook activated: ${triggeredLorebook.map((item: any) => item.name || item.keywords).join(', ')}`,
-      );
+      showToast(`世界书已触发：${triggeredLorebook.map((item: any) => item.name || item.keywords).join('、')}`);
     }
 
     const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
 
     let basePrompt = char.description;
-    if (char.summary) basePrompt += `\n\n[Summary]\n${char.summary}`;
-    if (stagePrompts) basePrompt += `\n\n[Current State]\n${stagePrompts}`;
+    if (char.summary) basePrompt += `\n\n【阶段总结】\n${char.summary}`;
+    if (stagePrompts) basePrompt += `\n\n【当前状态】\n${stagePrompts}`;
 
     const rawSystemContent =
       (lorebookInjections.beforeSystem ? `${lorebookInjections.beforeSystem}\n---\n` : '') +
@@ -286,10 +286,11 @@ export function useChatController({
                   user_input: textOverride,
                   preset_id: settings?.thought_preset_id,
                   model: settings?.thought_model_id || activeModel,
+                  thought_prompt: promptProfile.thought_prompt,
                 })
                 .then((result) => {
                   if (result?.updates?.length > 0) {
-                    showToast('Background thought update completed.', 'success');
+                    showToast('后台变量推演已完成。', 'success');
                   }
                   api.variables.list(char.id).then(setGlobalVariables);
                 })
@@ -333,6 +334,7 @@ export function useChatController({
   const handleGenImageAction = async ({ genPrompt, useSdPromptConversion }: ImageGenerationOptions) => {
     if (!settings) return;
 
+    const promptProfile = getActivePromptProfile(settings);
     const imageBackend = settings.image_backend || 'huggingface';
     const rawPrompt =
       genPrompt ||
@@ -356,8 +358,11 @@ export function useChatController({
         const sdPromptModel = settings.sd_prompt_model_id || activeModel;
         if (sdPromptPreset && sdPromptModel) {
           const llm = new LLMClient(sdPromptPreset.api_base, sdPromptPreset.api_key, getPresetMode(sdPromptPreset));
-          const tags = await llm.generateImageTags(rawPrompt, sdPromptModel);
-          finalPrompt = `1girl, (photorealistic:1.3), best quality, ultra high res, soft lighting, ${tags}`;
+          const tags = await llm.generateImageTags(rawPrompt, sdPromptModel, {
+            systemPrompt: promptProfile.sd_system_prompt,
+            userPromptTemplate: promptProfile.sd_user_prompt,
+          });
+          finalPrompt = tags;
         }
       }
 
@@ -367,7 +372,7 @@ export function useChatController({
       };
 
       if (imageBackend === 'huggingface') {
-        if (!settings.hf_keys) throw new Error('Please configure the ComfyUI tunnel URL first.');
+        if (!settings.hf_keys) throw new Error('请先在设置中填写 ComfyUI 穿透地址。');
         reqBody = {
           ...reqBody,
           backend: 'huggingface',
@@ -376,7 +381,7 @@ export function useChatController({
           payload: { prompt: finalPrompt },
         };
       } else if (imageBackend === 'modelscope') {
-        if (!settings.modelscope_api_key) throw new Error('Please configure the ModelScope API key first.');
+        if (!settings.modelscope_api_key) throw new Error('请先在设置中填写 ModelScope 接口密钥。');
         reqBody = {
           ...reqBody,
           backend: 'modelscope',
@@ -389,7 +394,7 @@ export function useChatController({
           presets.find((preset) => preset.id === settings.image_preset_id) ||
           presets.find((preset) => preset.id === activePresetId);
         const imageModel = settings.image_model_id || activeModel;
-        if (!imagePreset || !imageModel) throw new Error('Please configure the image preset and model first.');
+        if (!imagePreset || !imageModel) throw new Error('请先配置生图预设与模型。');
         reqBody = {
           ...reqBody,
           backend: 'openai',
@@ -406,15 +411,15 @@ export function useChatController({
         body: JSON.stringify(reqBody),
       });
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Image generation failed.' }));
-        throw new Error(errorData.error || 'The backend did not respond correctly.');
+        const errorData = await response.json().catch(() => ({ error: '生图失败。' }));
+        throw new Error(errorData.error || '生图后端没有正确返回结果。');
       }
 
       const data = await response.json();
       const imgSrc =
         (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') ||
         (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
-      if (!imgSrc) throw new Error('The backend did not return an image.');
+      if (!imgSrc) throw new Error('后端没有返回图片内容。');
 
       const timestamp = Date.now();
       const imageMsg: Message = {
@@ -435,7 +440,7 @@ export function useChatController({
         console.error('Failed to persist generated image message:', error);
       }
     } catch (error: any) {
-      alert(`Image generation failed: ${error.message}`);
+      alert(`生图失败：${error.message}`);
     } finally {
       setIsTyping(false);
     }
@@ -485,7 +490,7 @@ export function useChatController({
   };
 
   const handleDeleteCharMessage = async (message: Message) => {
-    if (!confirm('Delete this message?')) return;
+    if (!confirm('确定删除这条消息吗？')) return;
     if (message.id) {
       await api.messages.delete(message.id);
       setCharMessages((current) => current.filter((item) => item.id !== message.id));
@@ -507,48 +512,53 @@ export function useChatController({
       setCharMessages((current) =>
         current.map((item) => (item.timestamp === message.timestamp ? { ...item, id: result.id } : item)),
       );
-      alert('Image saved.');
+      alert('图片已保存。');
     } catch {
-      alert('Failed to save image.');
+      alert('图片保存失败。');
     }
   };
 
   const handleClearConversation = () => {
-    if (!confirm('Clear the current conversation?')) return;
+    if (!confirm('确定清空当前对话吗？')) return;
 
     if (viewMode === 'group' && selectedRoomId) {
       api.roomMessages.clear(selectedRoomId).then(() => {
         setRoomMessages([]);
-        alert('Conversation cleared.');
+        alert('对话已清空。');
       });
       return;
     }
 
     api.messages.clear(viewMode === 'char' ? selectedCharId : undefined).then(() => {
       clearCharMessages();
-      alert('Conversation cleared.');
+      alert('对话已清空。');
     });
   };
 
   const handleSummarizeProgress = async () => {
-    if (!activePresetId || !activeModel) {
-      alert('Please select a model first.');
+    if (!activePresetId || !activeModel || !settings) {
+      alert('请先选择模型。');
       return;
     }
 
     try {
       setIsTyping(true);
       const currentPreset = presets.find((preset) => preset.id === activePresetId);
-      if (!currentPreset) throw new Error('Invalid preset.');
+      if (!currentPreset) throw new Error('当前预设无效。');
 
-      const summaryPreset = presets.find((preset) => preset.id === settings?.summary_preset_id) || currentPreset;
-      const summaryModel = settings?.summary_model_id || activeModel;
+      const promptProfile = getActivePromptProfile(settings);
+      const summaryPreset = presets.find((preset) => preset.id === settings.summary_preset_id) || currentPreset;
+      const summaryModel = settings.summary_model_id || activeModel;
       const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
 
       const sourceMessages = viewMode === 'group' ? roomMessages : getCharMessages();
-      const fragment = await llm.summarizeRecent(sourceMessages as Message[], summaryModel);
-      if (!fragment) {
-        alert('No new progress was detected.');
+      const fragment = await llm.summarizeRecent(sourceMessages as Message[], summaryModel, {
+        systemPrompt: promptProfile.summary_system_prompt,
+        userPromptTemplate: promptProfile.summary_user_prompt,
+      });
+
+      if (!fragment || fragment.trim() === '无新进展') {
+        alert('这段对话没有检测到新的记忆进展。');
         return;
       }
 
@@ -561,18 +571,18 @@ export function useChatController({
 
       if (viewMode === 'char' && selectedCharId) {
         const char = characters.find((character) => character.id === selectedCharId);
-        const updatedSummary = (char?.summary ? `${char.summary}\n\n` : '') + `#### [Summary ${date}]\n${fragment}`;
+        const updatedSummary = (char?.summary ? `${char.summary}\n\n` : '') + `#### [总结 ${date}]\n${fragment}`;
         await api.characters.update(selectedCharId, { summary: updatedSummary });
       } else if (viewMode === 'group' && selectedRoomId) {
         const room = rooms.find((item) => item.id === selectedRoomId);
-        const updatedSummary = (room?.summary ? `${room.summary}\n\n` : '') + `#### [Group Summary ${date}]\n${fragment}`;
+        const updatedSummary = (room?.summary ? `${room.summary}\n\n` : '') + `#### [群聊总结 ${date}]\n${fragment}`;
         await api.rooms.update(selectedRoomId, { summary: updatedSummary });
       }
 
       await loadData();
-      alert('Summary appended.');
+      alert('总结已追加到记忆中。');
     } catch (error: any) {
-      alert(error.message || 'Failed to summarize progress.');
+      alert(error.message || '总结失败。');
     } finally {
       setIsTyping(false);
     }

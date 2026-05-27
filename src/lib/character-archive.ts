@@ -122,7 +122,7 @@ export async function importCharacterArchive({
 
   const trimmedText = text.trim();
   if (!trimmedText) {
-    alert('Please choose a JSON file.');
+    alert('请选择一个 JSON 文件。');
     return;
   }
 
@@ -130,12 +130,12 @@ export async function importCharacterArchive({
   try {
     payload = JSON.parse(trimmedText);
   } catch {
-    alert('Failed to parse JSON.');
+    alert('JSON 解析失败。');
     return;
   }
 
   if (payload.version !== 1 || !payload.character) {
-    alert('Invalid archive format.');
+    alert('角色档案格式不正确。');
     return;
   }
 
@@ -209,5 +209,5 @@ export async function importCharacterArchive({
 
   await loadData();
   await onArchiveLoaded();
-  alert('Import complete.');
+  alert('导入完成。');
 }

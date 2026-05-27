@@ -114,7 +114,7 @@ export function useWorkspaceData({
     await loadData();
     const members = await api.rooms.getMembers(selectedRoomId).catch(() => []);
     setGroupMemberIds((members as any[]).map((item) => Number((item as any).char_id)).filter(Boolean));
-    alert('Room settings saved.');
+    alert('群聊设置已保存。');
   };
 
   useEffect(() => {

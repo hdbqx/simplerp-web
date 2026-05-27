@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Image as ImageIcon, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon } from 'lucide-react';
 import type { ApiMode, ApiPreset, Settings } from '../lib/db';
 
 type StudioMode = 'txt2img';
@@ -129,7 +129,7 @@ export function ImageStudio({
       let reqBody: any;
       
       if (backend === 'huggingface') {
-        if (!settings.hf_keys) throw new Error('请在系统设置中配置 Hugging Face Keys');
+        if (!settings.hf_keys) throw new Error('请在系统设置中配置 Hugging Face 接口密钥');
         const modelId = settings.hf_model_id || 'black-forest-labs/FLUX.1-schnell';
         
         reqBody = {
@@ -139,7 +139,7 @@ export function ImageStudio({
           payload: { prompt: rawPrompt, ...extra }
         };
       } else if (backend === 'modelscope') {
-        if (!settings.modelscope_api_key) throw new Error('请在系统设置中配置魔搭社区 API Key');
+        if (!settings.modelscope_api_key) throw new Error('请在系统设置中配置魔搭社区接口密钥');
         const modelId = settings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo';
         
         reqBody = {
@@ -190,11 +190,11 @@ export function ImageStudio({
   const getBackendBadge = () => {
     switch (backend) {
       case 'huggingface':
-        return { label: 'Hugging Face API', class: 'badge-accent' };
+        return { label: 'Hugging Face', class: 'badge-accent' };
       case 'modelscope':
         return { label: 'ModelScope', class: 'badge-orange' };
       default:
-        return { label: 'OpenAI Compatible', class: 'badge-info' };
+        return { label: 'OpenAI 兼容接口', class: 'badge-info' };
     }
   };
 
@@ -219,12 +219,17 @@ export function ImageStudio({
               <div className="text-sm font-black">输入参数</div>
               
               <div className="form-control">
-                <textarea className="textarea textarea-bordered w-full h-32" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="输入提示词（如: A cinematic shot of a cyberpunk city...）" />
+                <textarea
+                  className="textarea textarea-bordered h-32 w-full"
+                  value={prompt}
+                  onChange={e => setPrompt(e.target.value)}
+                  placeholder="输入画面描述，例如：霓虹雨夜中的赛博朋克城市，全景电影镜头"
+                />
               </div>
 
               {(backend === 'openai' || backend === 'modelscope') && (
                 <div className="form-control">
-                  <label className="label text-xs font-bold">生成尺寸 (Size)</label>
+                  <label className="label text-xs font-bold">生成尺寸</label>
                   <select className="select select-bordered select-sm" value={openAiSize} onChange={e => setOpenAiSize(e.target.value)}>
                     {commonSizes.map(s => <option key={`sz-${s}`} value={s}>{s}</option>)}
                   </select>
@@ -232,7 +237,7 @@ export function ImageStudio({
               )}
 
               <div className="form-control">
-                <label className="label text-xs font-bold">高级参数 Payload (JSON)</label>
+                <label className="label text-xs font-bold">高级参数（JSON）</label>
                 <textarea className="textarea textarea-bordered w-full h-24 font-mono text-xs" value={extraJson} onChange={e => setExtraJson(e.target.value)} placeholder='如：{"guidance_scale": 7.5, "num_inference_steps": 25}' />
                 <label className="label text-[10px] opacity-60 py-1">这部分参数将被合并发送到 API。</label>
               </div>

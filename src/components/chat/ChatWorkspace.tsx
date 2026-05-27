@@ -85,7 +85,7 @@ export function ChatWorkspace({
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="max-w-md rounded-[2rem] border border-base-300 bg-base-100 p-8 text-center shadow-xl">
           <Pencil size={48} className="mx-auto mb-4 opacity-30" />
-          <p>Select a character in the sidebar to start chatting.</p>
+          <p>在侧栏选择一个角色，即可开始对话。</p>
         </div>
       </div>
     );
@@ -96,7 +96,7 @@ export function ChatWorkspace({
       <div className="flex flex-1 items-center justify-center px-6">
         <div className="max-w-md rounded-[2rem] border border-base-300 bg-base-100 p-8 text-center shadow-xl">
           <Users size={48} className="mx-auto mb-4 opacity-30" />
-          <p>Select a room in the sidebar to start the group chat.</p>
+          <p>在侧栏选择一个房间，即可开始群聊。</p>
         </div>
       </div>
     );
@@ -122,8 +122,8 @@ export function ChatWorkspace({
         isTyping={isTyping}
         placeholder={
           viewMode === 'group'
-            ? 'Type a message, or use the member buttons above.'
-            : 'Type a message...'
+            ? '输入消息，或使用上方成员按钮代发。'
+            : '输入消息...'
         }
         scopeKey={`${viewMode}:${selectedCharId || selectedRoomId || 0}`}
         groupMembers={groupMembers}

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { SetStateAction } from 'react';
 import { api, type ApiMode, type ApiPreset, type Character, type Room, type Settings } from './db';
 import { LLMClient } from './llm';
+import { normalizePromptProfiles } from './prompt-profiles';
 
 export type ViewMode = 'char' | 'group' | 'image';
 
@@ -69,7 +70,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setViewMode: (viewMode) => set({ viewMode }),
   setCharacters: (updater) => set((state) => ({ characters: resolveState(updater, state.characters) })),
   setRooms: (updater) => set((state) => ({ rooms: resolveState(updater, state.rooms) })),
-  setSettings: (updater) => set((state) => ({ settings: resolveState(updater, state.settings) })),
+  setSettings: (updater) =>
+    set((state) => ({
+      settings: normalizePromptProfiles(resolveState(updater, state.settings)),
+    })),
   setPresets: (updater) => set((state) => ({ presets: resolveState(updater, state.presets) })),
   setSelectedCharId: (selectedCharId) => set({ selectedCharId }),
   setSelectedRoomId: (selectedRoomId) => set({ selectedRoomId }),
@@ -80,12 +84,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadData: async () => {
     set({ isLoading: true });
     try {
-      const [characters, rooms, settings, presets] = await Promise.all([
+      const [characters, rooms, rawSettings, presets] = await Promise.all([
         api.characters.list(),
         api.rooms.list(),
         api.settings.get(),
         api.presets.list(),
       ]);
+      const settings = normalizePromptProfiles(rawSettings);
 
       set({
         characters,
@@ -94,7 +99,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         presets,
       });
 
-      if (settings.active_preset_id && presets.some((preset) => preset.id === settings.active_preset_id)) {
+      if (settings?.active_preset_id && presets.some((preset) => preset.id === settings.active_preset_id)) {
         const currentPreset = presets.find((preset) => preset.id === settings.active_preset_id);
         set({ activePresetId: settings.active_preset_id });
         if (currentPreset) {

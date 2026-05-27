@@ -1,4 +1,9 @@
-﻿import type { Character, Settings, Message, ApiMode } from './db';
+import type { ApiMode, Character, Message, Settings } from './db';
+
+type PromptTemplateOptions = {
+  systemPrompt?: string;
+  userPromptTemplate?: string;
+};
 
 export class LLMClient {
   private apiBase: string;
@@ -31,7 +36,12 @@ export class LLMClient {
     }
   }
 
-  private async createTextCompletion(model: string, systemPrompt: string, userPrompt: string, temperature: number): Promise<string> {
+  private async createTextCompletion(
+    model: string,
+    systemPrompt: string,
+    userPrompt: string,
+    temperature: number,
+  ): Promise<string> {
     const res = await fetch('/api/llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -55,11 +65,17 @@ export class LLMClient {
     return data?.content || userPrompt;
   }
 
-  async generateImageTags(description: string, modelName: string): Promise<string> {
+  async generateImageTags(description: string, modelName: string, prompts?: PromptTemplateOptions): Promise<string> {
     if (!modelName) return description;
-    const systemInstruction = 'You are a specialized Stable Diffusion Prompt Engineer. Convert descriptions into concise comma-separated English keywords. Output ONLY keywords.';
+
+    const systemInstruction =
+      prompts?.systemPrompt ||
+      '你是图像提示词整理助手。请把用户描述转成适合文生图模型使用的英文标签，只输出英文标签本身，并用逗号分隔。';
+    const userPrompt =
+      prompts?.userPromptTemplate?.replace('{{input}}', description) || `请将这段描述转换为英文提示词标签：${description}`;
+
     try {
-      return await this.createTextCompletion(modelName, systemInstruction, `Convert this to tags: ${description}`, 0.3);
+      return await this.createTextCompletion(modelName, systemInstruction, userPrompt, 0.3);
     } catch {
       return description;
     }
@@ -128,23 +144,23 @@ export class LLMClient {
     userInputs: string,
     settings: Settings,
     modelName: string,
-    systemContent: string, // [修改] 直接接收外部组装好的完整 System Prompt
+    systemContent: string,
     groupCtx?: any,
     controller?: AbortController,
   ) {
     if (!modelName) {
-      yield '\n[Error]: Model is not selected.';
+      yield '\n[错误]：未选择模型。';
       return;
     }
 
     const isGroupMode = !!groupCtx;
     const stopMarker = '惟';
-    const playerDisplayName = settings.user_name || 'User';
+    const playerDisplayName = settings.user_name || '玩家';
 
     const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
     history.forEach((m: Message) => {
       if (isGroupMode) {
-        const name = m.role === 'user' ? playerDisplayName : (char.name || 'AI');
+        const name = m.role === 'user' ? playerDisplayName : char.name || '角色';
         chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
       } else {
         chatMessages.push({ role: m.role, content: m.content });
@@ -154,9 +170,7 @@ export class LLMClient {
     if (userInputs) {
       chatMessages.push({
         role: 'user',
-        content: isGroupMode
-          ? `(Input: ${playerDisplayName}) -> ${userInputs}`
-          : userInputs,
+        content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${userInputs}` : userInputs,
       });
     }
 
@@ -171,7 +185,7 @@ export class LLMClient {
           apiKey: this.apiKey,
           mode: this.mode,
           model: modelName,
-          systemContent: systemContent, // 使用传入的完整 Prompt
+          systemContent,
           chatMessages,
           temperature: settings.temperature || 0.8,
           stop: isGroupMode ? [stopMarker] : ['User:', '\nUser:'],
@@ -193,21 +207,23 @@ export class LLMClient {
       const content = (data?.content || '').replaceAll(stopMarker, '');
       if (content) yield content;
     } catch (e: any) {
-      if (e.name !== 'AbortError') yield `\n[API Error]: ${e.message}`;
+      if (e.name !== 'AbortError') yield `\n[接口错误]：${e.message}`;
     }
   }
 
-  async summarizeRecent(history: Message[], modelName: string): Promise<string> {
+  async summarizeRecent(history: Message[], modelName: string, prompts?: PromptTemplateOptions): Promise<string> {
     if (!modelName) throw new Error('未配置总结模型');
 
     const facts = history
-      .filter(m => m.content && m.content.trim() && !m.image)
-      .map(m => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
+      .filter((m) => m.content && m.content.trim() && !m.image)
+      .map((m) => `${m.role === 'user' ? '玩家' : '角色'}: ${m.content}`)
       .join('\n');
 
     if (!facts) return '';
 
-    const prompt = `你是一个严谨的剧情记录员。请从以下【最近对话】中提取并概括出“新发生的关键剧情进展”。
+    const prompt =
+      prompts?.userPromptTemplate?.replace('{{history}}', facts) ||
+      `你是一个严谨的剧情记录员。请从以下【最近对话】中提取并概括出“新发生的关键剧情进展”。
 要求：
 1. 重点提取。
 2. 使用简短的条目格式。
@@ -218,6 +234,11 @@ ${facts}
 
 新进展总结：`;
 
-    return await this.createTextCompletion(modelName, '你是精简且客观的剧情总结助手。', prompt, 0.3);
+    return await this.createTextCompletion(
+      modelName,
+      prompts?.systemPrompt || '你是精简且客观的剧情总结助手。',
+      prompt,
+      0.3,
+    );
   }
 }

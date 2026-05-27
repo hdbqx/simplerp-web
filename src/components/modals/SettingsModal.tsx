@@ -1,6 +1,7 @@
-import { Eraser, Save, Trash2, X } from 'lucide-react';
+import { Copy, Eraser, Plus, Save, Trash2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { api, type ApiMode, type Settings } from '../../lib/db';
+import { api, type ApiMode, type PromptProfile, type Settings } from '../../lib/db';
+import { clonePromptProfile, createDefaultPromptProfile, getActivePromptProfile, getPromptProfiles } from '../../lib/prompt-profiles';
 import { useAppStore } from '../../lib/store';
 
 type SettingsModalProps = {
@@ -30,8 +31,55 @@ export function SettingsModal({
 
   if (!show || !settings) return null;
 
+  const promptProfiles = getPromptProfiles(settings);
+  const activePromptProfile = getActivePromptProfile(settings);
+
   const updateSettings = (patch: Partial<Settings>) => {
     setSettings((current) => (current ? { ...current, ...patch } : current));
+  };
+
+  const updatePromptProfile = (profileId: string, patch: Partial<PromptProfile>) => {
+    updateSettings({
+      prompt_profiles: promptProfiles.map((profile) =>
+        profile.id === profileId ? { ...profile, ...patch } : profile,
+      ),
+    });
+  };
+
+  const createPromptProfile = () => {
+    const next = clonePromptProfile(activePromptProfile, `方案 ${promptProfiles.length + 1}`);
+    updateSettings({
+      prompt_profiles: [...promptProfiles, next],
+      active_prompt_profile_id: next.id,
+    });
+  };
+
+  const duplicatePromptProfile = () => {
+    const next = clonePromptProfile(activePromptProfile, `${activePromptProfile.name} 副本`);
+    updateSettings({
+      prompt_profiles: [...promptProfiles, next],
+      active_prompt_profile_id: next.id,
+    });
+  };
+
+  const resetActivePromptProfile = () => {
+    updatePromptProfile(activePromptProfile.id, {
+      ...createDefaultPromptProfile(activePromptProfile.name),
+      id: activePromptProfile.id,
+      name: activePromptProfile.name,
+    });
+  };
+
+  const deleteActivePromptProfile = () => {
+    if (promptProfiles.length <= 1) {
+      alert('至少保留一个提示词方案。');
+      return;
+    }
+    const nextProfiles = promptProfiles.filter((profile) => profile.id !== activePromptProfile.id);
+    updateSettings({
+      prompt_profiles: nextProfiles,
+      active_prompt_profile_id: nextProfiles[0]?.id,
+    });
   };
 
   return (
@@ -39,7 +87,7 @@ export function SettingsModal({
       <div className="modal-box flex h-[88vh] max-w-6xl flex-col overflow-hidden p-0">
         <div className="flex items-center justify-between border-b bg-base-200 p-6 font-bold">
           系统设置
-          <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>
+          <button className="btn btn-circle btn-ghost btn-sm" onClick={onClose}>
             <X />
           </button>
         </div>
@@ -64,34 +112,32 @@ export function SettingsModal({
                   value={settings.image_backend || 'huggingface'}
                   onChange={(event) => updateSettings({ image_backend: event.target.value as Settings['image_backend'] })}
                 >
-                  <option value="huggingface">ComfyUI 本地穿透（通过 HF 通道）</option>
-                  <option value="openai">OpenAI 兼容端点</option>
-                  <option value="modelscope">魔搭社区 ModelScope</option>
+                  <option value="huggingface">ComfyUI 本地穿透</option>
+                  <option value="openai">OpenAI 兼容接口</option>
+                  <option value="modelscope">ModelScope</option>
                 </select>
               </div>
             </div>
           </section>
 
           <section>
-            <h4 className="mb-3 text-sm font-black uppercase text-primary">生图核心配置</h4>
+            <h4 className="mb-3 text-sm font-black uppercase text-primary">生图设置</h4>
             <div className="grid grid-cols-1 gap-4">
               <div className="rounded-xl border border-base-300 bg-base-100 p-4">
-                <div className="mb-3 text-xs font-black text-accent">ComfyUI 本地穿透参数</div>
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="form-control">
-                    <label className="label text-xs font-bold">Cloudflare Tunnel 地址</label>
-                    <textarea
-                      className="textarea textarea-bordered h-12 font-mono text-xs"
-                      placeholder="例如：https://xxx.trycloudflare.com"
-                      value={settings.hf_keys || ''}
-                      onChange={(event) => updateSettings({ hf_keys: event.target.value })}
-                    />
-                  </div>
+                <div className="mb-3 text-xs font-black text-accent">ComfyUI 本地穿透</div>
+                <div className="form-control">
+                  <label className="label text-xs font-bold">Cloudflare Tunnel 地址</label>
+                  <textarea
+                    className="textarea textarea-bordered h-12 font-mono text-xs"
+                    placeholder="例如：https://xxx.trycloudflare.com"
+                    value={settings.hf_keys || ''}
+                    onChange={(event) => updateSettings({ hf_keys: event.target.value })}
+                  />
                 </div>
               </div>
 
               <div className="rounded-xl border border-base-300 p-4">
-                <div className="mb-3 text-xs font-black">OpenAI 生图参数（备用）</div>
+                <div className="mb-3 text-xs font-black">OpenAI 生图接口</div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="form-control">
                     <label className="label text-xs font-bold">预设</label>
@@ -119,42 +165,40 @@ export function SettingsModal({
                   </div>
                   <div className="form-control">
                     <label className="label text-xs font-bold">模型</label>
-                    <div className="join">
-                      <select
-                        className="select select-bordered select-sm join-item w-full"
-                        disabled={!settings.image_preset_id}
-                        value={settings.image_model_id || ''}
-                        onChange={(event) => updateSettings({ image_model_id: event.target.value })}
-                      >
-                        <option value="">跟随顶部模型</option>
-                        {settings.image_preset_id &&
-                          (presetModelsMap[settings.image_preset_id] || []).map((model) => (
-                            <option key={`img-model-${model}`} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                        {settings.image_preset_id &&
-                          (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 &&
-                          manualModels.map((model) => (
-                            <option key={`img-manual-${model}`} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
+                    <select
+                      className="select select-bordered select-sm w-full"
+                      disabled={!settings.image_preset_id}
+                      value={settings.image_model_id || ''}
+                      onChange={(event) => updateSettings({ image_model_id: event.target.value })}
+                    >
+                      <option value="">跟随顶部模型</option>
+                      {settings.image_preset_id &&
+                        (presetModelsMap[settings.image_preset_id] || []).map((model) => (
+                          <option key={`img-model-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      {settings.image_preset_id &&
+                        (presetModelsMap[settings.image_preset_id]?.length || 0) === 0 &&
+                        manualModels.map((model) => (
+                          <option key={`img-manual-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                    </select>
                   </div>
                 </div>
               </div>
 
               <div className="rounded-xl border border-base-300 bg-gradient-to-r from-orange-500/10 to-red-500/10 p-4">
-                <div className="mb-3 text-xs font-black text-orange-500">魔搭社区 ModelScope 生图参数</div>
+                <div className="mb-3 text-xs font-black text-orange-500">ModelScope 生图接口</div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="form-control">
-                    <label className="label text-xs font-bold">API Key</label>
+                    <label className="label text-xs font-bold">接口密钥</label>
                     <input
                       type="password"
                       className="input input-bordered input-sm"
-                      placeholder="输入魔搭社区 API Key"
+                      placeholder="填写 ModelScope 接口密钥"
                       value={settings.modelscope_api_key || ''}
                       onChange={(event) => updateSettings({ modelscope_api_key: event.target.value })}
                     />
@@ -170,14 +214,14 @@ export function SettingsModal({
                   </div>
                 </div>
                 <div className="mt-2 text-[10px] opacity-60">
-                  默认模型：Tongyi-MAI/Z-Image-Turbo（通义万相极速版）
+                  默认模型：Tongyi-MAI/Z-Image-Turbo
                 </div>
               </div>
             </div>
           </section>
 
           <section>
-            <h4 className="mb-3 text-sm font-black uppercase text-primary">其他辅助模型绑定</h4>
+            <h4 className="mb-3 text-sm font-black uppercase text-primary">辅助模型绑定</h4>
             <div className="grid grid-cols-1 gap-4">
               <div className="rounded-xl border border-base-300 p-4">
                 <div className="mb-3 text-xs font-black">记忆总结模型</div>
@@ -208,35 +252,33 @@ export function SettingsModal({
                   </div>
                   <div className="form-control">
                     <label className="label text-xs font-bold">模型</label>
-                    <div className="join">
-                      <select
-                        className="select select-bordered select-sm join-item w-full"
-                        disabled={!settings.summary_preset_id}
-                        value={settings.summary_model_id || ''}
-                        onChange={(event) => updateSettings({ summary_model_id: event.target.value })}
-                      >
-                        <option value="">跟随顶部模型</option>
-                        {settings.summary_preset_id &&
-                          (presetModelsMap[settings.summary_preset_id] || []).map((model) => (
-                            <option key={`sum-model-${model}`} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                        {settings.summary_preset_id &&
-                          (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 &&
-                          manualModels.map((model) => (
-                            <option key={`sum-manual-${model}`} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
+                    <select
+                      className="select select-bordered select-sm w-full"
+                      disabled={!settings.summary_preset_id}
+                      value={settings.summary_model_id || ''}
+                      onChange={(event) => updateSettings({ summary_model_id: event.target.value })}
+                    >
+                      <option value="">跟随顶部模型</option>
+                      {settings.summary_preset_id &&
+                        (presetModelsMap[settings.summary_preset_id] || []).map((model) => (
+                          <option key={`sum-model-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      {settings.summary_preset_id &&
+                        (presetModelsMap[settings.summary_preset_id]?.length || 0) === 0 &&
+                        manualModels.map((model) => (
+                          <option key={`sum-manual-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                    </select>
                   </div>
                 </div>
               </div>
 
               <div className="rounded-xl border border-base-300 p-4">
-                <div className="mb-3 text-xs font-black">SD 转换模型（用于生图提示词翻译与扩写）</div>
+                <div className="mb-3 text-xs font-black">SD 提示词转换模型</div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="form-control">
                     <label className="label text-xs font-bold">预设</label>
@@ -264,24 +306,96 @@ export function SettingsModal({
                   </div>
                   <div className="form-control">
                     <label className="label text-xs font-bold">模型</label>
-                    <div className="join">
+                    <select
+                      className="select select-bordered select-sm w-full"
+                      disabled={!settings.sd_prompt_preset_id}
+                      value={settings.sd_prompt_model_id || ''}
+                      onChange={(event) => updateSettings({ sd_prompt_model_id: event.target.value })}
+                    >
+                      <option value="">跟随顶部模型</option>
+                      {settings.sd_prompt_preset_id &&
+                        (presetModelsMap[settings.sd_prompt_preset_id] || []).map((model) => (
+                          <option key={`sd-model-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      {settings.sd_prompt_preset_id &&
+                        (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 &&
+                        manualModels.map((model) => (
+                          <option key={`sd-manual-${model}`} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-base-300 p-4">
+                <div className="mb-3 text-xs font-black">后台变量推演模型</div>
+                <div className="space-y-3">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="toggle toggle-primary toggle-sm"
+                      checked={settings.is_thought_auto_update ?? false}
+                      onChange={(event) => updateSettings({ is_thought_auto_update: event.target.checked })}
+                    />
+                    <span className="text-sm font-bold">启用自动推演</span>
+                  </label>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">推演间隔（轮）</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input input-bordered input-sm"
+                        value={settings.thought_interval ?? 5}
+                        onChange={(event) => updateSettings({ thought_interval: Number(event.target.value) })}
+                      />
+                    </div>
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">预设</label>
                       <select
-                        className="select select-bordered select-sm join-item w-full"
-                        disabled={!settings.sd_prompt_preset_id}
-                        value={settings.sd_prompt_model_id || ''}
-                        onChange={(event) => updateSettings({ sd_prompt_model_id: event.target.value })}
+                        className="select select-bordered select-sm"
+                        value={settings.thought_preset_id ? String(settings.thought_preset_id) : ''}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (!value) {
+                            updateSettings({ thought_preset_id: undefined, thought_model_id: '' });
+                            return;
+                          }
+                          const presetId = parseInt(value, 10);
+                          updateSettings({ thought_preset_id: presetId });
+                          fetchPresetModels(presetId);
+                        }}
                       >
-                        <option value="">跟随顶部模型</option>
-                        {settings.sd_prompt_preset_id &&
-                          (presetModelsMap[settings.sd_prompt_preset_id] || []).map((model) => (
-                            <option key={`sd-model-${model}`} value={model}>
+                        <option value="">跟随顶部预设</option>
+                        {presets.map((preset) => (
+                          <option key={`thought-preset-${preset.id}`} value={String(preset.id)}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-control md:col-span-2">
+                      <label className="label text-xs font-bold">模型</label>
+                      <select
+                        className="select select-bordered select-sm w-full"
+                        value={settings.thought_model_id || ''}
+                        onChange={(event) => updateSettings({ thought_model_id: event.target.value })}
+                      >
+                        <option value="">留空时跟随顶部模型</option>
+                        {settings.thought_preset_id &&
+                          (presetModelsMap[settings.thought_preset_id] || []).map((model) => (
+                            <option key={`thought-model-${model}`} value={model}>
                               {model}
                             </option>
                           ))}
-                        {settings.sd_prompt_preset_id &&
-                          (presetModelsMap[settings.sd_prompt_preset_id]?.length || 0) === 0 &&
+                        {settings.thought_preset_id &&
+                          (presetModelsMap[settings.thought_preset_id]?.length || 0) === 0 &&
                           manualModels.map((model) => (
-                            <option key={`sd-manual-${model}`} value={model}>
+                            <option key={`thought-manual-${model}`} value={model}>
                               {model}
                             </option>
                           ))}
@@ -294,82 +408,160 @@ export function SettingsModal({
           </section>
 
           <section>
-            <h4 className="mb-3 text-sm font-black uppercase text-primary">后台变量推演模型</h4>
-            <div className="space-y-3 rounded-xl border border-base-300 p-4">
-              <label className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="toggle toggle-primary toggle-sm"
-                  checked={settings.is_thought_auto_update ?? false}
-                  onChange={(event) => updateSettings({ is_thought_auto_update: event.target.checked })}
-                />
-                <span className="text-sm font-bold">启用自动推演</span>
-              </label>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-black uppercase text-primary">提示词方案</h4>
+                <p className="mt-1 text-xs opacity-70">
+                  统一管理记忆总结、SD 转换和变量推演的提示词预设。切换方案后，这三类能力会一并切换。
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button className="btn btn-xs btn-outline" onClick={duplicatePromptProfile}>
+                  <Copy size={12} /> 复制当前
+                </button>
+                <button className="btn btn-xs btn-primary" onClick={createPromptProfile}>
+                  <Plus size={12} /> 新建方案
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4 rounded-2xl border border-base-300 bg-base-100 p-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
                 <div className="form-control">
-                  <label className="label text-xs font-bold">推演间隔（轮）</label>
-                  <input
-                    type="number"
-                    min={1}
-                    className="input input-bordered input-sm"
-                    value={settings.thought_interval ?? 5}
-                    onChange={(event) => updateSettings({ thought_interval: Number(event.target.value) })}
-                  />
-                </div>
-                <div className="form-control">
-                  <label className="label text-xs font-bold">预设</label>
+                  <label className="label text-xs font-bold">当前方案</label>
                   <select
                     className="select select-bordered select-sm"
-                    value={settings.thought_preset_id ? String(settings.thought_preset_id) : ''}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (!value) {
-                        updateSettings({ thought_preset_id: undefined, thought_model_id: '' });
-                        return;
-                      }
-                      const presetId = parseInt(value, 10);
-                      updateSettings({ thought_preset_id: presetId });
-                      fetchPresetModels(presetId);
-                    }}
+                    value={activePromptProfile.id}
+                    onChange={(event) => updateSettings({ active_prompt_profile_id: event.target.value })}
                   >
-                    <option value="">跟随顶部预设</option>
-                    {presets.map((preset) => (
-                      <option key={`thought-preset-${preset.id}`} value={String(preset.id)}>
-                        {preset.name}
+                    {promptProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name}
                       </option>
                     ))}
                   </select>
                 </div>
-                <div className="form-control md:col-span-2">
-                  <label className="label text-xs font-bold">模型</label>
-                  <select
-                    className="select select-bordered select-sm w-full"
-                    value={settings.thought_model_id || ''}
-                    onChange={(event) => updateSettings({ thought_model_id: event.target.value })}
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="form-control flex-1 min-w-[220px]">
+                    <label className="label text-xs font-bold">方案名称</label>
+                    <input
+                      className="input input-bordered input-sm"
+                      value={activePromptProfile.name}
+                      onChange={(event) => updatePromptProfile(activePromptProfile.id, { name: event.target.value })}
+                    />
+                  </div>
+                  <button className="btn btn-sm btn-outline" onClick={resetActivePromptProfile}>
+                    恢复官方预设
+                  </button>
+                  <button
+                    className="btn btn-sm btn-outline btn-error"
+                    disabled={promptProfiles.length <= 1}
+                    onClick={deleteActivePromptProfile}
                   >
-                    <option value="">留空跟随顶部模型</option>
-                    {settings.thought_preset_id &&
-                      (presetModelsMap[settings.thought_preset_id] || []).map((model) => (
-                        <option key={`thought-model-${model}`} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    {settings.thought_preset_id &&
-                      (presetModelsMap[settings.thought_preset_id]?.length || 0) === 0 &&
-                      manualModels.map((model) => (
-                        <option key={`thought-manual-${model}`} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                  </select>
+                    删除方案
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-black text-primary">记忆总结提示词</div>
+                    <div className="mt-1 text-[11px] opacity-70">
+                      <code>{'{{history}}'}</code> 会在调用时替换为最近对话内容。
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">系统提示词</label>
+                      <textarea
+                        className="textarea textarea-bordered h-24 text-xs leading-6"
+                        value={activePromptProfile.summary_system_prompt}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            summary_system_prompt: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">用户提示词模板</label>
+                      <textarea
+                        className="textarea textarea-bordered h-40 font-mono text-xs leading-6"
+                        value={activePromptProfile.summary_user_prompt}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            summary_user_prompt: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-black text-primary">SD 提示词转换</div>
+                    <div className="mt-1 text-[11px] opacity-70">
+                      <code>{'{{input}}'}</code> 会在调用时替换为用户输入的自然语言画面描述。
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">系统提示词</label>
+                      <textarea
+                        className="textarea textarea-bordered h-24 text-xs leading-6"
+                        value={activePromptProfile.sd_system_prompt}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            sd_system_prompt: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">用户提示词模板</label>
+                      <textarea
+                        className="textarea textarea-bordered h-40 font-mono text-xs leading-6"
+                        value={activePromptProfile.sd_user_prompt}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            sd_user_prompt: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-black text-primary">后台变量推演</div>
+                    <div className="mt-1 text-[11px] opacity-70">
+                      <code>{'{VARIABLES}'}</code>、<code>{'{HISTORY}'}</code> 和 <code>{'{{USER_INPUT}}'}</code>{' '}
+                      会在推演时自动注入。
+                    </div>
+                  </div>
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">提示词模板</label>
+                    <textarea
+                      className="textarea textarea-bordered h-72 font-mono text-xs leading-6"
+                      value={activePromptProfile.thought_prompt}
+                      onChange={(event) =>
+                        updatePromptProfile(activePromptProfile.id, {
+                          thought_prompt: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </section>
 
           <section>
-            <h4 className="mb-3 text-sm font-black uppercase text-primary">自动化快照控制策略</h4>
-            <div className="space-y-4 rounded-xl border border-base-300 bg-base-200/50 p-4">
+            <h4 className="mb-3 text-sm font-black uppercase text-primary">自动快照</h4>
+            <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="form-control">
                   <label className="label text-xs font-bold">自动快照触发周期（每 X 轮对话）</label>
@@ -382,7 +574,7 @@ export function SettingsModal({
                   />
                 </div>
                 <div className="form-control">
-                  <label className="label text-xs font-bold">单会话最大快照保留数量（个）</label>
+                  <label className="label text-xs font-bold">单会话最大快照保留数</label>
                   <input
                     type="number"
                     min={1}
@@ -414,9 +606,9 @@ export function SettingsModal({
                 <thead>
                   <tr className="bg-base-200">
                     <th>名称</th>
-                    <th>Base URL</th>
-                    <th>Key</th>
-                    <th>Mode</th>
+                    <th>接口地址</th>
+                    <th>密钥</th>
+                    <th>模式</th>
                     <th className="w-20">操作</th>
                   </tr>
                 </thead>
@@ -477,7 +669,7 @@ export function SettingsModal({
                           onClick={() =>
                             api.presets
                               .update(preset.id!, { ...preset, api_mode: preset.api_mode || 'chat_completions' })
-                              .then(() => alert('已更新'))
+                              .then(() => alert('预设已更新。'))
                           }
                         >
                           <Save size={14} />
@@ -485,7 +677,7 @@ export function SettingsModal({
                         <button
                           className="btn btn-ghost btn-xs text-error"
                           onClick={() => {
-                            if (!confirm('确认删除该预设？')) return;
+                            if (!confirm('确定删除这个预设吗？')) return;
                             api.presets.delete(preset.id!).then(() => loadData());
                           }}
                         >
@@ -498,10 +690,10 @@ export function SettingsModal({
               </table>
             </div>
             <div className="form-control">
-              <label className="label text-xs font-bold">备用模型列表（手动输入，逗号分隔）</label>
+              <label className="label text-xs font-bold">备用模型列表（手动输入，逗号或换行分隔）</label>
               <textarea
                 className="textarea textarea-bordered h-20 w-full text-xs"
-                placeholder="当 API 不支持自动获取模型列表时使用"
+                placeholder="当接口不支持自动获取模型列表时使用"
                 value={settings.model_list || ''}
                 onChange={(event) => updateSettings({ model_list: event.target.value })}
               />
@@ -513,14 +705,14 @@ export function SettingsModal({
             <div className="flex items-center justify-between gap-4 rounded-xl border border-error/20 bg-error/5 p-4">
               <div className="flex-1">
                 <p className="text-xs font-bold text-error">清理数据库图片</p>
-                <p className="mt-1 text-[10px] opacity-60">永久删除 D1 数据库中存储的所有图片消息。</p>
+                <p className="mt-1 text-[10px] opacity-60">永久删除 D1 数据库中存储的全部图片消息。</p>
               </div>
               <button
                 className="btn btn-error btn-sm shadow-md"
                 onClick={async () => {
-                  if (!confirm('确定清理图片？')) return;
+                  if (!confirm('确定清理全部图片吗？')) return;
                   await api.messages.clearAllImages();
-                  alert('清理成功');
+                  alert('图片已清理。');
                 }}
               >
                 <Eraser size={14} className="mr-1" /> 清理图片

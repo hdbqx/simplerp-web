@@ -118,7 +118,7 @@ async function handleModelScope(
   const apiKey = body.apiKey;
   
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: '请配置魔搭社区 API Key' }), { 
+    return new Response(JSON.stringify({ error: '请配置魔搭社区接口密钥' }), { 
       status: 400,
       headers: { 'Content-Type': 'application/json' }
     });
