@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -49,6 +49,7 @@ export const MessageList = memo(function MessageList({
   const charMessages = useChatStore((state) => state.messages);
   const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const renderMessages = useMemo(
     () => (viewMode === 'group' ? roomMessages : charMessages),
@@ -99,6 +100,10 @@ export const MessageList = memo(function MessageList({
     }),
     [],
   );
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [renderMessages.length, viewMode, currentCharacter?.id]);
 
   useEffect(() => {
     setEditingMsgId(null);
@@ -213,7 +218,7 @@ export const MessageList = memo(function MessageList({
           <div className="chat-bubble">思考中...</div>
         </div>
       )}
-      <div className="h-20" />
+      <div ref={bottomRef} className="h-20" />
     </div>
   );
 });
