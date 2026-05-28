@@ -60,7 +60,15 @@ function formatDraftValue(variable: Variable) {
         ? JSON.stringify(variable.value ?? {}, null, 2)
         : String(variable.value ?? '{}');
     case 'list':
-      return Array.isArray(variable.value) ? variable.value.join('\n') : String(variable.value ?? '');
+      if (Array.isArray(variable.value)) {
+        const hasStructuredItem = variable.value.some(
+          (item) => item !== null && typeof item === 'object',
+        );
+        return hasStructuredItem
+          ? JSON.stringify(variable.value, null, 2)
+          : variable.value.map((item) => String(item ?? '')).join('\n');
+      }
+      return String(variable.value ?? '');
     case 'number':
     case 'range':
       return String(variable.value ?? 0);
@@ -166,19 +174,48 @@ function InlineValueEditor({
   }
 
   if (variable.type === 'list') {
+    const isStructuredList = Array.isArray(variable.value)
+      ? variable.value.some((item) => item !== null && typeof item === 'object')
+      : typeof variable.value === 'string' && draft.trim().startsWith('[');
+
     return (
       <textarea
         value={draft}
-        rows={3}
-        placeholder="每行一个值"
-        className="textarea textarea-bordered textarea-sm w-full font-mono text-xs"
+        rows={isStructuredList ? 6 : 3}
+        placeholder={isStructuredList ? '请输入合法 JSON 数组' : '每行一个值'}
         onFocus={() => setIsFocused(true)}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setHasError(false);
+        }}
         onBlur={async (e) => {
           setIsFocused(false);
-          const next = e.target.value.split('\n').filter((s) => s.trim());
+          const raw = e.target.value.trim();
+          if (!raw) {
+            await commit([]);
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              setHasError(false);
+              await commit(parsed);
+              return;
+            }
+          } catch {
+            if (isStructuredList || raw.startsWith('[')) {
+              setHasError(true);
+              return;
+            }
+          }
+
+          setHasError(false);
+          const next = raw.split('\n').map((s) => s.trim()).filter(Boolean);
           await commit(next);
         }}
+        aria-invalid={hasError}
+        className={`textarea textarea-bordered textarea-sm w-full font-mono text-xs ${hasError ? 'textarea-error' : ''}`}
       />
     );
   }
