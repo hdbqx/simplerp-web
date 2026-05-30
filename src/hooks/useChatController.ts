@@ -110,12 +110,15 @@ export function useChatController({
           alert('请先选择预设与模型。');
           return false;
         }
+        const promptProfile = getActivePromptProfile(settings);
         await api.roomChat.send({
           room_id: selectedRoomId,
           user_input: userText || undefined,
           speaker_char_id: speakerCharId,
           fallback_preset_id: activePresetId,
           fallback_model_id: activeModel,
+          global_system_instruction: promptProfile.global_system_instruction,
+          global_post_history_instruction: promptProfile.global_post_history_instruction,
         });
       } else if (userText) {
         await api.roomMessages.add({
@@ -182,21 +185,30 @@ export function useChatController({
     }
 
     const stagePrompts = varEngine.getActiveStagePrompts().join('\n');
+    const globalSystemInstruction = (promptProfile.global_system_instruction || '').trim();
+    const globalPostHistoryInstruction = (promptProfile.global_post_history_instruction || '').trim();
 
     let basePrompt = char.description;
     if (char.summary) basePrompt += `\n\n【阶段总结】\n${char.summary}`;
     if (stagePrompts) basePrompt += `\n\n【当前状态】\n${stagePrompts}`;
 
-    const rawSystemContent =
+    const rawSystemContent = [
+      globalSystemInstruction,
       (lorebookInjections.beforeSystem ? `${lorebookInjections.beforeSystem}\n---\n` : '') +
-      basePrompt +
-      (lorebookInjections.afterSystem ? `\n---\n${lorebookInjections.afterSystem}` : '');
+        basePrompt +
+        (lorebookInjections.afterSystem ? `\n---\n${lorebookInjections.afterSystem}` : ''),
+    ]
+      .filter(Boolean)
+      .join('\n\n---\n\n');
 
     const fullSystemContent = replaceBuiltInVariables(
       varEngine.replaceVariables(rawSystemContent, settings, char),
       settings,
       char,
     );
+    const fullPostHistoryInstruction = globalPostHistoryInstruction
+      ? replaceBuiltInVariables(varEngine.replaceVariables(globalPostHistoryInstruction, settings, char), settings, char)
+      : '';
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -246,6 +258,7 @@ export function useChatController({
         settings,
         activeModel,
         fullSystemContent,
+        fullPostHistoryInstruction,
         undefined,
         controller,
       );

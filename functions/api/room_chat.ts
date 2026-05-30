@@ -6,6 +6,8 @@ interface RoomChatBody {
   speaker_char_id: number; // 指定谁来回答
   fallback_preset_id?: number;
   fallback_model_id?: string;
+  global_system_instruction?: string;
+  global_post_history_instruction?: string;
 }
 
 function normalizeBase(input: string): string {
@@ -40,6 +42,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const roomId = Number(body.room_id);
     const speakerCharId = Number(body.speaker_char_id);
     const userInput = String(body.user_input || '').trim();
+    const globalSystemInstruction = String(body.global_system_instruction || '').trim();
+    const globalPostHistoryInstruction = String(body.global_post_history_instruction || '').trim();
 
     if (!roomId) return new Response('Missing room_id', { status: 400 });
     if (!speakerCharId) return new Response('Missing speaker_char_id', { status: 400 });
@@ -99,6 +103,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     // 5. 构建三段式防串戏 System Prompt
     const systemParts = [
+      globalSystemInstruction,
       `【当前场景】\n${room.description || '无'}`,
       `【全局记忆】\n${room.summary || '无'}`,
       `【你的身份】\n姓名：${char.name}\n设定：${char.description}\n${char.summary ? `你的个人记忆：${char.summary}` : ''}`,
@@ -107,14 +112,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       `2. 聊天记录中的格式为 (Log: 角色名) -> 内容。你绝不能扮演别人，只能以「${char.name}」的口吻和视角回应。`,
       `3. 玩家的身份是皇帝（朕），你需要符合你的臣子/妃子身份。`
     ];
-    const systemContent = systemParts.join('\n\n');
+    const systemContent = systemParts.filter(Boolean).join('\n\n');
+    const finalMessages = globalPostHistoryInstruction
+      ? [...chatMessages, { role: 'system' as const, content: globalPostHistoryInstruction }]
+      : chatMessages;
 
     // 6. 调用 LLM
     let assistantContent = '';
     if (apiMode === 'responses') {
       const res = await callProvider(String(preset.api_base), String(preset.api_key), '/responses', {
         model: body.fallback_model_id,
-        input: [{ role: 'system', content: systemContent }, ...chatMessages],
+        input: [{ role: 'system', content: systemContent }, ...finalMessages],
         temperature: 0.8
       });
       const data: any = await res.json();
@@ -122,7 +130,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     } else {
       const res = await callProvider(String(preset.api_base), String(preset.api_key), '/chat/completions', {
         model: body.fallback_model_id,
-        messages: [{ role: 'system', content: systemContent }, ...chatMessages],
+        messages: [{ role: 'system', content: systemContent }, ...finalMessages],
         temperature: 0.8
       });
       const data: any = await res.json();

@@ -97,6 +97,8 @@ export interface ApiPreset {
 export interface PromptProfile {
   id: string;
   name: string;
+  global_system_instruction: string;
+  global_post_history_instruction: string;
   summary_system_prompt: string;
   summary_user_prompt: string;
   sd_system_prompt: string;
@@ -360,6 +362,8 @@ export const api = {
       speaker_char_id: number;
       fallback_preset_id?: number;
       fallback_model_id?: string;
+      global_system_instruction?: string;
+      global_post_history_instruction?: string;
     }) =>
       fetch(`${API}/room_chat`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async (r) => {
         if (!r.ok) throw new Error(await r.text());

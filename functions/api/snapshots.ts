@@ -161,7 +161,7 @@ async function createAutoSnapshot(context: any, body: any, now: number) {
   const name = `自动快照 第 ${snapshotOrder} 轮 - ${new Date().toLocaleTimeString()}`;
 
   const { meta } = await context.env.DB.prepare(
-    `INSERT INTO snapshots (char_id, room_id, name, snapshot_order, snapshot_type, user_message, ai_response, message_count, max_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO snapshots (char_id, room_id, name, snapshot_order, snapshot_type, user_message, ai_response, message_count, max_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(char_id || null, room_id || null, name, snapshotOrder, 'auto', user_message, ai_response, messageCount, maxMessageId, now).run();
   
   const snapshotId = meta.last_row_id as number;

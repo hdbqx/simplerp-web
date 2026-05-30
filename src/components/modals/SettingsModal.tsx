@@ -412,7 +412,7 @@ export function SettingsModal({
               <div>
                 <h4 className="text-sm font-black uppercase text-primary">提示词方案</h4>
                 <p className="mt-1 text-xs opacity-70">
-                  统一管理记忆总结、SD 转换和变量推演的提示词预设。切换方案后，这三类能力会一并切换。
+                  统一管理主对话规则、记忆总结、SD 转换和变量推演的提示词预设。切换方案后，这些能力会一并切换。
                 </p>
               </div>
               <div className="flex gap-2">
@@ -464,6 +464,47 @@ export function SettingsModal({
               </div>
 
               <div className="grid grid-cols-1 gap-4">
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-black text-primary">主对话全局规则</div>
+                    <div className="mt-1 text-[11px] opacity-70">
+                      这一组配置作用于主聊天模型，用来把“角色是谁”和“应该怎么写”彻底分离。
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">全局系统指令</label>
+                      <textarea
+                        className="textarea textarea-bordered h-32 text-xs leading-6"
+                        value={activePromptProfile.global_system_instruction}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            global_system_instruction: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="mt-1 text-[11px] opacity-60">
+                        会无条件插入到主 System Prompt 的最顶端，用来定义整个沙箱的文风、叙事视角和总基调。
+                      </div>
+                    </div>
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">全局后置指令</label>
+                      <textarea
+                        className="textarea textarea-bordered h-32 font-mono text-xs leading-6"
+                        value={activePromptProfile.global_post_history_instruction}
+                        onChange={(event) =>
+                          updatePromptProfile(activePromptProfile.id, {
+                            global_post_history_instruction: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="mt-1 text-[11px] opacity-60">
+                        会作为历史末尾的最后一条系统消息注入，优先用于压格式、稳文风、减少拒答和跑偏。
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
                   <div className="mb-3">
                     <div className="text-sm font-black text-primary">记忆总结提示词</div>

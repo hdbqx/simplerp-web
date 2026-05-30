@@ -145,6 +145,7 @@ export class LLMClient {
     settings: Settings,
     modelName: string,
     systemContent: string,
+    postHistoryInstruction?: string,
     groupCtx?: any,
     controller?: AbortController,
   ) {
@@ -171,6 +172,13 @@ export class LLMClient {
       chatMessages.push({
         role: 'user',
         content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${userInputs}` : userInputs,
+      });
+    }
+
+    if (postHistoryInstruction?.trim()) {
+      chatMessages.push({
+        role: 'system',
+        content: postHistoryInstruction.trim(),
       });
     }
 
