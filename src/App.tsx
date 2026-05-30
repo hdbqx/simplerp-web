@@ -151,6 +151,7 @@ function App() {
     handleSaveCharImage,
     handleClearConversation,
     handleSummarizeProgress,
+    handleSetContextCutoff,
     handleGenImageAction,
   } = useChatController({
     settings,
@@ -265,6 +266,7 @@ function App() {
             onDeleteCharMessage={handleDeleteCharMessage}
             onEditCharMessage={handleEditCharMessage}
             onSaveCharImage={handleSaveCharImage}
+            onSetContextCutoff={handleSetContextCutoff}
             onSend={handleSend}
             onSendAsMember={sendRoomChat}
             onOpenImageGen={() => {

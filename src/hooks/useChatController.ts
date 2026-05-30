@@ -18,6 +18,7 @@ import { getActivePromptProfile } from '../lib/prompt-profiles';
 import { VariableEngine } from '../lib/variable-engine';
 import { replaceVariables as replaceBuiltInVariables } from '../lib/variables';
 import { useChatStore } from '../lib/chat-store';
+import { useAppStore } from '../lib/store';
 import type { ViewMode } from '../lib/store';
 
 type ToastMessage = {
@@ -77,6 +78,7 @@ export function useChatController({
   const getCharMessages = () => useChatStore.getState().messages;
   const setCharMessages = useChatStore.getState().setMessages;
   const clearCharMessages = useChatStore.getState().clearMessages;
+  const setCharacters = useAppStore.getState().setCharacters;
 
   const showToast = (text: string, type: 'info' | 'success' = 'info') => {
     setToastMsg({ text, type });
@@ -145,6 +147,17 @@ export function useChatController({
 
     messages = insertSystemMessages(messages, messages.length, injections.last);
     return messages;
+  };
+
+  const getContextCutoffId = (char?: Character) => {
+    const raw = char?.context_cutoff_message_id;
+    return typeof raw === 'number' && raw > 0 ? raw : null;
+  };
+
+  const applyContextCutoff = (messages: Message[], char?: Character) => {
+    const cutoffId = getContextCutoffId(char);
+    if (!cutoffId) return messages;
+    return messages.filter((message) => !message.id || message.id > cutoffId);
   };
 
   const sendRoomChat = async (userText: string, speakerCharId: number | null): Promise<boolean> => {
@@ -217,7 +230,7 @@ export function useChatController({
       ? currentHistory.find((message) => message.role === 'user')
       : undefined;
     const firstMessageTimestamp = firstUserMessage ? Math.max(1, firstUserMessage.timestamp - 1) : Date.now();
-    const effectiveHistory = shouldInjectFirstMessage
+    const allHistory = shouldInjectFirstMessage
       ? [
           {
             role: 'assistant' as const,
@@ -228,6 +241,7 @@ export function useChatController({
           ...currentHistory,
         ]
       : currentHistory;
+    const effectiveHistory = applyContextCutoff(allHistory, char);
 
     const triggeredLorebook = loreEngine.scan(textOverride || '', effectiveHistory, varEngine.getVariablesMap(), {});
     const lorebookInjections = loreEngine.buildInjection(triggeredLorebook);
@@ -600,6 +614,14 @@ export function useChatController({
 
     api.messages.clear(viewMode === 'char' ? selectedCharId : undefined).then(() => {
       clearCharMessages();
+      if (selectedCharId) {
+        void api.characters.update(selectedCharId, { context_cutoff_message_id: null });
+        setCharacters((current) =>
+          current.map((character) =>
+            character.id === selectedCharId ? { ...character, context_cutoff_message_id: null } : character,
+          ),
+        );
+      }
       alert('对话已清空。');
     });
   };
@@ -620,11 +642,21 @@ export function useChatController({
       const summaryModel = settings.summary_model_id || activeModel;
       const llm = new LLMClient(summaryPreset.api_base, summaryPreset.api_key, getPresetMode(summaryPreset));
 
-      const sourceMessages = viewMode === 'group' ? roomMessages : getCharMessages();
+      const sourceMessages =
+        viewMode === 'group'
+          ? roomMessages
+          : applyContextCutoff(
+              getCharMessages(),
+              characters.find((character) => character.id === selectedCharId),
+            );
+      const existingSummary =
+        viewMode === 'char'
+          ? characters.find((character) => character.id === selectedCharId)?.summary || ''
+          : rooms.find((item) => item.id === selectedRoomId)?.summary || '';
       const fragment = await llm.summarizeRecent(sourceMessages as Message[], summaryModel, {
         systemPrompt: promptProfile.summary_system_prompt,
         userPromptTemplate: promptProfile.summary_user_prompt,
-      });
+      }, existingSummary);
 
       if (!fragment || fragment.trim() === '无新进展') {
         alert('这段对话没有检测到新的记忆进展。');
@@ -641,7 +673,18 @@ export function useChatController({
       if (viewMode === 'char' && selectedCharId) {
         const char = characters.find((character) => character.id === selectedCharId);
         const updatedSummary = (char?.summary ? `${char.summary}\n\n` : '') + `#### [总结 ${date}]\n${fragment}`;
-        await api.characters.update(selectedCharId, { summary: updatedSummary });
+        const latestMessageId = [...getCharMessages()].reverse().find((message) => message.id)?.id ?? null;
+        await api.characters.update(selectedCharId, {
+          summary: updatedSummary,
+          context_cutoff_message_id: latestMessageId,
+        });
+        setCharacters((current) =>
+          current.map((character) =>
+            character.id === selectedCharId
+              ? { ...character, summary: updatedSummary, context_cutoff_message_id: latestMessageId }
+              : character,
+          ),
+        );
       } else if (viewMode === 'group' && selectedRoomId) {
         const room = rooms.find((item) => item.id === selectedRoomId);
         const updatedSummary = (room?.summary ? `${room.summary}\n\n` : '') + `#### [群聊总结 ${date}]\n${fragment}`;
@@ -657,6 +700,16 @@ export function useChatController({
     }
   };
 
+  const handleSetContextCutoff = async (messageId: number | null) => {
+    if (viewMode !== 'char' || !selectedCharId) return;
+    await api.characters.update(selectedCharId, { context_cutoff_message_id: messageId });
+    setCharacters((current) =>
+      current.map((character) =>
+        character.id === selectedCharId ? { ...character, context_cutoff_message_id: messageId } : character,
+      ),
+    );
+  };
+
   return {
     toastMsg,
     isTyping,
@@ -669,6 +722,7 @@ export function useChatController({
     handleSaveCharImage,
     handleClearConversation,
     handleSummarizeProgress,
+    handleSetContextCutoff,
     handleGenImageAction,
   };
 }

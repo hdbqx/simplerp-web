@@ -21,8 +21,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
           // 1. 复制角色本体 (复制 名字、描述、开场白、Summary)，生成新的 created_at
           const { meta } = await context.env.DB.prepare(
-              `INSERT INTO characters (name, description, first_message, summary, created_at) 
-               SELECT ?, description, first_message, summary, ? 
+              `INSERT INTO characters (name, description, first_message, summary, hidden_message_count, context_cutoff_message_id, created_at) 
+               SELECT ?, description, first_message, summary, hidden_message_count, NULL, ? 
                FROM characters WHERE id = ?`
           ).bind(new_name, Date.now(), source_id).run();
 
@@ -44,8 +44,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // 普通新建逻辑
   const body: any = await context.request.json();
   const { meta } = await context.env.DB.prepare(
-    "INSERT INTO characters (name, description, first_message, summary, created_at) VALUES (?, ?, ?, ?, ?)"
-  ).bind(body.name, body.description, body.first_message, body.summary, Date.now()).run();
+    "INSERT INTO characters (name, description, first_message, summary, hidden_message_count, context_cutoff_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    body.name,
+    body.description,
+    body.first_message,
+    body.summary,
+    body.hidden_message_count ?? 0,
+    body.context_cutoff_message_id ?? null,
+    Date.now(),
+  ).run();
   return Response.json({ id: meta.last_row_id });
 };
 

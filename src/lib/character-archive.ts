@@ -71,6 +71,7 @@ export async function exportCharacterArchive({
       description: character.description || '',
       first_message: character.first_message || '',
       summary: character.summary || '',
+      hidden_message_count: character.hidden_message_count || 0,
     },
     variables: variablesWithStages,
     lorebook_v2: (lorebookV2 as LorebookV2Entry[]).map((entry, index) => ({
@@ -147,6 +148,7 @@ export async function importCharacterArchive({
     description: payload.character.description || '',
     first_message: payload.character.first_message || '',
     summary: payload.character.summary || '',
+    hidden_message_count: payload.character.hidden_message_count || 0,
   });
 
   const existingVars = await api.variables.list(selectedCharId, undefined);

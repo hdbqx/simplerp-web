@@ -31,6 +31,7 @@ type ChatWorkspaceProps = {
   onDeleteCharMessage: (message: Message) => Promise<void>;
   onEditCharMessage: (messageId: number, content: string) => Promise<void>;
   onSaveCharImage: (message: Message) => Promise<void>;
+  onSetContextCutoff: (messageId: number | null) => Promise<void>;
   onSend: (text: string) => Promise<boolean>;
   onSendAsMember: (text: string, memberId: number | null) => Promise<boolean>;
   onOpenImageGen: () => void;
@@ -59,6 +60,7 @@ export function ChatWorkspace({
   onDeleteCharMessage,
   onEditCharMessage,
   onSaveCharImage,
+  onSetContextCutoff,
   onSend,
   onSendAsMember,
   onOpenImageGen,
@@ -115,6 +117,7 @@ export function ChatWorkspace({
         onDeleteCharMessage={onDeleteCharMessage}
         onEditCharMessage={onEditCharMessage}
         onSaveCharImage={onSaveCharImage}
+        onSetContextCutoff={onSetContextCutoff}
       />
 
       <ChatInput

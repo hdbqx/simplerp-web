@@ -19,6 +19,8 @@ export interface Character {
   description: string;
   first_message: string;
   summary?: string;
+  hidden_message_count?: number;
+  context_cutoff_message_id?: number | null;
   created_at?: number;
 }
 
@@ -33,6 +35,7 @@ export interface CharacterExportPayload {
     description: string;
     first_message: string;
     summary: string;
+    hidden_message_count?: number;
   };
   variables: Array<
     Omit<Variable, 'id' | 'char_id' | 'room_id'> & {

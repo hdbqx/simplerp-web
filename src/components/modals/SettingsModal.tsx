@@ -509,7 +509,8 @@ export function SettingsModal({
                   <div className="mb-3">
                     <div className="text-sm font-black text-primary">记忆总结提示词</div>
                     <div className="mt-1 text-[11px] opacity-70">
-                      <code>{'{{history}}'}</code> 会在调用时替换为最近对话内容。
+                      <code>{'{{history}}'}</code> 会在调用时替换为未被截断的最近对话内容，<code>{'{{summary}}'}</code>{' '}
+                      会替换为已有长期记忆。
                     </div>
                   </div>
                   <div className="grid grid-cols-1 gap-3">

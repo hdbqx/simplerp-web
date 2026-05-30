@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS characters (
     description TEXT,
     first_message TEXT,
     summary TEXT,
+    hidden_message_count INTEGER DEFAULT 0,
+    context_cutoff_message_id INTEGER,
     created_at INTEGER
 );
 

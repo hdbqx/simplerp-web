@@ -231,7 +231,12 @@ export class LLMClient {
     }
   }
 
-  async summarizeRecent(history: Message[], modelName: string, prompts?: PromptTemplateOptions): Promise<string> {
+  async summarizeRecent(
+    history: Message[],
+    modelName: string,
+    prompts?: PromptTemplateOptions,
+    existingSummary = '',
+  ): Promise<string> {
     if (!modelName) throw new Error('未配置总结模型');
 
     const facts = history
@@ -241,13 +246,19 @@ export class LLMClient {
 
     if (!facts) return '';
 
+    const summaryText = (existingSummary || '').trim() || '无';
     const prompt =
-      prompts?.userPromptTemplate?.replace('{{history}}', facts) ||
-      `你是一个严谨的剧情记录员。请从以下【最近对话】中提取并概括出“新发生的关键剧情进展”。
+      prompts?.userPromptTemplate
+        ?.replaceAll('{{history}}', facts)
+        .replaceAll('{{summary}}', summaryText) ||
+      `你是一个严谨的剧情记录员。请结合已有长期记忆与最近对话，提取并概括出“新发生的关键剧情进展”。
 要求：
 1. 重点提取。
 2. 使用简短的条目格式。
 3. 只输出新发生的进展，不要输出任何已有的历史背景。
+
+【已有长期记忆】：
+${summaryText}
 
 【最近对话】：
 ${facts}

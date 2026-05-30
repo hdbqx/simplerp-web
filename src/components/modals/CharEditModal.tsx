@@ -159,6 +159,36 @@ export function CharEditModal({
                   />
                 </div>
 
+                <div className="form-control">
+                  <label className="label text-xs font-bold text-info">隐藏前 X 条消息</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="input input-bordered"
+                    value={currentCharacter.hidden_message_count ?? 0}
+                    onChange={(event) =>
+                      setCharacters(
+                        characters.map((character) =>
+                          character.id === selectedCharId
+                            ? { ...character, hidden_message_count: Math.max(0, Number(event.target.value) || 0) }
+                            : character,
+                        ),
+                      )
+                    }
+                  />
+                  <p className="mt-2 text-[11px] opacity-60">
+                    仅影响前端显示，不删除数据库消息，也不会影响未被截断历史发送给 LLM。
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-3 text-xs opacity-75">
+                  当前上下文断点：
+                  {currentCharacter.context_cutoff_message_id
+                    ? ` 已设置在消息 #${currentCharacter.context_cutoff_message_id} 之后`
+                    : ' 未设置'}
+                  <div className="mt-1 opacity-60">断点请直接在聊天记录中设置，断点之前的消息会保留显示，但不再发送给 LLM。</div>
+                </div>
+
                 <div className="rounded-[1.75rem] border border-base-300 bg-base-100 p-4 shadow-sm">
                   <VariableOverview variables={charVariables} />
                 </div>
