@@ -1,5 +1,15 @@
 import type { LorebookV2Entry, Message } from './db';
 
+export type LorebookInjectionBuckets = {
+  before_system: string[];
+  after_system: string[];
+  before_user: string[];
+  after_user: string[];
+  before_ai: string[];
+  after_ai: string[];
+  last: string[];
+};
+
 export class LorebookEngine {
   private entries: LorebookV2Entry[];
   private triggerHistory: Map<number, { count: number; lastTriggered: number }>;
@@ -225,24 +235,26 @@ export class LorebookEngine {
     });
   }
 
-  buildInjection(triggered: LorebookV2Entry[]): { beforeSystem: string; afterSystem: string; last: string } {
-    const byPosition = {
-      beforeSystem: [] as string[],
-      afterSystem: [] as string[],
-      last: [] as string[]
+  buildInjection(triggered: LorebookV2Entry[]): LorebookInjectionBuckets {
+    const byPosition: LorebookInjectionBuckets = {
+      before_system: [],
+      after_system: [],
+      before_user: [],
+      after_user: [],
+      before_ai: [],
+      after_ai: [],
+      last: [],
     };
 
     for (const entry of triggered) {
       const position = entry.position || 'before_system';
-      const arr = byPosition[position as keyof typeof byPosition] || byPosition.beforeSystem;
-      arr.push(entry.content);
+      const target = byPosition[position as keyof LorebookInjectionBuckets] || byPosition.before_system;
+      if (entry.content?.trim()) {
+        target.push(entry.content.trim());
+      }
     }
 
-    return {
-      beforeSystem: byPosition.beforeSystem.join('\n---\n'),
-      afterSystem: byPosition.afterSystem.join('\n---\n'),
-      last: byPosition.last.join('\n---\n')
-    };
+    return byPosition;
   }
 
   resetTriggerHistory() {

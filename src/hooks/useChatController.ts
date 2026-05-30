@@ -13,7 +13,7 @@ import {
   type VariableStage,
 } from '../lib/db';
 import { LLMClient } from '../lib/llm';
-import { LorebookEngine } from '../lib/lorebook-engine';
+import { LorebookEngine, type LorebookInjectionBuckets } from '../lib/lorebook-engine';
 import { getActivePromptProfile } from '../lib/prompt-profiles';
 import { VariableEngine } from '../lib/variable-engine';
 import { replaceVariables as replaceBuiltInVariables } from '../lib/variables';
@@ -94,6 +94,57 @@ export function useChatController({
     abortControllerRef.current.abort();
     abortControllerRef.current = null;
     setIsTyping(false);
+  };
+
+  const joinLorebookEntries = (entries: string[]) => entries.filter(Boolean).join('\n---\n');
+
+  const insertSystemMessages = (
+    messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+    index: number,
+    entries: string[],
+  ) => {
+    const normalized = entries
+      .map((content) => content.trim())
+      .filter(Boolean)
+      .map((content) => ({ role: 'system' as const, content }));
+    if (normalized.length === 0) return messages;
+
+    const next = [...messages];
+    const safeIndex = Math.max(0, Math.min(index, next.length));
+    next.splice(safeIndex, 0, ...normalized);
+    return next;
+  };
+
+  const buildLorebookChatMessages = (
+    history: Message[],
+    injections: LorebookInjectionBuckets,
+  ): Array<{ role: 'user' | 'assistant' | 'system'; content: string }> => {
+    let messages = history.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+
+    messages = insertSystemMessages(messages, 0, injections.after_system);
+
+    const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
+    if (lastUserIndex >= 0) {
+      messages = insertSystemMessages(messages, lastUserIndex, injections.before_user);
+      const updatedLastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
+      messages = insertSystemMessages(messages, updatedLastUserIndex + 1, injections.after_user);
+    }
+
+    const lastAssistantIndex = messages.map((message) => message.role).lastIndexOf('assistant');
+    if (lastAssistantIndex >= 0) {
+      messages = insertSystemMessages(messages, lastAssistantIndex, injections.before_ai);
+      const updatedLastAssistantIndex = messages.map((message) => message.role).lastIndexOf('assistant');
+      messages = insertSystemMessages(messages, updatedLastAssistantIndex + 1, injections.after_ai);
+    } else {
+      messages = insertSystemMessages(messages, messages.length, injections.before_ai);
+      messages = insertSystemMessages(messages, messages.length, injections.after_ai);
+    }
+
+    messages = insertSystemMessages(messages, messages.length, injections.last);
+    return messages;
   };
 
   const sendRoomChat = async (userText: string, speakerCharId: number | null): Promise<boolean> => {
@@ -194,9 +245,9 @@ export function useChatController({
 
     const rawSystemContent = [
       globalSystemInstruction,
-      (lorebookInjections.beforeSystem ? `${lorebookInjections.beforeSystem}\n---\n` : '') +
+      (lorebookInjections.before_system.length > 0 ? `${joinLorebookEntries(lorebookInjections.before_system)}\n---\n` : '') +
         basePrompt +
-        (lorebookInjections.afterSystem ? `\n---\n${lorebookInjections.afterSystem}` : ''),
+        '',
     ]
       .filter(Boolean)
       .join('\n\n---\n\n');
@@ -206,6 +257,10 @@ export function useChatController({
       settings,
       char,
     );
+    const lorebookChatMessages = buildLorebookChatMessages(effectiveHistory, lorebookInjections).map((message) => ({
+      ...message,
+      content: replaceBuiltInVariables(varEngine.replaceVariables(message.content, settings, char), settings, char),
+    }));
     const fullPostHistoryInstruction = globalPostHistoryInstruction
       ? replaceBuiltInVariables(varEngine.replaceVariables(globalPostHistoryInstruction, settings, char), settings, char)
       : '';
@@ -261,6 +316,7 @@ export function useChatController({
         fullPostHistoryInstruction,
         undefined,
         controller,
+        lorebookChatMessages,
       );
       for await (const chunk of stream) {
         fullContent += chunk;

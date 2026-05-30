@@ -148,6 +148,7 @@ export class LLMClient {
     postHistoryInstruction?: string,
     groupCtx?: any,
     controller?: AbortController,
+    chatMessagesOverride?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
   ) {
     if (!modelName) {
       yield '\n[错误]：未选择模型。';
@@ -158,21 +159,32 @@ export class LLMClient {
     const stopMarker = '惟';
     const playerDisplayName = settings.user_name || '玩家';
 
-    const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
-    history.forEach((m: Message) => {
-      if (isGroupMode) {
-        const name = m.role === 'user' ? playerDisplayName : char.name || '角色';
-        chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
-      } else {
-        chatMessages.push({ role: m.role, content: m.content });
-      }
-    });
+    const chatMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = chatMessagesOverride
+      ? [...chatMessagesOverride]
+      : [];
 
-    if (userInputs) {
-      chatMessages.push({
-        role: 'user',
-        content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${userInputs}` : userInputs,
+    if (!chatMessagesOverride) {
+      history.forEach((m: Message) => {
+        if (isGroupMode) {
+          const name = m.role === 'user' ? playerDisplayName : char.name || '角色';
+          chatMessages.push({ role: m.role, content: `(Log: ${name}) -> ${m.content}` });
+        } else {
+          chatMessages.push({ role: m.role, content: m.content });
+        }
       });
+
+      const alreadyHasCurrentInput =
+        !!userInputs &&
+        chatMessages.length > 0 &&
+        chatMessages[chatMessages.length - 1]?.role === 'user' &&
+        chatMessages[chatMessages.length - 1]?.content === (isGroupMode ? `(Input: ${playerDisplayName}) -> ${userInputs}` : userInputs);
+
+      if (userInputs && !alreadyHasCurrentInput) {
+        chatMessages.push({
+          role: 'user',
+          content: isGroupMode ? `(Input: ${playerDisplayName}) -> ${userInputs}` : userInputs,
+        });
+      }
     }
 
     if (postHistoryInstruction?.trim()) {
