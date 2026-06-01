@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
-import type { ApiMode, ApiPreset, Settings } from '../lib/db';
+import { api, type ApiMode, type ApiPreset, type Settings } from '../lib/db';
 
 type StudioMode = 'txt2img';
 
@@ -43,6 +43,7 @@ export function ImageStudio({
   const [results, setResults] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [jobHint, setJobHint] = useState<string>('');
 
   const [viewerSrc, setViewerSrc] = useState<string>('');
   const [viewerZoom, setViewerZoom] = useState<number>(1);
@@ -125,6 +126,8 @@ export function ImageStudio({
     }
 
     setLoading(true);
+    setJobHint('');
+    setResults([]);
     try {
       let reqBody: any;
       
@@ -171,15 +174,42 @@ export function ImageStudio({
       }
       
       const data: any = await res.json();
-      const out: string[] = [];
-      if (Array.isArray(data?.images) && data.images[0]) {
-        out.push(...data.images.map((b64: string) => `data:image/png;base64,${b64}`));
-      }
-      if (Array.isArray(data?.urls) && data.urls[0]) {
-        out.push(...data.urls);
-      }
-      if (out.length === 0) throw new Error('后端未返回任何图片');
-      setResults(out);
+      if (!data?.job_id) throw new Error('后端没有返回任务编号');
+      setJobHint('任务已提交，正在后台生成...');
+
+      const pollJob = async (jobId: string, attempt = 0): Promise<void> => {
+        const maxAttempts = 180;
+        const delay = attempt < 10 ? 1500 : 2500;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        const job = await api.asyncJobs.get(jobId);
+
+        if (job.status === 'completed') {
+          const out: string[] = [];
+          if (Array.isArray(job.result?.images) && job.result.images[0]) {
+            out.push(...job.result.images.map((b64: string) => `data:image/png;base64,${b64}`));
+          }
+          if (Array.isArray(job.result?.urls) && job.result.urls[0]) {
+            out.push(...job.result.urls);
+          }
+          if (out.length === 0) throw new Error('任务已完成，但没有返回图片');
+          setResults(out);
+          setJobHint('');
+          return;
+        }
+
+        if (job.status === 'failed') {
+          throw new Error(job.error || '后台生图失败');
+        }
+
+        if (attempt + 1 >= maxAttempts) {
+          setJobHint('任务仍在后台处理中，请稍后重试或刷新查看。');
+          return;
+        }
+
+        await pollJob(jobId, attempt + 1);
+      };
+
+      await pollJob(data.job_id);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -245,6 +275,12 @@ export function ImageStudio({
               {error && (
                 <div className="alert alert-error py-2 text-xs">
                   <span className="break-words">{error}</span>
+                </div>
+              )}
+
+              {!!jobHint && !error && (
+                <div className="alert alert-info py-2 text-xs">
+                  <span className="break-words">{jobHint}</span>
                 </div>
               )}
 

@@ -1,5 +1,5 @@
-name = "simplerp-web"
-pages_build_output_dir = "dist"
+name = "simplerp-async-jobs-consumer"
+main = "workers/async-jobs-consumer.ts"
 compatibility_date = "2024-12-09"
 
 [[d1_databases]]
@@ -11,6 +11,7 @@ database_id = "740b4cf9-8916-480a-9b8e-f0c0977a3b0c"
 bucket_name = "simplerp-images"
 binding = "IMAGES_BUCKET"
 
-[[queues.producers]]
-binding = "ASYNC_JOBS_QUEUE"
+[[queues.consumers]]
 queue = "simplerp-async-jobs"
+max_batch_size = 10
+max_batch_timeout = 5

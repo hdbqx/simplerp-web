@@ -158,6 +158,21 @@ export interface ImageRecord {
   created_at?: number;
 }
 
+export interface AsyncJob {
+  id: string;
+  job_type: 'variable_thought' | 'image_generation';
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  char_id?: number | null;
+  room_id?: number | null;
+  request_json?: string | null;
+  result_json?: string | null;
+  error?: string | null;
+  request?: any;
+  result?: any;
+  created_at?: number;
+  updated_at?: number;
+}
+
 export interface Variable {
   id?: number;
   char_id?: number;
@@ -424,6 +439,13 @@ export const api = {
       return fetch(`${API}/images?${params}`, { method: 'DELETE' });
     },
   },
+  asyncJobs: {
+    get: (id: string) =>
+      fetch(`${API}/async-jobs?id=${encodeURIComponent(id)}`).then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json() as Promise<AsyncJob>;
+      }),
+  },
   variables: {
     list: (charId?: number, roomId?: number) => {
       const params = new URLSearchParams();
@@ -505,6 +527,7 @@ export const api = {
       preset_id?: number;
       model?: string;
       thought_prompt?: string;
+      defer?: boolean;
     }) =>
       fetch(`${API}/variables-thought`, { method: 'POST', headers, body: JSON.stringify(body) }).then(async (r) => {
         if (!r.ok) throw new Error(await r.text());

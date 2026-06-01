@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import {
   api,
   type ApiMode,
+  type AsyncJob,
   type ApiPreset,
   type Character,
   type LorebookV2Entry,
@@ -83,6 +84,51 @@ export function useChatController({
   const showToast = (text: string, type: 'info' | 'success' = 'info') => {
     setToastMsg({ text, type });
     setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const pollAsyncJob = (
+    jobId: string,
+    handlers: {
+      onCompleted: (job: AsyncJob) => void | Promise<void>;
+      onFailed?: (job: AsyncJob) => void | Promise<void>;
+      onTimeout?: () => void | Promise<void>;
+    },
+    attempt = 0,
+  ) => {
+    const maxAttempts = 120;
+    const delay = attempt < 10 ? 1500 : 2500;
+
+    window.setTimeout(async () => {
+      try {
+        const job = await api.asyncJobs.get(jobId);
+        if (job.status === 'completed') {
+          try {
+            await handlers.onCompleted(job);
+          } catch (error: any) {
+            console.error('Async job completion handler failed:', error);
+            await handlers.onFailed?.({
+              ...job,
+              status: 'failed',
+              error: error?.message || String(error),
+            });
+          }
+          return;
+        }
+        if (job.status === 'failed') {
+          await handlers.onFailed?.(job);
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to poll async job:', error);
+      }
+
+      if (attempt + 1 >= maxAttempts) {
+        await handlers.onTimeout?.();
+        return;
+      }
+
+      pollAsyncJob(jobId, handlers, attempt + 1);
+    }, delay);
   };
 
   useEffect(() => {
@@ -370,8 +416,31 @@ export function useChatController({
                   preset_id: settings?.thought_preset_id,
                   model: settings?.thought_model_id || activeModel,
                   thought_prompt: promptProfile.thought_prompt,
+                  defer: true,
                 })
                 .then((result) => {
+                  if (result?.deferred && result?.job_id) {
+                    showToast('后台变量推演已启动。');
+                    pollAsyncJob(result.job_id, {
+                      onCompleted: async (job) => {
+                        const appState = useAppStore.getState();
+                        if (appState.selectedCharId === char.id) {
+                          await api.variables.list(char.id).then(setGlobalVariables);
+                        }
+                        if (job.result?.updates?.length > 0) {
+                          showToast('后台变量推演已完成。', 'success');
+                          return;
+                        }
+                        if (job.result?.skipped === 'timeout') {
+                          showToast('变量推演已跳过：模型响应过慢。');
+                        }
+                      },
+                      onFailed: async (job) => {
+                        showToast(job.error || '后台变量推演失败。');
+                      },
+                    });
+                    return;
+                  }
                   if (result?.updates?.length > 0) {
                     showToast('后台变量推演已完成。', 'success');
                   }
@@ -499,29 +568,109 @@ export function useChatController({
       }
 
       const data = await response.json();
-      const imgSrc =
-        (Array.isArray(data?.images) && data.images[0] ? `data:image/png;base64,${data.images[0]}` : '') ||
-        (Array.isArray(data?.urls) && data.urls[0] ? data.urls[0] : '');
-      if (!imgSrc) throw new Error('后端没有返回图片内容。');
+      if (!data?.job_id) throw new Error('后端没有返回任务编号。');
 
+      const targetViewMode = viewMode;
+      const targetCharId = selectedCharId;
+      const targetRoomId = selectedRoomId;
       const timestamp = Date.now();
-      const imageMsg: Message = {
-        role: 'assistant',
-        content: '',
-        image: imgSrc,
-        timestamp,
-        char_id: selectedCharId,
-      };
-      setCharMessages((current) => [...current, imageMsg]);
-
-      try {
-        const saved = await api.messages.add(imageMsg);
-        setCharMessages((current) =>
-          current.map((message) => (message.timestamp === timestamp ? { ...message, id: saved.id } : message)),
-        );
-      } catch (error) {
-        console.error('Failed to persist generated image message:', error);
+      if (targetViewMode === 'group' && targetRoomId) {
+        setRoomMessages((current) => [
+          ...current,
+          {
+            room_id: targetRoomId,
+            role: 'assistant',
+            sender_type: 'agent',
+            content: '生图任务已提交，正在后台生成...',
+            timestamp,
+          },
+        ]);
+      } else {
+        setCharMessages((current) => [
+          ...current,
+          {
+            role: 'assistant',
+            content: '生图任务已提交，正在后台生成...',
+            timestamp,
+            char_id: selectedCharId,
+          },
+        ]);
       }
+
+      showToast('生图任务已加入队列。');
+
+      pollAsyncJob(data.job_id, {
+        onCompleted: async (job) => {
+          const imageUrl = Array.isArray(job.result?.urls) ? job.result.urls[0] : '';
+          if (!imageUrl) {
+            throw new Error('生图任务已完成，但未返回图片。');
+          }
+
+          if (targetViewMode === 'group' && targetRoomId) {
+            const finalMessage = {
+              room_id: targetRoomId,
+              role: 'assistant' as const,
+              sender_type: 'agent' as const,
+              content: '',
+              image: imageUrl,
+              timestamp,
+            };
+            const saved = await api.roomMessages.add(finalMessage);
+            if (useAppStore.getState().selectedRoomId === targetRoomId) {
+              setRoomMessages((current) =>
+                current.map((message) =>
+                  message.timestamp === timestamp ? { ...finalMessage, id: saved.id } : message,
+                ),
+              );
+            }
+            return;
+          }
+
+          const finalMessage: Message = {
+            role: 'assistant',
+            content: '',
+            image: imageUrl,
+            timestamp,
+            char_id: targetCharId,
+          };
+          const saved = await api.messages.add(finalMessage);
+          if (useAppStore.getState().selectedCharId === targetCharId) {
+            setCharMessages((current) =>
+              current.map((message) =>
+                message.timestamp === timestamp ? { ...finalMessage, id: saved.id } : message,
+              ),
+            );
+          }
+        },
+        onFailed: async (job) => {
+          const text = `生图失败：${job.error || '后台生成失败。'}`;
+          if (targetViewMode === 'group' && targetRoomId) {
+            if (useAppStore.getState().selectedRoomId !== targetRoomId) return;
+            setRoomMessages((current) =>
+              current.map((message) => (message.timestamp === timestamp ? { ...message, content: text } : message)),
+            );
+            return;
+          }
+          if (useAppStore.getState().selectedCharId !== targetCharId) return;
+          setCharMessages((current) =>
+            current.map((message) => (message.timestamp === timestamp ? { ...message, content: text } : message)),
+          );
+        },
+        onTimeout: async () => {
+          const text = '生图仍在后台处理中，请稍后查看结果。';
+          if (targetViewMode === 'group' && targetRoomId) {
+            if (useAppStore.getState().selectedRoomId !== targetRoomId) return;
+            setRoomMessages((current) =>
+              current.map((message) => (message.timestamp === timestamp ? { ...message, content: text } : message)),
+            );
+            return;
+          }
+          if (useAppStore.getState().selectedCharId !== targetCharId) return;
+          setCharMessages((current) =>
+            current.map((message) => (message.timestamp === timestamp ? { ...message, content: text } : message)),
+          );
+        },
+      });
     } catch (error: any) {
       alert(`生图失败：${error.message}`);
     } finally {

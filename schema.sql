@@ -230,6 +230,23 @@ CREATE TABLE IF NOT EXISTS images (
     created_at INTEGER
 );
 
+-- 16.5 异步任务状态表（Queues 生图 / 变量推演）
+CREATE TABLE IF NOT EXISTS async_jobs (
+    id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,      -- 'variable_thought' | 'image_generation'
+    status TEXT NOT NULL,        -- 'queued' | 'processing' | 'completed' | 'failed'
+    char_id INTEGER,
+    room_id INTEGER,
+    request_json TEXT,
+    result_json TEXT,
+    error TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_async_jobs_char_id ON async_jobs(char_id);
+CREATE INDEX IF NOT EXISTS idx_async_jobs_room_id ON async_jobs(room_id);
+
 -- 17. 文本消息历史微调编辑记录表
 CREATE TABLE IF NOT EXISTS message_edits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
