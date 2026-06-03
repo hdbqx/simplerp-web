@@ -10,6 +10,7 @@ import { GroupEditModal } from './components/modals/GroupEditModal';
 import { ImagePromptModal } from './components/modals/ImagePromptModal';
 import { LorebookModal } from './components/modals/LorebookModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { VariableThoughtReviewModal } from './components/modals/VariableThoughtReviewModal';
 import { useCharacterArchiveActions } from './hooks/useCharacterArchiveActions';
 import { useChatController } from './hooks/useChatController';
 import { usePresetModels } from './hooks/usePresetModels';
@@ -141,6 +142,11 @@ function App() {
 
   const {
     toastMsg,
+    thoughtReview,
+    thoughtReviewNotice,
+    openThoughtReviewModal,
+    closeThoughtReviewModal,
+    applyThoughtReview,
     isTyping,
     stopGeneration,
     sendRoomChat,
@@ -347,13 +353,35 @@ function App() {
           }}
           onClose={() => setShowGenModal(false)}
         />
+
+        <VariableThoughtReviewModal
+          show={Boolean(thoughtReview?.isOpen)}
+          variables={globalVariables}
+          updates={thoughtReview?.updates || []}
+          onClose={closeThoughtReviewModal}
+          onApply={applyThoughtReview}
+        />
       </div>
 
-      {toastMsg && (
+      {(toastMsg || thoughtReviewNotice) && (
         <div className="toast toast-bottom toast-start z-50">
-          <div className={`alert ${toastMsg.type === 'success' ? 'alert-success' : 'alert-info'} shadow-lg`}>
-            <span className="text-sm">{toastMsg.text}</span>
-          </div>
+          {thoughtReviewNotice && (
+            <button
+              className="w-[min(92vw,28rem)] rounded-3xl border border-primary/20 bg-base-100/96 p-0 text-left shadow-2xl backdrop-blur"
+              onClick={openThoughtReviewModal}
+            >
+              <div className="bg-gradient-to-r from-primary/12 via-cyan-500/10 to-emerald-500/12 px-4 py-3">
+                <div className="text-xs font-black uppercase tracking-[0.2em] text-primary">变量推演完成</div>
+                <div className="mt-2 text-sm font-semibold text-base-content">{thoughtReviewNotice.text}</div>
+                <div className="mt-2 text-xs text-base-content/55">点击展开，检查这次自动更新的变量结果。</div>
+              </div>
+            </button>
+          )}
+          {toastMsg && (
+            <div className={`alert ${toastMsg.type === 'success' ? 'alert-success' : 'alert-info'} shadow-lg`}>
+              <span className="text-sm">{toastMsg.text}</span>
+            </div>
+          )}
         </div>
       )}
     </>

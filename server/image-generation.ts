@@ -118,16 +118,27 @@ async function processImageResults(
   const imageIds: number[] = [];
 
   for (const item of images) {
-    const b64 = item.b64_json || item.image || (typeof item === 'string' ? item : null);
-    if (!b64) continue;
+    const imageSource =
+      (typeof item === 'string' ? item : null) ||
+      item?.b64_json ||
+      item?.image ||
+      item?.url ||
+      item?.result_url ||
+      item?.image_url ||
+      null;
+    if (!imageSource) continue;
 
     let imageBuffer: ArrayBuffer;
-    if (typeof b64 === 'string' && b64.startsWith('http')) {
-      const imageResponse = await fetch(b64);
+    if (typeof imageSource === 'string' && imageSource.startsWith('http')) {
+      const imageResponse = await fetch(imageSource);
       if (!imageResponse.ok) continue;
       imageBuffer = await imageResponse.arrayBuffer();
     } else {
-      const binaryString = atob(b64);
+      const normalizedBase64 =
+        typeof imageSource === 'string' && imageSource.startsWith('data:')
+          ? imageSource.slice(imageSource.indexOf(',') + 1)
+          : imageSource;
+      const binaryString = atob(normalizedBase64);
       const bytes = new Uint8Array(binaryString.length);
       for (let index = 0; index < binaryString.length; index += 1) {
         bytes[index] = binaryString.charCodeAt(index);
@@ -300,7 +311,14 @@ async function handleOpenAiCompatible(
 
   if (!res.ok) throw new Error(await res.text());
   const data: any = await res.json();
-  return await processImageResults(env, data.data || [], charId, roomId, prompt);
+  const images = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.images)
+      ? data.images
+      : data?.data || data?.images || data?.url
+        ? [data?.data || data?.images || data]
+        : [];
+  return await processImageResults(env, images, charId, roomId, prompt);
 }
 
 export async function runImageGeneration(env: ImageGenerationEnv, body: ImageProxyBody) {

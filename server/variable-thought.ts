@@ -20,25 +20,26 @@ const MAX_DESCRIPTION_CHARS = 160;
 const MAX_VARIABLES_CHARS = 12_000;
 
 const DEFAULT_THOUGHT_PROMPT = `你是“角色扮演沙箱变量推演核心”。你的职责是根据最近对话，审计并更新当前沙箱中的变量状态。
+你面对的是结构化状态，不是文学创作。请优先追踪真正重要的变化，而不是机械地随便改几个无关紧要的值。
 
-【当前变量资产清单】
-{VARIABLES}
+【当前变量资产清单】{VARIABLES}
 
-【最近对话历史】
-{HISTORY}
+【最近对话历史】{HISTORY}
 
-【本轮触发输入】
-{{USER_INPUT}}
+【本轮触发输入】{{USER_INPUT}}
 
 更新原则：
-1. 只允许更新上面已存在的变量 key，绝对禁止发明新 key。
-2. 只在确实发生变化时输出更新；没有变化的变量不要写入 updates。
-3. string 类型输出完整新值。
-4. number 或 range 类型输出更新后的绝对数值，不要输出 +1、-5 这种相对变化。
-5. boolean 类型输出 true 或 false。
-6. dict 与 list 类型必须输出合法 JSON 结构。
-7. reason 要用一句中文精确说明你为何这样改。
-8. 你面对的是后端数据，不需要文学修辞，只要准确。
+1. 只能更新上面已经存在的变量 key，严禁编造新 key。
+2. 如果最近对话里出现了明确的状态变化、关系变化、资源变化、地点变化、身份暴露、任务推进、能力解锁、伤势/情绪/欲望变化，就应该更新对应变量；不要因为变量多就返回空 updates。
+3. 只更新“确实发生变化”的变量，但要优先挑选关键变化；微小噪音、口头寒暄、没有落地的假设不要更新。
+4. 当存在多个变化时，优先保留最影响后续剧情推演的 1 到 8 项。
+5. string 类型输出完整新值。
+6. number 或 range 类型输出更新后的绝对数值，不要输出 +1、-2 这种相对变化。
+7. boolean 类型只输出 true 或 false。
+8. dict 与 list 类型必须输出合法 JSON 结构；如果只改动其中一部分，也要输出修改后的完整结构，保留未变化字段。
+9. 如果某个复杂对象已经发生实质变化，不要偷懒写空对象、空数组或只改无关字段。
+10. reason 用一句简洁中文说明“为什么这个变量现在应该变成这个值”。
+11. 如果确实没有任何值得记录的变化，再返回空数组。
 
 你必须只返回一个 JSON 对象，不要输出 Markdown，不要输出解释：
 {
@@ -58,6 +59,16 @@ function safeStringify(value: any) {
     return JSON.stringify(value);
   } catch {
     return String(value);
+  }
+}
+
+function parseStoredValue(value: any) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
   }
 }
 
@@ -85,7 +96,7 @@ function compactVariablesText(variables: any[]) {
         `- 名称: ${variable.name}`,
         `key: ${variable.key}`,
         `类型: ${variable.type}`,
-        `当前值: ${compactValue(variable.value)}`,
+        `当前值: ${compactValue(parseStoredValue(variable.value))}`,
         `描述: ${truncateText(variable.description || '无', MAX_DESCRIPTION_CHARS)}`,
       ].join(' | '),
     )
@@ -181,6 +192,22 @@ function parseUpdates(resultContent: string) {
   return parsed && Array.isArray(parsed.updates) ? parsed.updates : [];
 }
 
+function normalizeUpdateValue(variable: any, rawValue: any) {
+  if (variable.type === 'string') {
+    return typeof rawValue === 'object' ? JSON.stringify(rawValue) : String(rawValue ?? '');
+  }
+
+  if (variable.type === 'number' || variable.type === 'range') {
+    return String(Number(rawValue) || 0);
+  }
+
+  if (variable.type === 'boolean') {
+    return rawValue === true || rawValue === 'true' || rawValue === 1 ? '1' : '0';
+  }
+
+  return typeof rawValue === 'object' ? JSON.stringify(rawValue) : String(rawValue ?? '');
+}
+
 export async function runVariableThought(env: VariableThoughtEnv, body: ThoughtRequestBody) {
   const {
     char_id,
@@ -258,32 +285,56 @@ export async function runVariableThought(env: VariableThoughtEnv, body: ThoughtR
   let updates: any[] = [];
   try {
     updates = parseUpdates(resultContent);
-  } catch (e) {
-    console.warn('Failed to parse thought response:', resultContent, e);
+  } catch (error) {
+    console.warn('Failed to parse thought response:', resultContent, error);
   }
 
   const now = Date.now();
+  const appliedUpdates: Array<{
+    id: number;
+    key: string;
+    name: string;
+    type: string;
+    previous_value: any;
+    value: any;
+    reason: string;
+  }> = [];
+
   for (const update of updates) {
     const variable = variables.find((item) => item.key === update.key);
-    if (!variable) continue;
+    if (!variable?.id) continue;
 
-    let finalValue = update.value;
-    if (variable.type === 'string') {
-      finalValue = typeof finalValue === 'object' ? JSON.stringify(finalValue) : String(finalValue ?? '');
-    } else if (variable.type === 'number' || variable.type === 'range') {
-      finalValue = String(Number(finalValue) || 0);
-    } else if (variable.type === 'boolean') {
-      finalValue = finalValue === true || finalValue === 'true' || finalValue === 1 ? '1' : '0';
-    } else {
-      finalValue = typeof finalValue === 'object' ? JSON.stringify(finalValue) : String(finalValue ?? '');
+    const previousValue = parseStoredValue(variable.value);
+    const serializedNextValue = normalizeUpdateValue(variable, update.value);
+    const nextValue = parseStoredValue(serializedNextValue);
+    if (safeStringify(previousValue) === safeStringify(nextValue)) {
+      continue;
     }
 
     await env.DB.prepare('UPDATE variables SET value = ?, updated_at = ? WHERE id = ?')
-      .bind(finalValue, now, variable.id)
+      .bind(serializedNextValue, now, variable.id)
       .run();
+
+    appliedUpdates.push({
+      id: Number(variable.id),
+      key: variable.key,
+      name: variable.name,
+      type: variable.type,
+      previous_value: previousValue,
+      value: nextValue,
+      reason: typeof update.reason === 'string' ? update.reason : '',
+    });
   }
 
-  return { updates, skipped: updates.length === 0 ? 'no_changes' : undefined };
+  return {
+    updates: appliedUpdates.map((item) => ({
+      key: item.key,
+      value: item.value,
+      reason: item.reason,
+    })),
+    applied_updates: appliedUpdates,
+    skipped: appliedUpdates.length === 0 ? 'no_changes' : undefined,
+  };
 }
 
 export type { ThoughtRequestBody };

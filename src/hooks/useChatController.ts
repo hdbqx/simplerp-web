@@ -20,6 +20,7 @@ import { VariableEngine } from '../lib/variable-engine';
 import { replaceVariables as replaceBuiltInVariables } from '../lib/variables';
 import { useChatStore } from '../lib/chat-store';
 import { useAppStore } from '../lib/store';
+import type { VariableThoughtReviewItem } from '../components/modals/VariableThoughtReviewModal';
 import type { ViewMode } from '../lib/store';
 
 type ToastMessage = {
@@ -30,6 +31,11 @@ type ToastMessage = {
 type ImageGenerationOptions = {
   genPrompt: string;
   useSdPromptConversion: boolean;
+};
+
+type ThoughtReviewState = {
+  updates: VariableThoughtReviewItem[];
+  isOpen: boolean;
 };
 
 type UseChatControllerParams = {
@@ -74,7 +80,10 @@ export function useChatController({
   const [toastMsg, setToastMsg] = useState<ToastMessage | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
+  const [thoughtReview, setThoughtReview] = useState<ThoughtReviewState | null>(null);
+  const [thoughtReviewNotice, setThoughtReviewNotice] = useState<{ text: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const thoughtReviewNoticeTimerRef = useRef<number | null>(null);
 
   const getCharMessages = () => useChatStore.getState().messages;
   const setCharMessages = useChatStore.getState().setMessages;
@@ -84,6 +93,88 @@ export function useChatController({
   const showToast = (text: string, type: 'info' | 'success' = 'info') => {
     setToastMsg({ text, type });
     setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const openThoughtReviewNotice = (updates: VariableThoughtReviewItem[]) => {
+    setThoughtReview({ updates, isOpen: false });
+    setThoughtReviewNotice({
+      text: `变量推演已完成，自动更新 ${updates.length} 项。点击这里复核与修正。`,
+    });
+    if (thoughtReviewNoticeTimerRef.current) {
+      window.clearTimeout(thoughtReviewNoticeTimerRef.current);
+    }
+    thoughtReviewNoticeTimerRef.current = window.setTimeout(() => {
+      setThoughtReviewNotice(null);
+      thoughtReviewNoticeTimerRef.current = null;
+    }, 4000);
+  };
+
+  const openThoughtReviewModal = () => {
+    setThoughtReview((current) => (current ? { ...current, isOpen: true } : current));
+    setThoughtReviewNotice(null);
+    if (thoughtReviewNoticeTimerRef.current) {
+      window.clearTimeout(thoughtReviewNoticeTimerRef.current);
+      thoughtReviewNoticeTimerRef.current = null;
+    }
+  };
+
+  const closeThoughtReviewModal = () => {
+    setThoughtReview((current) => (current ? { ...current, isOpen: false } : current));
+  };
+
+  const buildThoughtReviewUpdates = (result: any, variables: Variable[]): VariableThoughtReviewItem[] => {
+    const rawUpdates = Array.isArray(result?.applied_updates)
+      ? result.applied_updates
+      : Array.isArray(result?.updates)
+        ? result.updates
+        : [];
+
+    return rawUpdates
+      .map((update: any) => {
+        const variable = variables.find((item) => item.id === update.id || item.key === update.key);
+        if (!variable?.id) return null;
+        return {
+          variableId: variable.id,
+          key: variable.key,
+          name: variable.name,
+          type: variable.type,
+          previousValue: update.previous_value ?? variable.value,
+          currentValue: variable.value,
+          nextValue: update.value ?? variable.value,
+          reason: typeof update.reason === 'string' ? update.reason : '',
+          source: 'auto' as const,
+        };
+      })
+      .filter(Boolean) as VariableThoughtReviewItem[];
+  };
+
+  const handleThoughtCompleted = async (charId: number, result: any) => {
+    if (useAppStore.getState().selectedCharId !== charId) return;
+
+    const latestVariables = await api.variables.list(charId);
+    setGlobalVariables(latestVariables);
+
+    const reviewUpdates = buildThoughtReviewUpdates(result, latestVariables);
+    if (reviewUpdates.length > 0) {
+      openThoughtReviewNotice(reviewUpdates);
+      showToast('后台变量推演已完成。', 'success');
+      return;
+    }
+
+    if (result?.skipped === 'timeout') {
+      showToast('变量推演已跳过：模型响应过慢。');
+      return;
+    }
+
+    showToast('变量推演未检测到需要落库的关键变化。');
+  };
+
+  const applyThoughtReview = async (updates: Array<{ id: number; value: any }>) => {
+    if (!selectedCharId || updates.length === 0) return;
+    await api.variables.bulkUpdate(updates);
+    const latestVariables = await api.variables.list(selectedCharId);
+    setGlobalVariables(latestVariables);
+    showToast('变量修正已保存。', 'success');
   };
 
   const pollAsyncJob = (
@@ -136,6 +227,23 @@ export function useChatController({
       setTurnCount(0);
     }
   }, [viewMode, selectedCharId]);
+
+  useEffect(() => {
+    setThoughtReview(null);
+    setThoughtReviewNotice(null);
+    if (thoughtReviewNoticeTimerRef.current) {
+      window.clearTimeout(thoughtReviewNoticeTimerRef.current);
+      thoughtReviewNoticeTimerRef.current = null;
+    }
+  }, [selectedCharId, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (thoughtReviewNoticeTimerRef.current) {
+        window.clearTimeout(thoughtReviewNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   const stopGeneration = () => {
     if (!abortControllerRef.current) return;
@@ -423,10 +531,8 @@ export function useChatController({
                     showToast('后台变量推演已启动。');
                     pollAsyncJob(result.job_id, {
                       onCompleted: async (job) => {
-                        const appState = useAppStore.getState();
-                        if (appState.selectedCharId === char.id) {
-                          await api.variables.list(char.id).then(setGlobalVariables);
-                        }
+                        await handleThoughtCompleted(char.id!, job.result);
+                        return;
                         if (job.result?.updates?.length > 0) {
                           showToast('后台变量推演已完成。', 'success');
                           return;
@@ -441,10 +547,10 @@ export function useChatController({
                     });
                     return;
                   }
-                  if (result?.updates?.length > 0) {
+                  if (false && result?.updates?.length > 0) {
                     showToast('后台变量推演已完成。', 'success');
                   }
-                  api.variables.list(char.id).then(setGlobalVariables);
+                  void handleThoughtCompleted(char.id!, result);
                 })
                 .catch(console.error);
 
@@ -861,6 +967,11 @@ export function useChatController({
 
   return {
     toastMsg,
+    thoughtReview,
+    thoughtReviewNotice,
+    openThoughtReviewModal,
+    closeThoughtReviewModal,
+    applyThoughtReview,
     isTyping,
     stopGeneration,
     sendRoomChat,
