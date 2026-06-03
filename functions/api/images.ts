@@ -1,5 +1,5 @@
 import { createAsyncJob } from '../../server/async-jobs';
-import type { ImageProxyBody } from '../../server/image-generation';
+import { runImageGeneration, type ImageProxyBody } from '../../server/image-generation';
 
 interface Env {
   IMAGES_BUCKET: R2Bucket;
@@ -101,10 +101,22 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
-    const body = (await context.request.json()) as ImageProxyBody;
+    const body = (await context.request.json()) as ImageProxyBody & { defer?: boolean };
     const rawPrompt = body.payload?.prompt || body.prompt || '';
     const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
     if (!prompt) return new Response('Missing prompt', { status: 400 });
+
+    const defer = body.defer === true;
+
+    if (!defer) {
+      const result = await runImageGeneration(context.env, body);
+      return Response.json({
+        deferred: false,
+        status: 'completed',
+        result,
+        ...result,
+      });
+    }
 
     const jobId = await createAsyncJob(context.env, {
       jobType: 'image_generation',

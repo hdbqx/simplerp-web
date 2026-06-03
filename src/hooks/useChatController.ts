@@ -524,7 +524,7 @@ export function useChatController({
                   preset_id: settings?.thought_preset_id,
                   model: settings?.thought_model_id || activeModel,
                   thought_prompt: promptProfile.thought_prompt,
-                  defer: true,
+                  defer: (settings?.thought_execution_mode || 'sync') === 'async',
                 })
                 .then((result) => {
                   if (result?.deferred && result?.job_id) {
@@ -627,6 +627,7 @@ export function useChatController({
       let reqBody: any = {
         char_id: viewMode === 'char' ? selectedCharId : undefined,
         room_id: viewMode === 'group' ? selectedRoomId : undefined,
+        defer: (settings.image_execution_mode || 'sync') === 'async',
       };
 
       if (imageBackend === 'huggingface') {
@@ -673,13 +674,49 @@ export function useChatController({
         throw new Error(errorData.error || '生图后端没有正确返回结果。');
       }
 
-      const data = await response.json();
-      if (!data?.job_id) throw new Error('后端没有返回任务编号。');
-
       const targetViewMode = viewMode;
       const targetCharId = selectedCharId;
       const targetRoomId = selectedRoomId;
       const timestamp = Date.now();
+      const data = await response.json();
+
+      if (!data?.job_id) {
+        const immediateResult = data?.result || data;
+        const imageUrl = Array.isArray(immediateResult?.urls) ? immediateResult.urls[0] : '';
+        if (!imageUrl) throw new Error('生图已完成，但未返回图片。');
+
+        if (targetViewMode === 'group' && targetRoomId) {
+          const finalMessage = {
+            room_id: targetRoomId,
+            role: 'assistant' as const,
+            sender_type: 'agent' as const,
+            content: '',
+            image: imageUrl,
+            timestamp,
+          };
+          const saved = await api.roomMessages.add(finalMessage);
+          if (useAppStore.getState().selectedRoomId === targetRoomId) {
+            setRoomMessages((current) => [...current, { ...finalMessage, id: saved.id }]);
+          }
+          showToast('生图已完成。', 'success');
+          return;
+        }
+
+        const finalMessage: Message = {
+          role: 'assistant',
+          content: '',
+          image: imageUrl,
+          timestamp,
+          char_id: targetCharId,
+        };
+        const saved = await api.messages.add(finalMessage);
+        if (useAppStore.getState().selectedCharId === targetCharId) {
+          setCharMessages((current) => [...current, { ...finalMessage, id: saved.id }]);
+        }
+        showToast('生图已完成。', 'success');
+        return;
+      }
+
       if (targetViewMode === 'group' && targetRoomId) {
         setRoomMessages((current) => [
           ...current,

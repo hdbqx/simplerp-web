@@ -1,5 +1,5 @@
 import { createAsyncJob } from '../../server/async-jobs';
-import type { ThoughtRequestBody } from '../../server/variable-thought';
+import { runVariableThought, type ThoughtRequestBody } from '../../server/variable-thought';
 
 interface Env {
   DB: D1Database;
@@ -15,6 +15,26 @@ type VariableThoughtQueueMessage = {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     const body = (await context.request.json()) as ThoughtRequestBody & { defer?: boolean };
+    const defer = body.defer === true;
+
+    if (!defer) {
+      const result = await runVariableThought(context.env, {
+        char_id: body.char_id,
+        room_id: body.room_id,
+        history: body.history,
+        user_input: body.user_input,
+        preset_id: body.preset_id,
+        model: body.model,
+        thought_prompt: body.thought_prompt,
+      });
+
+      return Response.json({
+        deferred: false,
+        status: 'completed',
+        result,
+        ...result,
+      });
+    }
 
     const jobId = await createAsyncJob(context.env, {
       jobType: 'variable_thought',

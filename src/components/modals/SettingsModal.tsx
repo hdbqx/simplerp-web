@@ -124,6 +124,27 @@ export function SettingsModal({
             <h4 className="mb-3 text-sm font-black uppercase text-primary">生图设置</h4>
             <div className="grid grid-cols-1 gap-4">
               <div className="rounded-xl border border-base-300 bg-base-100 p-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">生图执行方式</label>
+                    <select
+                      className="select select-bordered select-sm"
+                      value={settings.image_execution_mode || 'sync'}
+                      onChange={(event) =>
+                        updateSettings({ image_execution_mode: event.target.value as Settings['image_execution_mode'] })
+                      }
+                    >
+                      <option value="sync">同步</option>
+                      <option value="async">异步</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] opacity-60">
+                  同步会在本次请求内直接等待结果并返回，异步会把任务交给后台队列处理。默认推荐同步。
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-base-300 bg-base-100 p-4">
                 <div className="mb-3 text-xs font-black text-accent">ComfyUI 本地穿透</div>
                 <div className="form-control">
                   <label className="label text-xs font-bold">Cloudflare Tunnel 地址</label>
@@ -337,6 +358,24 @@ export function SettingsModal({
               <div className="rounded-xl border border-base-300 p-4">
                 <div className="mb-3 text-xs font-black">后台变量推演模型</div>
                 <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="form-control">
+                      <label className="label text-xs font-bold">变量推演执行方式</label>
+                      <select
+                        className="select select-bordered select-sm"
+                        value={settings.thought_execution_mode || 'sync'}
+                        onChange={(event) =>
+                          updateSettings({ thought_execution_mode: event.target.value as Settings['thought_execution_mode'] })
+                        }
+                      >
+                        <option value="sync">同步</option>
+                        <option value="async">异步</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="text-[10px] opacity-60">
+                    同步会在触发后立刻等待变量结果，异步会进入后台队列再回填。默认推荐同步。
+                  </div>
                   <label className="flex cursor-pointer items-center gap-2">
                     <input
                       type="checkbox"

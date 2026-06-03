@@ -113,6 +113,7 @@ export interface Settings {
   id?: number;
   user_name?: string;
   image_backend?: 'huggingface' | 'openai' | 'modelscope';
+  image_execution_mode?: 'sync' | 'async';
   modelscope_api_key?: string;
   modelscope_model?: string;
   image_preset_id?: number;
@@ -125,6 +126,7 @@ export interface Settings {
   sd_prompt_model_id?: string;
   thought_preset_id?: number;
   thought_model_id?: string;
+  thought_execution_mode?: 'sync' | 'async';
   thought_interval?: number;
   is_thought_auto_update?: boolean;
   snapshot_trigger_interval?: number;

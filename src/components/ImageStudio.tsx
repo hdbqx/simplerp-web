@@ -139,6 +139,7 @@ export function ImageStudio({
           backend: 'huggingface',
           model: modelId,
           apiKey: settings.hf_keys,
+          defer: (settings.image_execution_mode || 'sync') === 'async',
           payload: { prompt: rawPrompt, ...extra }
         };
       } else if (backend === 'modelscope') {
@@ -149,6 +150,7 @@ export function ImageStudio({
           backend: 'modelscope',
           model: modelId,
           apiKey: settings.modelscope_api_key,
+          defer: (settings.image_execution_mode || 'sync') === 'async',
           payload: { prompt: rawPrompt, size: openAiSize || '1024x1024', n: 1, ...extra }
         };
       } else {
@@ -158,6 +160,7 @@ export function ImageStudio({
           apiBase: resolvedImagePreset.api_base,
           apiKey: resolvedImagePreset.api_key,
           model: resolvedImageModel,
+          defer: (settings.image_execution_mode || 'sync') === 'async',
           payload: { prompt: rawPrompt, size: openAiSize || '1024x1024', n: 1, response_format: 'b64_json', ...extra }
         };
       }
@@ -174,7 +177,20 @@ export function ImageStudio({
       }
       
       const data: any = await res.json();
-      if (!data?.job_id) throw new Error('后端没有返回任务编号');
+      if (!data?.job_id) {
+        const immediateResult = data?.result || data;
+        const out: string[] = [];
+        if (Array.isArray(immediateResult?.images) && immediateResult.images[0]) {
+          out.push(...immediateResult.images.map((b64: string) => `data:image/png;base64,${b64}`));
+        }
+        if (Array.isArray(immediateResult?.urls) && immediateResult.urls[0]) {
+          out.push(...immediateResult.urls);
+        }
+        if (out.length === 0) throw new Error('生图已完成，但没有返回图片');
+        setResults(out);
+        setJobHint('');
+        return;
+      }
       setJobHint('任务已提交，正在后台生成...');
 
       const pollJob = async (jobId: string, attempt = 0): Promise<void> => {
