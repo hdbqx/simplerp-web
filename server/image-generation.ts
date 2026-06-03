@@ -1,6 +1,11 @@
 type ImageBackend = 'huggingface' | 'openai' | 'modelscope';
 type ImageAction = 'txt2img' | 'img2img';
 
+const DASHSCOPE_SYNC_PATH = '/api/v1/services/aigc/multimodal-generation/generation';
+const DASHSCOPE_ASYNC_PATH = '/api/v1/services/aigc/text2image/image-synthesis';
+const DASHSCOPE_TASKS_PATH = '/api/v1/tasks';
+const ASYNC_QWEN_IMAGE_MODELS = new Set(['qwen-image', 'qwen-image-plus']);
+
 export interface ImageProxyBody {
   backend: ImageBackend;
   action?: ImageAction;
@@ -80,6 +85,88 @@ const getComfyUIWorkflow = (promptText: string) => {
 
 function normalizeBase(input: string): string {
   return (input || '').trim().replace(/\/+$/, '');
+}
+
+function isDashScopeHost(input?: string): boolean {
+  if (!input) return false;
+  try {
+    const url = new URL(input);
+    return /(^|\.)dashscope(?:-intl|-us)?\.aliyuncs\.com$/i.test(url.hostname) || /(^|\.)maas\.aliyuncs\.com$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isBailianQwenImage(apiBase?: string, model?: string): boolean {
+  const normalizedModel = (model || '').trim().toLowerCase();
+  return normalizedModel.startsWith('qwen-image') || isDashScopeHost(apiBase);
+}
+
+function supportsDashScopeAsync(model: string): boolean {
+  const normalizedModel = model.trim().toLowerCase();
+  return ASYNC_QWEN_IMAGE_MODELS.has(normalizedModel);
+}
+
+function buildDashScopeEndpoint(input: string | undefined, path: string): string {
+  const fallbackOrigin = 'https://dashscope.aliyuncs.com';
+  if (!input) return `${fallbackOrigin}${path}`;
+
+  try {
+    const url = new URL(input);
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (
+      pathname.endsWith('/multimodal-generation/generation') ||
+      pathname.endsWith('/text2image/image-synthesis') ||
+      pathname.startsWith('/compatible-mode/') ||
+      pathname === '/api/v1' ||
+      pathname === '/api/v1/' ||
+      pathname === ''
+    ) {
+      return `${url.origin}${path}`;
+    }
+    if (pathname.startsWith('/api/v1/services/aigc/')) {
+      return `${url.origin}${path}`;
+    }
+    return `${url.origin}${path}`;
+  } catch {
+    return `${fallbackOrigin}${path}`;
+  }
+}
+
+function buildDashScopeTasksEndpoint(input: string | undefined, taskId: string): string {
+  const base = buildDashScopeEndpoint(input, DASHSCOPE_TASKS_PATH);
+  return `${base}/${encodeURIComponent(taskId)}`;
+}
+
+function normalizeDashScopeSize(input: unknown, model: string): string {
+  const normalizedModel = model.trim().toLowerCase();
+  const defaultSize = normalizedModel.startsWith('qwen-image-2.0') ? '2048*2048' : '1664*928';
+  if (typeof input !== 'string') return defaultSize;
+  const trimmed = input.trim();
+  if (!trimmed) return defaultSize;
+  return trimmed.replace(/x/gi, '*');
+}
+
+function getBailianImagesFromResponse(data: any): any[] {
+  const syncContent = data?.output?.choices?.flatMap((choice: any) => choice?.message?.content || []) || [];
+  if (syncContent.length > 0) return syncContent;
+  if (Array.isArray(data?.output?.results)) return data.output.results;
+  if (Array.isArray(data?.output?.images)) return data.output.images;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.images)) return data.images;
+  if (data?.output?.url) return [{ url: data.output.url }];
+  if (data?.url) return [{ url: data.url }];
+  return [];
+}
+
+async function parseJsonOrText(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 function generateImageKey(charId?: number, roomId?: number): string {
@@ -321,6 +408,136 @@ async function handleOpenAiCompatible(
   return await processImageResults(env, images, charId, roomId, prompt);
 }
 
+async function handleBailian(
+  env: ImageGenerationEnv,
+  body: ImageProxyBody,
+  prompt: string,
+  charId?: number,
+  roomId?: number,
+) {
+  const apiKey = body.apiKey;
+  if (!apiKey) throw new Error('请配置阿里云百练 API Key');
+
+  const payload = (body.payload || {}) as Record<string, unknown>;
+  const model = body.model;
+  const wantsAsync =
+    payload.use_async === true ||
+    payload.dashscope_async === true ||
+    normalizeBase(body.apiBase || '').includes('/text2image/image-synthesis');
+
+  const negativePrompt = typeof payload.negative_prompt === 'string' ? payload.negative_prompt : undefined;
+  const size = normalizeDashScopeSize(payload.size, model);
+  const promptExtend = typeof payload.prompt_extend === 'boolean' ? payload.prompt_extend : true;
+  const watermark = typeof payload.watermark === 'boolean' ? payload.watermark : false;
+  const seed = Number.isFinite(payload.seed as number) ? Number(payload.seed) : undefined;
+  const requestedCount = Number.isFinite(payload.n as number) ? Number(payload.n) : 1;
+  const imageCount = model.trim().toLowerCase().startsWith('qwen-image-2.0')
+    ? Math.min(Math.max(requestedCount, 1), 6)
+    : 1;
+
+  const parameters: Record<string, unknown> = {
+    size,
+    n: imageCount,
+    prompt_extend: promptExtend,
+    watermark,
+  };
+  if (negativePrompt) parameters.negative_prompt = negativePrompt;
+  if (seed !== undefined) parameters.seed = seed;
+
+  if (wantsAsync && supportsDashScopeAsync(model)) {
+    const endpoint = buildDashScopeEndpoint(body.apiBase, DASHSCOPE_ASYNC_PATH);
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify({
+        model,
+        input: {
+          prompt,
+        },
+        parameters,
+      }),
+    });
+
+    const data = await parseJsonOrText(res);
+    if (!res.ok) {
+      throw new Error(typeof data === 'string' ? data : data?.message || data?.error || '阿里云百练生图请求失败');
+    }
+
+    const taskId = data?.output?.task_id || data?.task_id;
+    if (!taskId) {
+      const images = getBailianImagesFromResponse(data);
+      if (images.length > 0) return await processImageResults(env, images, charId, roomId, prompt);
+      throw new Error('阿里云百练异步生图未返回 task_id');
+    }
+
+    const taskEndpoint = buildDashScopeTasksEndpoint(body.apiBase, taskId);
+    for (let index = 0; index < 90; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, index < 6 ? 2000 : 4000));
+      const taskRes = await fetch(taskEndpoint, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      });
+      const taskData = await parseJsonOrText(taskRes);
+      if (!taskRes.ok) {
+        if (index === 89) {
+          throw new Error(typeof taskData === 'string' ? taskData : taskData?.message || '阿里云百练任务查询失败');
+        }
+        continue;
+      }
+
+      const taskStatus = taskData?.output?.task_status || taskData?.task_status;
+      if (taskStatus === 'SUCCEEDED') {
+        const images = getBailianImagesFromResponse(taskData);
+        if (images.length > 0) return await processImageResults(env, images, charId, roomId, prompt);
+        throw new Error('阿里云百练任务已完成，但未返回图片结果');
+      }
+      if (taskStatus === 'FAILED' || taskStatus === 'CANCELED' || taskStatus === 'UNKNOWN') {
+        throw new Error(taskData?.output?.message || taskData?.message || `阿里云百练任务状态异常：${taskStatus}`);
+      }
+    }
+
+    throw new Error('阿里云百练异步生图等待超时');
+  }
+
+  const endpoint = buildDashScopeEndpoint(body.apiBase, DASHSCOPE_SYNC_PATH);
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      input: {
+        messages: [
+          {
+            role: 'user',
+            content: [{ text: prompt }],
+          },
+        ],
+      },
+      parameters,
+    }),
+  });
+
+  const data = await parseJsonOrText(res);
+  if (!res.ok) {
+    throw new Error(typeof data === 'string' ? data : data?.message || data?.error || '阿里云百练生图请求失败');
+  }
+
+  const images = getBailianImagesFromResponse(data);
+  if (images.length > 0) {
+    return await processImageResults(env, images, charId, roomId, prompt);
+  }
+
+  throw new Error('阿里云百练返回成功，但未解析到图片结果');
+}
+
 export async function runImageGeneration(env: ImageGenerationEnv, body: ImageProxyBody) {
   const backend: ImageBackend = body.backend || 'openai';
   const rawPrompt = body.payload?.prompt || body.prompt || '';
@@ -336,6 +553,10 @@ export async function runImageGeneration(env: ImageGenerationEnv, body: ImagePro
 
   if (backend === 'huggingface') {
     return await handleComfyUi(env, body, prompt, charId, roomId);
+  }
+
+  if (backend === 'openai' && isBailianQwenImage(body.apiBase, body.model)) {
+    return await handleBailian(env, body, prompt, charId, roomId);
   }
 
   return await handleOpenAiCompatible(env, body, prompt, charId, roomId);

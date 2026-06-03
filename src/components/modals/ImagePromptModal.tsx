@@ -50,7 +50,7 @@ export function ImagePromptModal({
             后端：
             <b>
               {settings?.image_backend === 'openai'
-                ? 'OpenAI'
+                ? 'OpenAI / 百练'
                 : settings?.image_backend === 'modelscope'
                   ? 'ModelScope'
                   : 'ComfyUI'}

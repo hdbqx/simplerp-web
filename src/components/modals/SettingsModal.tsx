@@ -137,7 +137,7 @@ export function SettingsModal({
               </div>
 
               <div className="rounded-xl border border-base-300 p-4">
-                <div className="mb-3 text-xs font-black">OpenAI 生图接口</div>
+                <div className="mb-3 text-xs font-black">OpenAI / 火山 / 百练 预设接口</div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="form-control">
                     <label className="label text-xs font-bold">预设</label>
@@ -187,6 +187,9 @@ export function SettingsModal({
                         ))}
                     </select>
                   </div>
+                </div>
+                <div className="mt-2 text-[10px] opacity-60">
+                  可用于 OpenAI 兼容图片接口，也可用于阿里云百练千问生图。若模型名为 `qwen-image` 系列或域名为 `dashscope.aliyuncs.com`，后端会自动切换为百练专用请求格式。
                 </div>
               </div>
 
