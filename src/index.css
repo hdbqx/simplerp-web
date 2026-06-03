@@ -146,12 +146,15 @@ body {
 }
 
 .prose pre {
-  @apply my-3 overflow-x-auto rounded-xl border border-white/5 bg-[#1e1e1e] p-3 text-xs shadow-inner;
+  @apply my-3 overflow-x-auto rounded-xl border border-white/5 bg-[#1e1e1e] p-0 text-xs shadow-inner;
+  white-space: pre-wrap;
 }
 
 .prose pre code {
-  @apply bg-transparent p-0 text-gray-300;
-  white-space: pre;
+  @apply block bg-transparent px-4 py-3 text-gray-300;
+  white-space: inherit;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .prose img {

@@ -109,6 +109,30 @@ export const MessageList = memo(function MessageList({
           loading="lazy"
         />
       ),
+      pre: ({ children, ...props }: any) => (
+        <pre
+          {...props}
+          className="my-3 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/95 shadow-inner"
+        >
+          {children}
+        </pre>
+      ),
+      code: ({ inline, className, children, ...props }: any) =>
+        inline ? (
+          <code
+            {...props}
+            className={`rounded-md bg-base-300 px-1.5 py-0.5 font-mono text-xs text-secondary ${className || ''}`.trim()}
+          >
+            {children}
+          </code>
+        ) : (
+          <code
+            {...props}
+            className={`block whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12px] leading-6 text-slate-100 ${className || ''}`.trim()}
+          >
+            {children}
+          </code>
+        ),
     }),
     [],
   );
