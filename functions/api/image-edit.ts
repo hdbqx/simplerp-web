@@ -12,7 +12,8 @@ type ImageEditBody = {
   apiKey?: string;
   apiBase?: string;
   prompt: string;
-  image: string;
+  image?: string;
+  source_key?: string;
   strength?: number;
   char_id?: number;
   room_id?: number;
@@ -279,16 +280,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     };
     if (!normalizedBody.model) return Response.json({ error: '缺少图生图模型。' }, { status: 400 });
 
-    const result =
-      normalizedBody.backend === 'huggingface'
-        ? await handleComfyEdit(context.env, normalizedBody)
-        : normalizedBody.backend === 'modelscope'
-          ? await handleModelScopeEdit(context.env, normalizedBody)
-          : isDashScopeModel(normalizedBody.apiBase, normalizedBody.model)
-            ? await handleDashScopeEdit(context.env, normalizedBody)
-            : await handleOpenAiEdit(context.env, normalizedBody);
+    try {
+      const result =
+        normalizedBody.backend === 'huggingface'
+          ? await handleComfyEdit(context.env, normalizedBody)
+          : normalizedBody.backend === 'modelscope'
+            ? await handleModelScopeEdit(context.env, normalizedBody)
+            : isDashScopeModel(normalizedBody.apiBase, normalizedBody.model)
+              ? await handleDashScopeEdit(context.env, normalizedBody)
+              : await handleOpenAiEdit(context.env, normalizedBody);
 
-    return Response.json(result);
+      return Response.json(result);
+    } finally {
+      if (body.source_key?.startsWith('studio-sources/')) {
+        await context.env.IMAGES_BUCKET.delete(body.source_key).catch(() => undefined);
+      }
+    }
   } catch (error: any) {
     return Response.json({ error: error?.message || '图生图失败。' }, { status: 500 });
   }
