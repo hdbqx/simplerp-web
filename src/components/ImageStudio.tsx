@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { Component, useEffect, useRef, useState, type ChangeEvent, type ErrorInfo, type ReactNode } from 'react';
 import { Image as ImageIcon, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import type { ApiMode, ApiPreset, Settings } from '../lib/db';
 
@@ -23,12 +23,56 @@ type GalleryImage = {
   created_at?: number;
 };
 
-const BUILD_MARK = 'gallery-v2-multipart';
+const BUILD_MARK = 'gallery-debug-v1';
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SINGLE_IMAGE_HINT = '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
 
-export function ImageStudio({
+
+type StudioErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type StudioErrorBoundaryState = {
+  error: Error | null;
+};
+
+class StudioErrorBoundary extends Component<StudioErrorBoundaryProps, StudioErrorBoundaryState> {
+  state: StudioErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): StudioErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('ImageStudio render error:', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="alert alert-error flex-col items-start">
+            <div className="font-black">生图工作台发生前端异常</div>
+            <pre className="max-w-full whitespace-pre-wrap break-all text-xs">
+              {this.state.error.message}
+              {'\n'}
+              {this.state.error.stack || ''}
+            </pre>
+            <button className="btn btn-sm" onClick={() => location.reload()}>
+              刷新页面
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function ImageStudioInner({
+
   settings,
   presets,
   activePresetId,
@@ -46,6 +90,8 @@ export function ImageStudio({
   const [loading, setLoading] = useState(false);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [error, setError] = useState('');
+  const [phase, setPhase] = useState('idle');
+  const [runtimeError, setRuntimeError] = useState('');
   const [viewerSrc, setViewerSrc] = useState('');
   const mountedRef = useRef(true);
 
@@ -57,9 +103,31 @@ export function ImageStudio({
   useEffect(() => {
     mountedRef.current = true;
     void loadGallery();
+
+    const handleWindowError = (event: ErrorEvent) => {
+      const message = `${event.message || 'Unknown error'}\n${event.error?.stack || ''}`;
+      console.error('ImageStudio window error:', event.error || event.message);
+      setRuntimeError(message);
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        reason instanceof Error
+          ? `${reason.message}\n${reason.stack || ''}`
+          : String(reason || 'Unhandled promise rejection');
+      console.error('ImageStudio unhandled rejection:', reason);
+      setRuntimeError(message);
+    };
+
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
     return () => {
       mountedRef.current = false;
       if (sourcePreview) URL.revokeObjectURL(sourcePreview);
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
   }, []);
 
@@ -153,10 +221,14 @@ export function ImageStudio({
 
     setLoading(true);
     setError('');
+    setRuntimeError('');
+    setPhase('准备请求');
 
     try {
+      setPhase('读取系统配置');
       const config = getConfig();
       const finalPrompt = `${prompt.trim()}\n${SINGLE_IMAGE_HINT}`;
+      setPhase('构建请求');
       const endpoint = mode === 'img2img' ? '/api/image-edit' : '/api/images';
 
       let response: Response;
@@ -164,8 +236,13 @@ export function ImageStudio({
       if (mode === 'img2img') {
         if (!sourceFile) throw new Error('请先上传原图。');
 
+        const uploadFile = sourceFile;
+        if (sourcePreview) URL.revokeObjectURL(sourcePreview);
+        setSourcePreview('');
+        setPhase('准备上传原图');
+
         const form = new FormData();
-        form.append('image', sourceFile, sourceFile.name);
+        form.append('image', uploadFile, uploadFile.name);
         form.append('backend', backend);
         form.append('model', String(config.model || ''));
         form.append('prompt', finalPrompt);
@@ -176,11 +253,14 @@ export function ImageStudio({
         if ('apiBase' in config && config.apiBase) form.append('apiBase', String(config.apiBase));
         if ('apiKey' in config && config.apiKey) form.append('apiKey', String(config.apiKey));
 
+        setPhase('上传原图并等待后端');
         response = await fetch('/api/image-edit', {
           method: 'POST',
           body: form,
         });
+        setPhase('读取后端响应');
       } else {
+        setPhase('发送文生图请求');
         response = await fetch('/api/images', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -199,6 +279,7 @@ export function ImageStudio({
           }),
         });
       }
+      setPhase('解析响应');
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || '生成失败。');
 
@@ -208,9 +289,14 @@ export function ImageStudio({
       setSourcePreview('');
       setSourceName('');
       setPrompt('');
+      setPhase('刷新画廊');
       await loadGallery();
+      setPhase('完成');
     } catch (nextError: any) {
+      console.error('ImageStudio generation error:', nextError);
+      setRuntimeError(nextError?.stack || '');
       setError(nextError?.message || '生成失败。');
+      setPhase('失败');
     } finally {
       setLoading(false);
     }
@@ -276,9 +362,20 @@ export function ImageStudio({
 
               <textarea className="textarea textarea-bordered h-24 font-mono text-xs" value={extraJson} onChange={(event) => setExtraJson(event.target.value)} placeholder='高级参数 JSON，例如 {"watermark": false}' />
 
+              <div className="rounded-lg border border-base-300 bg-base-100/50 p-2 text-[11px]">
+                当前阶段：<b>{phase}</b>
+              </div>
+
               {error && <div className="alert alert-error py-2 text-xs">{error}</div>}
 
-              <button className="btn btn-primary" disabled={loading} onClick={run}>
+              {runtimeError && (
+                <div className="alert alert-warning flex-col items-start py-2 text-xs">
+                  <div className="font-bold">前端错误详情</div>
+                  <pre className="max-w-full whitespace-pre-wrap break-all">{runtimeError}</pre>
+                </div>
+              )}
+
+              <button type="button" className="btn btn-primary" disabled={loading} onClick={() => void run()}>
                 {loading && <span className="loading loading-spinner loading-sm" />}
                 {mode === 'img2img' ? '开始图片编辑' : '开始生成'}
               </button>
@@ -335,5 +432,13 @@ export function ImageStudio({
         </div>
       )}
     </div>
+  );
+}
+
+export function ImageStudio(props: Props) {
+  return (
+    <StudioErrorBoundary>
+      <ImageStudioInner {...props} />
+    </StudioErrorBoundary>
   );
 }
