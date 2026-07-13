@@ -23,7 +23,7 @@ type GalleryImage = {
   created_at?: number;
 };
 
-const BUILD_MARK = 'gallery-v2-memory-fix';
+const BUILD_MARK = 'gallery-v2-multipart';
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SINGLE_IMAGE_HINT = '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
@@ -132,23 +132,6 @@ export function ImageStudio({
     };
   };
 
-  const uploadSourceImage = async (file: File) => {
-    const form = new FormData();
-    form.append('image', file);
-
-    const response = await fetch('/api/image-source', {
-      method: 'POST',
-      body: form,
-    });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(data?.error || '原图上传失败。');
-    }
-    if (!data?.key) {
-      throw new Error('原图上传成功，但没有返回存储键。');
-    }
-    return String(data.key);
-  };
 
   const run = async () => {
     if (!prompt.trim()) {
@@ -176,41 +159,46 @@ export function ImageStudio({
       const finalPrompt = `${prompt.trim()}\n${SINGLE_IMAGE_HINT}`;
       const endpoint = mode === 'img2img' ? '/api/image-edit' : '/api/images';
 
-      const sourceKey =
-        mode === 'img2img' && sourceFile
-          ? await uploadSourceImage(sourceFile)
-          : undefined;
+      let response: Response;
 
-      const body =
-        mode === 'img2img'
-          ? {
-              backend,
-              ...config,
+      if (mode === 'img2img') {
+        if (!sourceFile) throw new Error('请先上传原图。');
+
+        const form = new FormData();
+        form.append('image', sourceFile, sourceFile.name);
+        form.append('backend', backend);
+        form.append('model', String(config.model || ''));
+        form.append('prompt', finalPrompt);
+        form.append('strength', String(strength));
+        form.append('storage_scope', 'studio');
+        form.append('extra', JSON.stringify(extra));
+
+        if ('apiBase' in config && config.apiBase) form.append('apiBase', String(config.apiBase));
+        if ('apiKey' in config && config.apiKey) form.append('apiKey', String(config.apiKey));
+
+        response = await fetch('/api/image-edit', {
+          method: 'POST',
+          body: form,
+        });
+      } else {
+        response = await fetch('/api/images', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            backend,
+            ...config,
+            defer: false,
+            storage_scope: 'studio',
+            payload: {
+              ...extra,
               prompt: finalPrompt,
-              source_key: sourceKey,
-              strength,
-              storage_scope: 'studio',
-              extra,
-            }
-          : {
-              backend,
-              ...config,
-              defer: false,
-              storage_scope: 'studio',
-              payload: {
-                ...extra,
-                prompt: finalPrompt,
-                size,
-                n: 1,
-                response_format: 'b64_json',
-              },
-            };
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+              size,
+              n: 1,
+              response_format: 'b64_json',
+            },
+          }),
+        });
+      }
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || '生成失败。');
 
