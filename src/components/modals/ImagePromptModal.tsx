@@ -1,6 +1,7 @@
 import { ImagePlus, Sparkles, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import type { Settings } from '../../lib/db';
+import { api, type Message, type RoomMessage, type Settings } from '../../lib/db';
+import { useChatStore } from '../../lib/chat-store';
 import { useAppStore } from '../../lib/store';
 
 type ImagePromptModalProps = {
@@ -17,6 +18,7 @@ type ImagePromptModalProps = {
 type GenerationMode = 'txt2img' | 'img2img';
 
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
+const SINGLE_IMAGE_HINT = '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -48,12 +50,23 @@ export function ImagePromptModal({
   const backendLabel = useMemo(
     () =>
       settings?.image_backend === 'openai'
-        ? 'OpenAI / 百练'
+        ? '阿里云百练 / OpenAI 兼容'
         : settings?.image_backend === 'modelscope'
           ? 'ModelScope'
           : 'ComfyUI',
     [settings?.image_backend],
   );
+
+  const isBailianBackend = useMemo(() => {
+    if (settings?.image_backend !== 'openai') return false;
+    const state = useAppStore.getState();
+    const preset =
+      state.presets.find((item) => item.id === settings.image_preset_id) ||
+      state.presets.find((item) => item.id === state.activePresetId);
+    const model = (settings.image_model_id || state.activeModel || '').toLowerCase();
+    const apiBase = (preset?.api_base || '').toLowerCase();
+    return model.startsWith('qwen-image-edit') || apiBase.includes('dashscope') || apiBase.includes('aliyuncs.com');
+  }, [settings]);
 
   useEffect(() => {
     if (!show) {
@@ -97,6 +110,41 @@ export function ImagePromptModal({
     }
   };
 
+  const saveResultToConversation = async (imageUrl: string) => {
+    const state = useAppStore.getState();
+    const timestamp = Date.now();
+
+    if (state.viewMode === 'char' && state.selectedCharId) {
+      const message: Message = {
+        role: 'assistant',
+        content: '',
+        image: imageUrl,
+        timestamp,
+        char_id: state.selectedCharId,
+      };
+      const saved = await api.messages.add(message);
+      useChatStore.getState().setMessages((current) => [...current, { ...message, id: saved.id }]);
+      return;
+    }
+
+    if (state.viewMode === 'group' && state.selectedRoomId) {
+      const message: RoomMessage = {
+        room_id: state.selectedRoomId,
+        role: 'assistant',
+        sender_type: 'agent',
+        content: '',
+        image: imageUrl,
+        timestamp,
+      };
+      await api.roomMessages.add(message);
+      window.dispatchEvent(
+        new CustomEvent('simplerp:conversation-image-added', {
+          detail: { viewMode: 'group', roomId: state.selectedRoomId },
+        }),
+      );
+    }
+  };
+
   const handleImg2Img = async () => {
     if (!sourceImage) {
       setEditError('请先上传原图。');
@@ -122,11 +170,12 @@ export function ImagePromptModal({
 
     const request: Record<string, unknown> = {
       backend: imageBackend,
-      prompt: prompt.trim(),
+      prompt: `${prompt.trim()}\n${SINGLE_IMAGE_HINT}`,
       image: sourceImage,
       strength,
       char_id: state.viewMode === 'char' ? state.selectedCharId : undefined,
       room_id: state.viewMode === 'group' ? state.selectedRoomId : undefined,
+      storage_scope: 'chat',
     };
 
     if (imageBackend === 'huggingface') {
@@ -144,13 +193,13 @@ export function ImagePromptModal({
       request.apiKey = currentSettings.modelscope_api_key;
       request.model = currentSettings.modelscope_model || 'Tongyi-MAI/Z-Image-Turbo';
     } else {
-      if (!imagePreset || !imageModel) {
-        setEditError('请先配置生图预设与模型。');
+      if (!imagePreset) {
+        setEditError('请先配置生图预设。');
         return;
       }
       request.apiBase = imagePreset.api_base;
       request.apiKey = imagePreset.api_key;
-      request.model = imageModel;
+      request.model = imageModel || 'qwen-image-edit-plus';
     }
 
     setIsEditing(true);
@@ -170,6 +219,8 @@ export function ImagePromptModal({
 
       const nextUrl = Array.isArray(data?.urls) ? data.urls[0] : '';
       if (!nextUrl) throw new Error('生成完成，但未返回图片。');
+
+      await saveResultToConversation(nextUrl);
       setResultUrl(nextUrl);
     } catch (error: any) {
       setEditError(error?.message || '图生图失败。');
@@ -186,18 +237,10 @@ export function ImagePromptModal({
         </h3>
 
         <div className="tabs tabs-boxed mb-4">
-          <button
-            type="button"
-            className={`tab flex-1 ${mode === 'txt2img' ? 'tab-active' : ''}`}
-            onClick={() => setMode('txt2img')}
-          >
+          <button type="button" className={`tab flex-1 ${mode === 'txt2img' ? 'tab-active' : ''}`} onClick={() => setMode('txt2img')}>
             文生图
           </button>
-          <button
-            type="button"
-            className={`tab flex-1 ${mode === 'img2img' ? 'tab-active' : ''}`}
-            onClick={() => setMode('img2img')}
-          >
+          <button type="button" className={`tab flex-1 ${mode === 'img2img' ? 'tab-active' : ''}`} onClick={() => setMode('img2img')}>
             图生图
           </button>
         </div>
@@ -214,37 +257,28 @@ export function ImagePromptModal({
             ) : (
               <div className="relative overflow-hidden rounded-2xl border border-base-300 bg-base-200">
                 <img src={sourceImage} alt="图生图原图预览" className="max-h-72 w-full object-contain" />
-                <button
-                  type="button"
-                  className="btn btn-circle btn-sm absolute right-3 top-3"
-                  onClick={clearSource}
-                  aria-label="移除原图"
-                >
+                <button type="button" className="btn btn-circle btn-sm absolute right-3 top-3" onClick={clearSource} aria-label="移除原图">
                   <X className="h-4 w-4" />
                 </button>
                 <div className="truncate border-t border-base-300 px-3 py-2 text-xs opacity-70">{sourceName}</div>
               </div>
             )}
 
-            <label className="form-control">
-              <div className="label">
-                <span className="label-text font-bold">重绘强度</span>
-                <span className="label-text-alt">{strength.toFixed(2)}</span>
+            {!isBailianBackend && (
+              <label className="form-control">
+                <div className="label">
+                  <span className="label-text font-bold">重绘强度</span>
+                  <span className="label-text-alt">{strength.toFixed(2)}</span>
+                </div>
+                <input type="range" min="0.1" max="1" step="0.05" value={strength} className="range range-primary range-sm" onChange={(event) => setStrength(Number(event.target.value))} />
+              </label>
+            )}
+
+            {isBailianBackend && (
+              <div className="alert py-2 text-xs">
+                百练图像编辑直接理解原图与编辑指令，不使用传统重绘强度参数。
               </div>
-              <input
-                type="range"
-                min="0.1"
-                max="1"
-                step="0.05"
-                value={strength}
-                className="range range-primary range-sm"
-                onChange={(event) => setStrength(Number(event.target.value))}
-              />
-              <div className="mt-1 flex justify-between text-[11px] opacity-55">
-                <span>保留更多原图</span>
-                <span>允许更大改动</span>
-              </div>
-            </label>
+            )}
           </div>
         )}
 
@@ -252,69 +286,36 @@ export function ImagePromptModal({
           className="textarea textarea-bordered h-32 w-full text-base"
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
-          placeholder={
-            mode === 'img2img'
-              ? '描述希望如何修改原图，例如：保持人物姿势，将背景改为雨夜霓虹街道...'
-              : '描述你想生成的画面细节，支持自然语言输入...'
-          }
+          placeholder={mode === 'img2img' ? '描述希望如何修改原图，例如：保持人物姿势，将背景改为雨夜霓虹街道...' : '描述你想生成的画面细节，支持自然语言输入...'}
         />
 
         {mode === 'txt2img' && (
           <div className="mt-3 flex items-center gap-4 text-xs">
             <label className="flex cursor-pointer items-center gap-2 font-bold">
-              <input
-                type="checkbox"
-                className="checkbox checkbox-primary checkbox-sm"
-                checked={useSdPromptConversion}
-                onChange={(event) => onUseSdPromptConversionChange(event.target.checked)}
-              />
+              <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(event) => onUseSdPromptConversionChange(event.target.checked)} />
               启用提示词转换
             </label>
-            <span className="opacity-70">
-              后端：<b>{backendLabel}</b>
-            </span>
+            <span className="opacity-70">后端：<b>{backendLabel}</b></span>
           </div>
         )}
 
-        {mode === 'img2img' && (
-          <div className="mt-3 text-xs opacity-70">
-            后端：<b>{backendLabel}</b>。生成结果会自动写入图片库。
-          </div>
-        )}
-
+        {mode === 'img2img' && <div className="mt-3 text-xs opacity-70">生成结果会保存并立即添加到当前对话记录。</div>}
         {editError && <div className="alert alert-error mt-4 py-2 text-sm">{editError}</div>}
 
         {resultUrl && (
           <div className="mt-4 rounded-2xl border border-success/30 bg-success/5 p-3">
             <div className="mb-2 flex items-center gap-2 text-sm font-bold text-success">
-              <ImagePlus className="h-4 w-4" /> 图生图完成
+              <ImagePlus className="h-4 w-4" /> 图生图完成，已加入对话
             </div>
             <img src={resultUrl} alt="图生图结果" className="max-h-80 w-full rounded-xl object-contain" />
-            <a className="btn btn-sm btn-success mt-3 w-full" href={resultUrl} target="_blank" rel="noreferrer">
-              查看原图
-            </a>
           </div>
         )}
 
         <div className="modal-action flex gap-2">
-          <button
-            className="btn btn-primary flex-1 shadow-lg"
-            onClick={mode === 'img2img' ? handleImg2Img : onConfirm}
-            disabled={isEditing}
-          >
-            {isEditing ? (
-              <>
-                <span className="loading loading-spinner loading-sm" /> 正在重绘
-              </>
-            ) : mode === 'img2img' ? (
-              '开始图生图'
-            ) : (
-              '开始生成'
-            )}
+          <button className="btn btn-primary flex-1 shadow-lg" onClick={mode === 'img2img' ? handleImg2Img : onConfirm} disabled={isEditing}>
+            {isEditing ? <><span className="loading loading-spinner loading-sm" /> 正在重绘</> : mode === 'img2img' ? '开始图生图' : '开始生成'}
           </button>
-          <button className="btn flex-1" onClick={onClose} disabled={isEditing}>
-            取消
-          </button>
+          <button className="btn flex-1" onClick={onClose} disabled={isEditing}>取消</button>
         </div>
       </div>
     </div>
