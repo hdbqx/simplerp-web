@@ -13,7 +13,6 @@ type ImageEditBody = {
   apiBase?: string;
   prompt: string;
   image?: string;
-  source_key?: string;
   strength?: number;
   char_id?: number;
   room_id?: number;
@@ -48,6 +47,55 @@ function dataUrlToBytes(dataUrl: string): { bytes: Uint8Array; mimeType: string 
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return { bytes, mimeType: match[1] || 'image/png' };
+}
+
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  const mimeType = file.type || 'image/png';
+  return `data:${mimeType};base64,${arrayBufferToBase64(await file.arrayBuffer())}`;
+}
+
+function parseExtraJson(value: FormDataEntryValue | null): Record<string, unknown> {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  const parsed = JSON.parse(value);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+}
+
+async function parseImageEditRequest(request: Request): Promise<ImageEditBody> {
+  const contentType = request.headers.get('content-type') || '';
+  if (!contentType.includes('multipart/form-data')) {
+    return await request.json() as ImageEditBody;
+  }
+
+  const form = await request.formData();
+  const image = form.get('image');
+  if (!(image instanceof File)) throw new Error('缺少有效原图文件。');
+  if (!image.type.startsWith('image/')) throw new Error('上传文件不是有效图片。');
+  if (image.size > 10 * 1024 * 1024) throw new Error('原图不能超过 10 MB。');
+
+  return {
+    backend: String(form.get('backend') || 'openai') as ImageBackend,
+    model: String(form.get('model') || ''),
+    apiKey: typeof form.get('apiKey') === 'string' ? String(form.get('apiKey')) : undefined,
+    apiBase: typeof form.get('apiBase') === 'string' ? String(form.get('apiBase')) : undefined,
+    prompt: String(form.get('prompt') || ''),
+    image: await fileToDataUrl(image),
+    strength: Number(form.get('strength') || 0.65),
+    storage_scope: String(form.get('storage_scope') || 'studio') as StorageScope,
+    extra: parseExtraJson(form.get('extra')),
+  };
 }
 
 function generateImageKey(body: ImageEditBody): string {
@@ -268,7 +316,7 @@ async function handleComfyEdit(env: Env, body: ImageEditBody) {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
-    const body = (await context.request.json()) as ImageEditBody;
+    const body = await parseImageEditRequest(context.request);
     if (!body.prompt?.trim()) return Response.json({ error: '缺少修改提示词。' }, { status: 400 });
     if (!body.image?.startsWith('data:image/')) return Response.json({ error: '缺少有效原图。' }, { status: 400 });
 
@@ -280,22 +328,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     };
     if (!normalizedBody.model) return Response.json({ error: '缺少图生图模型。' }, { status: 400 });
 
-    try {
-      const result =
-        normalizedBody.backend === 'huggingface'
-          ? await handleComfyEdit(context.env, normalizedBody)
-          : normalizedBody.backend === 'modelscope'
-            ? await handleModelScopeEdit(context.env, normalizedBody)
-            : isDashScopeModel(normalizedBody.apiBase, normalizedBody.model)
-              ? await handleDashScopeEdit(context.env, normalizedBody)
-              : await handleOpenAiEdit(context.env, normalizedBody);
+    const result =
+      normalizedBody.backend === 'huggingface'
+        ? await handleComfyEdit(context.env, normalizedBody)
+        : normalizedBody.backend === 'modelscope'
+          ? await handleModelScopeEdit(context.env, normalizedBody)
+          : isDashScopeModel(normalizedBody.apiBase, normalizedBody.model)
+            ? await handleDashScopeEdit(context.env, normalizedBody)
+            : await handleOpenAiEdit(context.env, normalizedBody);
 
-      return Response.json(result);
-    } finally {
-      if (body.source_key?.startsWith('studio-sources/')) {
-        await context.env.IMAGES_BUCKET.delete(body.source_key).catch(() => undefined);
-      }
-    }
+    return Response.json(result);
   } catch (error: any) {
     return Response.json({ error: error?.message || '图生图失败。' }, { status: 500 });
   }
