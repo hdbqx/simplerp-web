@@ -118,6 +118,18 @@ export function useWorkspaceData({
   };
 
   useEffect(() => {
+    const handleConversationImageAdded = (event: Event) => {
+      const detail = (event as CustomEvent<{ viewMode?: string; roomId?: number }>).detail;
+      if (detail?.viewMode === 'group' && detail.roomId && detail.roomId === selectedRoomId) {
+        void api.roomMessages.list(detail.roomId).then(setRoomMessages);
+      }
+    };
+
+    window.addEventListener('simplerp:conversation-image-added', handleConversationImageAdded);
+    return () => window.removeEventListener('simplerp:conversation-image-added', handleConversationImageAdded);
+  }, [selectedRoomId]);
+
+  useEffect(() => {
     if (!showGroupEdit || !selectedRoomId) return;
     api.rooms.getMembers(selectedRoomId).then((members) => setRoomMembersDraft(members as RoomMember[]));
   }, [showGroupEdit, selectedRoomId]);
