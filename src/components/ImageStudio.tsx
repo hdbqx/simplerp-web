@@ -23,18 +23,10 @@ type GalleryImage = {
   created_at?: number;
 };
 
-const BUILD_MARK = 'gallery-v2';
+const BUILD_MARK = 'gallery-v2-memory-fix';
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const SINGLE_IMAGE_HINT = '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('读取图片失败。'));
-    reader.readAsDataURL(file);
-  });
-}
 
 export function ImageStudio({
   settings,
@@ -46,7 +38,8 @@ export function ImageStudio({
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1024x1024');
   const [extraJson, setExtraJson] = useState('');
-  const [sourceImage, setSourceImage] = useState('');
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [sourcePreview, setSourcePreview] = useState('');
   const [sourceName, setSourceName] = useState('');
   const [strength, setStrength] = useState(0.65);
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
@@ -66,6 +59,7 @@ export function ImageStudio({
     void loadGallery();
     return () => {
       mountedRef.current = false;
+      if (sourcePreview) URL.revokeObjectURL(sourcePreview);
     };
   }, []);
 
@@ -111,13 +105,11 @@ export function ImageStudio({
       setError('原图不能超过 10 MB。');
       return;
     }
-    try {
-      setSourceImage(await readFileAsDataUrl(file));
-      setSourceName(file.name);
-      setError('');
-    } catch (nextError: any) {
-      setError(nextError?.message || '读取图片失败。');
-    }
+    if (sourcePreview) URL.revokeObjectURL(sourcePreview);
+    setSourceFile(file);
+    setSourcePreview(URL.createObjectURL(file));
+    setSourceName(file.name);
+    setError('');
   };
 
   const getConfig = () => {
@@ -140,12 +132,30 @@ export function ImageStudio({
     };
   };
 
+  const uploadSourceImage = async (file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+
+    const response = await fetch('/api/image-source', {
+      method: 'POST',
+      body: form,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(data?.error || '原图上传失败。');
+    }
+    if (!data?.key) {
+      throw new Error('原图上传成功，但没有返回存储键。');
+    }
+    return String(data.key);
+  };
+
   const run = async () => {
     if (!prompt.trim()) {
       setError(mode === 'img2img' ? '请输入图片编辑指令。' : '请输入提示词。');
       return;
     }
-    if (mode === 'img2img' && !sourceImage) {
+    if (mode === 'img2img' && !sourceFile) {
       setError('请先上传原图。');
       return;
     }
@@ -166,13 +176,18 @@ export function ImageStudio({
       const finalPrompt = `${prompt.trim()}\n${SINGLE_IMAGE_HINT}`;
       const endpoint = mode === 'img2img' ? '/api/image-edit' : '/api/images';
 
+      const sourceKey =
+        mode === 'img2img' && sourceFile
+          ? await uploadSourceImage(sourceFile)
+          : undefined;
+
       const body =
         mode === 'img2img'
           ? {
               backend,
               ...config,
               prompt: finalPrompt,
-              image: sourceImage,
+              source_key: sourceKey,
               strength,
               storage_scope: 'studio',
               extra,
@@ -200,7 +215,9 @@ export function ImageStudio({
       if (!response.ok) throw new Error(data?.error || '生成失败。');
 
       // Release the large Base64 before refreshing the gallery.
-      setSourceImage('');
+      if (sourcePreview) URL.revokeObjectURL(sourcePreview);
+      setSourceFile(null);
+      setSourcePreview('');
       setSourceName('');
       setPrompt('');
       await loadGallery();
@@ -235,7 +252,7 @@ export function ImageStudio({
               <div className="text-sm font-black">输入参数</div>
 
               {mode === 'img2img' && (
-                !sourceImage ? (
+                !sourcePreview ? (
                   <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-base-300">
                     <Upload className="mb-2 text-primary" />
                     <span className="font-bold">上传原图</span>
@@ -243,8 +260,13 @@ export function ImageStudio({
                   </label>
                 ) : (
                   <div className="relative overflow-hidden rounded-xl border border-base-300">
-                    <img src={sourceImage} className="max-h-60 w-full object-contain" />
-                    <button className="btn btn-circle btn-sm absolute right-2 top-2" onClick={() => { setSourceImage(''); setSourceName(''); }}>
+                    <img src={sourcePreview} className="max-h-60 w-full object-contain" />
+                    <button className="btn btn-circle btn-sm absolute right-2 top-2" onClick={() => {
+                      if (sourcePreview) URL.revokeObjectURL(sourcePreview);
+                      setSourceFile(null);
+                      setSourcePreview('');
+                      setSourceName('');
+                    }}>
                       <X size={15} />
                     </button>
                     <div className="truncate border-t border-base-300 p-2 text-xs">{sourceName}</div>
