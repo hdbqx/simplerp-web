@@ -2,6 +2,7 @@ export type ApiMode = 'chat_completions' | 'responses';
 
 export type VariableType = 'number' | 'string' | 'boolean' | 'range' | 'dict' | 'list';
 export type SnapshotType = 'manual' | 'auto' | 'checkpoint' | 'milestone';
+export type ComfyWorkflowMode = 'txt2img' | 'img2img';
 export type LorebookPosition =
   | 'before_system'
   | 'after_system'
@@ -12,6 +13,55 @@ export type LorebookPosition =
   | 'after_ai';
 export type TriggerMode = 'constant' | 'keyword' | 'regex';
 export type MatchLogic = 'any' | 'all' | 'not' | 'expression';
+
+export interface ComfyWorkflowApiNode {
+  inputs: Record<string, any>;
+  class_type: string;
+}
+
+export type ComfyWorkflowApi = Record<string, ComfyWorkflowApiNode>;
+
+export interface ComfyWorkflowLoraSlot {
+  id: string;
+  node_id: string;
+  label: string;
+  lora_name_input: string;
+  strength_model_input?: string;
+  strength_clip_input?: string;
+  default_lora_name?: string;
+  default_strength_model?: number;
+  default_strength_clip?: number;
+}
+
+export interface ComfyWorkflowLoraSelection {
+  enabled?: boolean;
+  lora_name?: string;
+  strength_model?: number;
+  strength_clip?: number;
+}
+
+export interface ComfyWorkflowTemplate {
+  id: string;
+  name: string;
+  mode: ComfyWorkflowMode;
+  workflow_api: ComfyWorkflowApi;
+  prompt_node_id: string;
+  prompt_input_name: string;
+  negative_prompt_node_id?: string;
+  negative_prompt_input_name?: string;
+  source_image_node_id?: string;
+  source_image_input_name?: string;
+  output_node_id: string;
+  width_node_id?: string;
+  width_input_name?: string;
+  height_node_id?: string;
+  height_input_name?: string;
+  denoise_node_id?: string;
+  denoise_input_name?: string;
+  lora_slots?: ComfyWorkflowLoraSlot[];
+  notes?: string;
+  imported_at?: number;
+}
 
 export interface Character {
   id?: number;
@@ -137,6 +187,12 @@ export interface Settings {
   active_model_id?: string;
   prompt_profiles?: PromptProfile[];
   active_prompt_profile_id?: string;
+  comfyui_workflows?: ComfyWorkflowTemplate[];
+  comfyui_lora_catalog?: string;
+  comfyui_quick_txt2img_workflow_id?: string;
+  comfyui_quick_img2img_workflow_id?: string;
+  comfyui_studio_txt2img_workflow_id?: string;
+  comfyui_studio_img2img_workflow_id?: string;
 }
 
 export interface LorebookEntry {
@@ -446,6 +502,18 @@ export const api = {
       fetch(`${API}/async-jobs?id=${encodeURIComponent(id)}`).then(async (r) => {
         if (!r.ok) throw new Error(await r.text());
         return r.json() as Promise<AsyncJob>;
+      }),
+  },
+  comfyui: {
+    listLoras: (apiBase: string, apiKey?: string) =>
+      fetch(`${API}/comfyui`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'loras', apiBase, apiKey }),
+      }).then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.error || 'ComfyUI LoRA 列表拉取失败。');
+        return Array.isArray(data?.loras) ? (data.loras as string[]) : [];
       }),
   },
   variables: {

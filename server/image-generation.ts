@@ -1,3 +1,6 @@
+import { parseSize, prepareComfyWorkflow } from './comfyui-workflows';
+import type { ComfyWorkflowLoraSelection, ComfyWorkflowTemplate } from '../src/lib/db';
+
 type ImageBackend = 'huggingface' | 'openai' | 'modelscope';
 type ImageAction = 'txt2img' | 'img2img';
 
@@ -13,6 +16,8 @@ export interface ImageProxyBody {
   char_id?: number;
   room_id?: number;
   prompt?: string;
+  comfy_workflow?: ComfyWorkflowTemplate | null;
+  comfy_lora_selection?: Record<string, ComfyWorkflowLoraSelection>;
 }
 
 interface ImageGenerationEnv {
@@ -351,7 +356,16 @@ async function handleComfyUi(env: ImageGenerationEnv, body: ImageProxyBody, prom
     throw new Error('请在系统设置的 HF Access Token 框填入完整的 ComfyUI 穿透 URL');
   }
 
-  const workflow = getComfyUIWorkflow(prompt);
+  const { width, height } = parseSize(body.payload?.size);
+  const prepared =
+    prepareComfyWorkflow(body.comfy_workflow || undefined, {
+      prompt,
+      width,
+      height,
+      loraSelection: body.comfy_lora_selection,
+    }) || null;
+  const workflow = prepared?.workflow || getComfyUIWorkflow(prompt);
+  const outputNodeId = prepared?.outputNodeId || '9';
   const promptRes = await fetch(`${comfyUrl}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -377,9 +391,9 @@ async function handleComfyUi(env: ImageGenerationEnv, body: ImageProxyBody, prom
 
   if (!historyData) throw new Error('生成超时（显卡可能正在忙）');
 
-  const outputs = historyData.outputs['9'];
+  const outputs = historyData.outputs[outputNodeId];
   if (!outputs || !outputs.images || outputs.images.length === 0) {
-    throw new Error('工作流跑完了，但节点 9 没有保存图像');
+    throw new Error(`工作流跑完了，但节点 ${outputNodeId} 没有保存图像`);
   }
 
   const { filename, subfolder, type } = outputs.images[0];

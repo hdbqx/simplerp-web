@@ -1,5 +1,6 @@
 import { Copy, Eraser, Plus, Save, Trash2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { ComfyWorkflowManager } from '../comfyui/ComfyWorkflowManager';
 import { api, type ApiMode, type PromptProfile, type Settings } from '../../lib/db';
 import { clonePromptProfile, createDefaultPromptProfile, getActivePromptProfile, getPromptProfiles } from '../../lib/prompt-profiles';
 import { useAppStore } from '../../lib/store';
@@ -156,6 +157,8 @@ export function SettingsModal({
                   />
                 </div>
               </div>
+
+              <ComfyWorkflowManager settings={settings} onSettingsChange={updateSettings} />
 
               <div className="rounded-xl border border-base-300 p-4">
                 <div className="mb-3 text-xs font-black">OpenAI / 火山 / 百练 预设接口</div>

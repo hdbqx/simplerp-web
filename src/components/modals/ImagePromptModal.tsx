@@ -1,6 +1,19 @@
 import { Sparkles, Upload, X } from 'lucide-react';
-import { useMemo, useState, type ChangeEvent } from 'react';
-import { api, type Message, type RoomMessage, type Settings } from '../../lib/db';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { ComfyWorkflowSelector } from '../comfyui/ComfyWorkflowSelector';
+import {
+  buildInitialLoraSelections,
+  cloneLoraSelections,
+  findComfyWorkflow,
+  getDefaultComfyWorkflowId,
+} from '../../lib/comfyui-workflows';
+import {
+  api,
+  type ComfyWorkflowLoraSelection,
+  type Message,
+  type RoomMessage,
+  type Settings,
+} from '../../lib/db';
 import { useAppStore } from '../../lib/store';
 
 type ImagePromptModalProps = {
@@ -10,7 +23,10 @@ type ImagePromptModalProps = {
   settings?: Settings;
   onPromptChange: (value: string) => void;
   onUseSdPromptConversionChange: (checked: boolean) => void;
-  onConfirm: () => void;
+  onConfirm: (options?: {
+    comfyWorkflowId?: string;
+    comfyLoraSelections?: Record<string, ComfyWorkflowLoraSelection>;
+  }) => void;
   onClose: () => void;
 };
 
@@ -44,6 +60,8 @@ export function ImagePromptModal({
   const [strength, setStrength] = useState(0.65);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [loraSelections, setLoraSelections] = useState<Record<string, ComfyWorkflowLoraSelection>>({});
 
   const backendLabel = useMemo(
     () =>
@@ -55,6 +73,12 @@ export function ImagePromptModal({
     [settings?.image_backend],
   );
 
+  useEffect(() => {
+    const nextWorkflowId = getDefaultComfyWorkflowId(settings, 'quick', mode);
+    setSelectedWorkflowId(nextWorkflowId);
+    setLoraSelections(buildInitialLoraSelections(findComfyWorkflow(settings, nextWorkflowId)));
+  }, [settings, mode, show]);
+
   if (!show) return null;
 
   const resetAndClose = () => {
@@ -63,6 +87,18 @@ export function ImagePromptModal({
     setError('');
     setLoading(false);
     onClose();
+  };
+
+  const persistWorkflowSelection = async (workflowId: string) => {
+    const currentSettings = useAppStore.getState().settings;
+    if (!currentSettings) return;
+    const key =
+      mode === 'img2img'
+        ? 'comfyui_quick_img2img_workflow_id'
+        : 'comfyui_quick_txt2img_workflow_id';
+    const nextSettings = { ...currentSettings, [key]: workflowId };
+    useAppStore.getState().setSettings(nextSettings);
+    await api.settings.update(nextSettings);
   };
 
   const handleSourceChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -157,6 +193,8 @@ export function ImagePromptModal({
       char_id: state.viewMode === 'char' ? state.selectedCharId : undefined,
       room_id: state.viewMode === 'group' ? state.selectedRoomId : undefined,
       storage_scope: 'chat',
+      comfy_workflow: findComfyWorkflow(currentSettings, selectedWorkflowId),
+      comfy_lora_selection: cloneLoraSelections(loraSelections),
     };
 
     if (backend === 'huggingface') {
@@ -247,6 +285,23 @@ export function ImagePromptModal({
           placeholder={mode === 'img2img' ? '输入编辑指令...' : '描述你想生成的画面...'}
         />
 
+        <div className="mt-3">
+          <ComfyWorkflowSelector
+            settings={settings}
+            mode={mode}
+            workflowId={selectedWorkflowId}
+            loraSelections={loraSelections}
+            compact
+            disabled={loading}
+            onWorkflowChange={(workflowId, nextSelections) => {
+              setSelectedWorkflowId(workflowId);
+              setLoraSelections(nextSelections);
+              void persistWorkflowSelection(workflowId);
+            }}
+            onLoraSelectionsChange={setLoraSelections}
+          />
+        </div>
+
         {mode === 'txt2img' && (
           <div className="mt-3 flex items-center gap-4 text-xs">
             <label className="flex cursor-pointer items-center gap-2 font-bold">
@@ -260,7 +315,19 @@ export function ImagePromptModal({
         {error && <div className="alert alert-error mt-4 py-2 text-sm">{error}</div>}
 
         <div className="modal-action flex gap-2">
-          <button className="btn btn-primary flex-1" disabled={loading} onClick={mode === 'img2img' ? runImg2Img : onConfirm}>
+          <button
+            className="btn btn-primary flex-1"
+            disabled={loading}
+            onClick={
+              mode === 'img2img'
+                ? runImg2Img
+                : () =>
+                    onConfirm({
+                      comfyWorkflowId: selectedWorkflowId,
+                      comfyLoraSelections: cloneLoraSelections(loraSelections),
+                    })
+            }
+          >
             {loading && <span className="loading loading-spinner loading-sm" />}
             {mode === 'img2img' ? '开始图生图' : '开始生成'}
           </button>

@@ -1,3 +1,6 @@
+import { prepareComfyWorkflow } from '../../server/comfyui-workflows';
+import type { ComfyWorkflowLoraSelection, ComfyWorkflowTemplate } from '../../src/lib/db';
+
 type ImageBackend = 'huggingface' | 'openai' | 'modelscope';
 type StorageScope = 'chat' | 'studio';
 
@@ -18,6 +21,8 @@ type ImageEditBody = {
   room_id?: number;
   storage_scope?: StorageScope;
   extra?: Record<string, unknown>;
+  comfy_workflow?: ComfyWorkflowTemplate | null;
+  comfy_lora_selection?: Record<string, ComfyWorkflowLoraSelection>;
 };
 
 const DASH_SCOPE_PATH = '/api/v1/services/aigc/multimodal-generation/generation';
@@ -73,6 +78,11 @@ function parseExtraJson(value: FormDataEntryValue | null): Record<string, unknow
     : {};
 }
 
+function parseJsonField<T>(value: FormDataEntryValue | null): T | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  return JSON.parse(value) as T;
+}
+
 async function parseImageEditRequest(request: Request): Promise<ImageEditBody> {
   const contentType = request.headers.get('content-type') || '';
   if (!contentType.includes('multipart/form-data')) {
@@ -95,6 +105,8 @@ async function parseImageEditRequest(request: Request): Promise<ImageEditBody> {
     strength: Number(form.get('strength') || 0.65),
     storage_scope: String(form.get('storage_scope') || 'studio') as StorageScope,
     extra: parseExtraJson(form.get('extra')),
+    comfy_workflow: parseJsonField<ComfyWorkflowTemplate | null>(form.get('comfy_workflow')),
+    comfy_lora_selection: parseJsonField<Record<string, ComfyWorkflowLoraSelection>>(form.get('comfy_lora_selection')),
   };
 }
 
@@ -288,22 +300,33 @@ async function handleComfyEdit(env: Env, body: ImageEditBody) {
   const uploadResponse = await fetch(`${comfyUrl}/upload/image`, { method: 'POST', body: uploadForm });
   if (!uploadResponse.ok) throw new Error(`ComfyUI 上传原图失败：${uploadResponse.status}`);
 
+  const prepared =
+    prepareComfyWorkflow(body.comfy_workflow || undefined, {
+      prompt: body.prompt,
+      sourceImageName: imageName,
+      denoise: body.strength ?? 0.65,
+      loraSelection: body.comfy_lora_selection,
+    }) || null;
+
   const promptResponse = await fetch(`${comfyUrl}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: buildComfyWorkflow(body.prompt, imageName, body.strength ?? 0.65) }),
+    body: JSON.stringify({
+      prompt: prepared?.workflow || buildComfyWorkflow(body.prompt, imageName, body.strength ?? 0.65),
+    }),
   });
   if (!promptResponse.ok) throw new Error(`ComfyUI 拒绝图生图请求：${promptResponse.status}`);
 
   const { prompt_id: promptId } = (await promptResponse.json()) as any;
   let output: any = null;
+  const outputNodeId = prepared?.outputNodeId || '9';
   for (let index = 0; index < 125; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const historyResponse = await fetch(`${comfyUrl}/history/${promptId}`);
     if (!historyResponse.ok) continue;
     const history: any = await historyResponse.json();
     if (history[promptId]) {
-      output = history[promptId]?.outputs?.['9']?.images?.[0];
+      output = history[promptId]?.outputs?.[outputNodeId]?.images?.[0];
       break;
     }
   }

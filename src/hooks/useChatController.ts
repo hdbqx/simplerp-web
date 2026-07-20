@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { cloneLoraSelections, findComfyWorkflow } from '../lib/comfyui-workflows';
 import {
   api,
   type ApiMode,
   type AsyncJob,
   type ApiPreset,
   type Character,
+  type ComfyWorkflowLoraSelection,
   type LorebookV2Entry,
   type Message,
   type Room,
@@ -31,6 +33,8 @@ type ToastMessage = {
 type ImageGenerationOptions = {
   genPrompt: string;
   useSdPromptConversion: boolean;
+  comfyWorkflowId?: string;
+  comfyLoraSelections?: Record<string, ComfyWorkflowLoraSelection>;
 };
 
 type ThoughtReviewState = {
@@ -589,7 +593,12 @@ export function useChatController({
     }
   };
 
-  const handleGenImageAction = async ({ genPrompt, useSdPromptConversion }: ImageGenerationOptions) => {
+  const handleGenImageAction = async ({
+    genPrompt,
+    useSdPromptConversion,
+    comfyWorkflowId,
+    comfyLoraSelections,
+  }: ImageGenerationOptions) => {
     if (!settings) return;
 
     const promptProfile = getActivePromptProfile(settings);
@@ -637,6 +646,8 @@ export function useChatController({
           backend: 'huggingface',
           model: 'comfyui-local',
           apiKey: settings.hf_keys,
+          comfy_workflow: findComfyWorkflow(settings, comfyWorkflowId || settings.comfyui_quick_txt2img_workflow_id),
+          comfy_lora_selection: cloneLoraSelections(comfyLoraSelections),
           payload: { prompt: finalPrompt },
         };
       } else if (imageBackend === 'modelscope') {

@@ -347,9 +347,9 @@ function App() {
           settings={settings}
           onPromptChange={setGenPrompt}
           onUseSdPromptConversionChange={setUseSdPromptConversion}
-          onConfirm={() => {
+          onConfirm={(options) => {
             setShowGenModal(false);
-            void handleGenImageAction({ genPrompt, useSdPromptConversion });
+            void handleGenImageAction({ genPrompt, useSdPromptConversion, ...options });
           }}
           onClose={() => setShowGenModal(false)}
         />

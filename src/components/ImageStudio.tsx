@@ -1,6 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Image as ImageIcon, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import type { ApiMode, ApiPreset, Settings } from '../lib/db';
+import { ComfyWorkflowSelector } from './comfyui/ComfyWorkflowSelector';
+import {
+  buildInitialLoraSelections,
+  cloneLoraSelections,
+  findComfyWorkflow,
+  getDefaultComfyWorkflowId,
+} from '../lib/comfyui-workflows';
+import {
+  api,
+  type ApiMode,
+  type ApiPreset,
+  type ComfyWorkflowLoraSelection,
+  type Settings,
+} from '../lib/db';
+import { useAppStore } from '../lib/store';
 
 type StudioMode = 'txt2img' | 'img2img';
 
@@ -67,6 +81,8 @@ export function ImageStudio({
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1024x1024');
   const [extraJson, setExtraJson] = useState('');
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [loraSelections, setLoraSelections] = useState<Record<string, ComfyWorkflowLoraSelection>>({});
 
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourcePreview, setSourcePreview] = useState('');
@@ -108,7 +124,14 @@ export function ImageStudio({
       ? 'ComfyUI'
       : backend === 'modelscope'
         ? 'ModelScope'
-        : 'OpenAI / 百练';
+      : 'OpenAI / 百练';
+
+  useEffect(() => {
+    const nextWorkflowId = getDefaultComfyWorkflowId(settings, 'studio', mode);
+    setSelectedWorkflowId(nextWorkflowId);
+    const workflow = findComfyWorkflow(settings, nextWorkflowId);
+    setLoraSelections(buildInitialLoraSelections(workflow));
+  }, [settings, mode]);
 
   const galleryImageUrl = (item: GalleryImage) =>
     `/api/images?key=${encodeURIComponent(item.r2_key)}`;
@@ -237,6 +260,18 @@ export function ImageStudio({
     };
   };
 
+  const persistWorkflowSelection = async (workflowId: string) => {
+    const currentSettings = useAppStore.getState().settings;
+    if (!currentSettings) return;
+    const key =
+      mode === 'img2img'
+        ? 'comfyui_studio_img2img_workflow_id'
+        : 'comfyui_studio_txt2img_workflow_id';
+    const nextSettings = { ...currentSettings, [key]: workflowId };
+    useAppStore.getState().setSettings(nextSettings);
+    await api.settings.update(nextSettings);
+  };
+
   const submitTxt2Img = async (
     config: ReturnType<typeof getRequestConfig>,
     finalPrompt: string,
@@ -252,6 +287,8 @@ export function ImageStudio({
         ...config,
         defer: false,
         storage_scope: 'studio',
+        comfy_workflow: findComfyWorkflow(settings, selectedWorkflowId),
+        comfy_lora_selection: cloneLoraSelections(loraSelections),
         payload: {
           ...extra,
           prompt: finalPrompt,
@@ -286,6 +323,8 @@ export function ImageStudio({
     form.append('strength', String(strength));
     form.append('storage_scope', 'studio');
     form.append('extra', JSON.stringify(extra));
+    form.append('comfy_workflow', JSON.stringify(findComfyWorkflow(settings, selectedWorkflowId) || null));
+    form.append('comfy_lora_selection', JSON.stringify(cloneLoraSelections(loraSelections)));
 
     if ('apiBase' in config && config.apiBase) {
       form.append('apiBase', String(config.apiBase));
@@ -532,6 +571,20 @@ export function ImageStudio({
                     : '输入画面描述，例如：霓虹雨夜中的赛博朋克城市'
                 }
                 disabled={generationLoading}
+              />
+
+              <ComfyWorkflowSelector
+                settings={settings}
+                mode={mode}
+                workflowId={selectedWorkflowId}
+                loraSelections={loraSelections}
+                disabled={generationLoading}
+                onWorkflowChange={(workflowId, nextSelections) => {
+                  setSelectedWorkflowId(workflowId);
+                  setLoraSelections(nextSelections);
+                  void persistWorkflowSelection(workflowId);
+                }}
+                onLoraSelectionsChange={setLoraSelections}
               />
 
               <div
