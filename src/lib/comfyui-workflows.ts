@@ -7,6 +7,7 @@ import type {
   ComfyWorkflowTemplate,
   Settings,
 } from './db';
+import { api } from './db';
 
 type NodeOption = {
   id: string;
@@ -208,6 +209,16 @@ export function getComfyLoraCatalog(settings?: Settings, workflow?: ComfyWorkflo
   return Array.from(new Set([...manualList, ...workflowList])).sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
+export async function refreshComfyLoraCatalog(settings: Settings): Promise<string[]> {
+  if (!settings.hf_keys?.trim()) {
+    throw new Error('请先填写 ComfyUI 穿透地址。');
+  }
+
+  const fetched = await api.comfyui.listLoras(settings.hf_keys.trim());
+  const merged = getComfyLoraCatalog(settings).concat(fetched);
+  return Array.from(new Set(merged)).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
 export function buildInitialLoraSelections(
   workflow?: ComfyWorkflowTemplate,
 ): Record<string, ComfyWorkflowLoraSelection> {
@@ -229,4 +240,3 @@ export function cloneLoraSelections(
   if (!selections) return {};
   return JSON.parse(JSON.stringify(selections)) as Record<string, ComfyWorkflowLoraSelection>;
 }
-

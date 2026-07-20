@@ -152,6 +152,7 @@ export interface PromptProfile {
   name: string;
   global_system_instruction: string;
   global_post_history_instruction: string;
+  image_prompt_prefix: string;
   summary_system_prompt: string;
   summary_user_prompt: string;
   sd_system_prompt: string;

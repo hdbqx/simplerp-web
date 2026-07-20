@@ -17,7 +17,7 @@ import {
 } from '../lib/db';
 import { LLMClient } from '../lib/llm';
 import { LorebookEngine, type LorebookInjectionBuckets } from '../lib/lorebook-engine';
-import { getActivePromptProfile } from '../lib/prompt-profiles';
+import { composeImagePrompt, getActivePromptProfile } from '../lib/prompt-profiles';
 import { VariableEngine } from '../lib/variable-engine';
 import { replaceVariables as replaceBuiltInVariables } from '../lib/variables';
 import { useChatStore } from '../lib/chat-store';
@@ -633,9 +633,12 @@ export function useChatController({
         }
       }
 
+      finalPrompt = composeImagePrompt(promptProfile, finalPrompt);
+
       let reqBody: any = {
         char_id: viewMode === 'char' ? selectedCharId : undefined,
         room_id: viewMode === 'group' ? selectedRoomId : undefined,
+        storage_scope: 'chat',
         defer: (settings.image_execution_mode || 'sync') === 'async',
       };
 

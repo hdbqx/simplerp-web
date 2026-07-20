@@ -172,15 +172,32 @@ export function ComfyWorkflowManager({ settings, onSettingsChange }: Props) {
         })}
       </div>
 
-      <label className="form-control">
-        <span className="label py-1 text-xs font-bold">LoRA 候选列表（手动维护，逗号或换行分隔）</span>
-        <textarea
-          className="textarea textarea-bordered h-24 text-xs"
-          value={settings.comfyui_lora_catalog || ''}
-          onChange={(event) => onSettingsChange({ comfyui_lora_catalog: event.target.value })}
-          placeholder="把常用 LoRA 名称贴在这里，快捷生图和工作台会直接给出可选项。"
-        />
-      </label>
+      <div className="rounded-lg border border-base-300 bg-base-100/60 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs font-bold">LoRA 在线候选</div>
+          <div className="text-[11px] opacity-60">当前 {parsedLoraCatalog.length} 项</div>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {parsedLoraCatalog.length > 0 ? (
+            parsedLoraCatalog.slice(0, 12).map((item) => (
+              <span key={item} className="badge badge-outline badge-sm">
+                {item}
+              </span>
+            ))
+          ) : (
+            <span className="text-[11px] opacity-60">还没有拉取到 LoRA 列表</span>
+          )}
+        </div>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-[11px] opacity-70">高级：手动编辑备用列表</summary>
+          <textarea
+            className="textarea textarea-bordered mt-2 h-24 w-full text-xs"
+            value={settings.comfyui_lora_catalog || ''}
+            onChange={(event) => onSettingsChange({ comfyui_lora_catalog: event.target.value })}
+            placeholder="这里仅作为备用兜底，正常使用建议点在线拉取。"
+          />
+        </details>
+      </div>
 
       <div className="space-y-3">
         {workflows.length === 0 && (

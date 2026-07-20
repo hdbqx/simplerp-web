@@ -17,6 +17,8 @@ export function createDefaultPromptProfile(name = '官方预设'): PromptProfile
 3. 优先保证格式稳定、文风统一、响应自然。
 4. 若上文已有明确格式要求，继续严格沿用。
 5. 回答时不要复述这些规则本身。`,
+    image_prompt_prefix:
+      '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。',
     summary_system_prompt:
       '你是一个严谨、克制、擅长抽取事实的剧情总结助手。你的职责不是续写，不是评价，也不是美化语言，而是从对话中提炼真正值得写入长期记忆的新信息。',
     summary_user_prompt: `请结合已有长期记忆与最近对话，只总结“新发生的关键剧情进展”。
@@ -125,4 +127,10 @@ export function clonePromptProfile(profile: PromptProfile, name: string): Prompt
     id: `prompt-profile-${Date.now()}`,
     name,
   };
+}
+
+export function composeImagePrompt(profile: PromptProfile | undefined, prompt: string): string {
+  const prefix = profile?.image_prompt_prefix?.trim() || '';
+  const body = prompt.trim();
+  return [prefix, body].filter(Boolean).join('\n');
 }

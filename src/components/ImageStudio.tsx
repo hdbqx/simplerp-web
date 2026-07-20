@@ -14,6 +14,7 @@ import {
   type ComfyWorkflowLoraSelection,
   type Settings,
 } from '../lib/db';
+import { composeImagePrompt, getActivePromptProfile } from '../lib/prompt-profiles';
 import { useAppStore } from '../lib/store';
 
 type StudioMode = 'txt2img' | 'img2img';
@@ -39,8 +40,6 @@ type GalleryImage = {
 
 const BUILD_MARK = 'studio-stable-v1';
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
-const SINGLE_IMAGE_HINT =
-  '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
 const COMMON_SIZES = [
   '1024x1024',
@@ -378,7 +377,7 @@ export function ImageStudio({
 
     try {
       const config = getRequestConfig();
-      const finalPrompt = `${trimmedPrompt}\n${SINGLE_IMAGE_HINT}`;
+      const finalPrompt = composeImagePrompt(getActivePromptProfile(settings), trimmedPrompt);
 
       setStatusText(
         mode === 'img2img' ? '正在上传并编辑图片' : '正在生成图片',

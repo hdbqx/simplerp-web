@@ -623,6 +623,27 @@ export function SettingsModal({
 
                 <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
                   <div className="mb-3">
+                    <div className="text-sm font-black text-primary">生图提示词前缀</div>
+                    <div className="mt-1 text-[11px] opacity-70">
+                      会自动拼到快捷生图和工作台所有图片请求的最前方。
+                    </div>
+                  </div>
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">前置提示词</label>
+                    <textarea
+                      className="textarea textarea-bordered h-24 text-xs leading-6"
+                      value={activePromptProfile.image_prompt_prefix}
+                      onChange={(event) =>
+                        updatePromptProfile(activePromptProfile.id, {
+                          image_prompt_prefix: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-base-300 bg-base-200/50 p-4">
+                  <div className="mb-3">
                     <div className="text-sm font-black text-primary">后台变量推演</div>
                     <div className="mt-1 text-[11px] opacity-70">
                       <code>{'{VARIABLES}'}</code>、<code>{'{HISTORY}'}</code> 和 <code>{'{{USER_INPUT}}'}</code>{' '}

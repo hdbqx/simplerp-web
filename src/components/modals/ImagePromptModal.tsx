@@ -14,6 +14,7 @@ import {
   type RoomMessage,
   type Settings,
 } from '../../lib/db';
+import { composeImagePrompt, getActivePromptProfile } from '../../lib/prompt-profiles';
 import { useAppStore } from '../../lib/store';
 
 type ImagePromptModalProps = {
@@ -33,7 +34,6 @@ type ImagePromptModalProps = {
 type GenerationMode = 'txt2img' | 'img2img';
 
 const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024;
-const SINGLE_IMAGE_HINT = '请只输出一张完整画面，不要拼图、不要四宫格、不要分屏、不要候选图集合。';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -179,6 +179,7 @@ export function ImagePromptModal({
       state.presets.find((item) => item.id === currentSettings.image_preset_id) ||
       state.presets.find((item) => item.id === state.activePresetId);
     const model = currentSettings.image_model_id || state.activeModel;
+    const promptProfile = getActivePromptProfile(currentSettings);
     if (!model) {
       setError('请先在系统设置中配置图片模型。');
       return;
@@ -187,7 +188,7 @@ export function ImagePromptModal({
     const body: Record<string, unknown> = {
       backend,
       model,
-      prompt: `${prompt.trim()}\n${SINGLE_IMAGE_HINT}`,
+      prompt: composeImagePrompt(promptProfile, prompt),
       image: sourceImage,
       strength,
       char_id: state.viewMode === 'char' ? state.selectedCharId : undefined,
