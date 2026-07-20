@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Image as ImageIcon, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { Image as ImageIcon, Languages, RefreshCw, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { ComfyWorkflowSelector } from './comfyui/ComfyWorkflowSelector';
 import {
   buildInitialLoraSelections,
@@ -14,6 +14,7 @@ import {
   type ComfyWorkflowLoraSelection,
   type Settings,
 } from '../lib/db';
+import { convertImagePromptWithAi, translateImagePromptWithBaidu } from '../lib/image-prompt-tools';
 import { composeImagePrompt, getActivePromptProfile } from '../lib/prompt-profiles';
 import { useAppStore } from '../lib/store';
 
@@ -75,6 +76,7 @@ export function ImageStudio({
   presets,
   activePresetId,
   activeModel,
+  getPresetMode,
 }: Props) {
   const [mode, setMode] = useState<StudioMode>('txt2img');
   const [prompt, setPrompt] = useState('');
@@ -91,6 +93,7 @@ export function ImageStudio({
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [generationLoading, setGenerationLoading] = useState(false);
+  const [promptToolLoading, setPromptToolLoading] = useState<'ai' | 'translate' | ''>('');
   const [statusText, setStatusText] = useState('就绪');
   const [errorText, setErrorText] = useState('');
 
@@ -408,6 +411,59 @@ export function ImageStudio({
     }
   };
 
+  const runAiPromptConversion = async () => {
+    if (generationLoading || promptToolLoading) return;
+    if (!settings) {
+      setErrorText('系统设置尚未加载。');
+      return;
+    }
+
+    setPromptToolLoading('ai');
+    setErrorText('');
+    setStatusText('AI 转换中');
+
+    try {
+      const convertedPrompt = await convertImagePromptWithAi(prompt, {
+        settings,
+        presets,
+        activePresetId,
+        activeModel,
+        promptProfile: getActivePromptProfile(settings),
+        getPresetMode,
+      });
+      setPrompt(convertedPrompt);
+      setStatusText('AI 转换完成');
+    } catch (error: any) {
+      setErrorText(error?.message || '提示词转换失败。');
+      setStatusText('AI 转换失败');
+    } finally {
+      if (mountedRef.current) {
+        setPromptToolLoading('');
+      }
+    }
+  };
+
+  const runPromptTranslation = async () => {
+    if (generationLoading || promptToolLoading) return;
+
+    setPromptToolLoading('translate');
+    setErrorText('');
+    setStatusText('翻译中');
+
+    try {
+      const translatedPrompt = await translateImagePromptWithBaidu(prompt, settings);
+      setPrompt(translatedPrompt);
+      setStatusText('翻译完成');
+    } catch (error: any) {
+      setErrorText(error?.message || '翻译失败。');
+      setStatusText('翻译失败');
+    } finally {
+      if (mountedRef.current) {
+        setPromptToolLoading('');
+      }
+    }
+  };
+
   const deleteGalleryImage = async (item: GalleryImage) => {
     if (
       !window.confirm(
@@ -571,6 +627,38 @@ export function ImageStudio({
                 }
                 disabled={generationLoading}
               />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => void runAiPromptConversion()}
+                  disabled={generationLoading || promptToolLoading === 'translate'}
+                >
+                  {promptToolLoading === 'ai' ? (
+                    <span className="loading loading-spinner loading-xs" />
+                  ) : (
+                    <Sparkles size={14} />
+                  )}
+                  AI 转换
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => void runPromptTranslation()}
+                  disabled={generationLoading || promptToolLoading === 'ai'}
+                >
+                  {promptToolLoading === 'translate' ? (
+                    <span className="loading loading-spinner loading-xs" />
+                  ) : (
+                    <Languages size={14} />
+                  )}
+                  翻译
+                </button>
+                <span className="text-xs opacity-70">
+                  后端：<b>{backendLabel}</b>
+                </span>
+              </div>
 
               <ComfyWorkflowSelector
                 settings={settings}

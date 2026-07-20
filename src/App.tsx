@@ -66,7 +66,6 @@ function App() {
   const [showLorebook, setShowLorebook] = useState(false);
   const [showGenModal, setShowGenModal] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
-  const [useSdPromptConversion, setUseSdPromptConversion] = useState(true);
 
   const manualModels = useMemo(() => {
     if (!settings?.model_list) return [];
@@ -343,13 +342,11 @@ function App() {
         <ImagePromptModal
           show={showGenModal}
           prompt={genPrompt}
-          useSdPromptConversion={useSdPromptConversion}
           settings={settings}
           onPromptChange={setGenPrompt}
-          onUseSdPromptConversionChange={setUseSdPromptConversion}
           onConfirm={(options) => {
             setShowGenModal(false);
-            void handleGenImageAction({ genPrompt, useSdPromptConversion, ...options });
+            void handleGenImageAction({ genPrompt, ...options });
           }}
           onClose={() => setShowGenModal(false)}
         />

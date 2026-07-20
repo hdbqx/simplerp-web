@@ -244,6 +244,34 @@ export function SettingsModal({
                   默认模型：Tongyi-MAI/Z-Image-Turbo
                 </div>
               </div>
+
+              <div className="rounded-xl border border-base-300 bg-base-100 p-4">
+                <div className="mb-3 text-xs font-black text-secondary">百度翻译</div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">AppID</label>
+                    <input
+                      className="input input-bordered input-sm"
+                      placeholder="填写百度翻译 AppID"
+                      value={settings.baidu_translate_appid || ''}
+                      onChange={(event) => updateSettings({ baidu_translate_appid: event.target.value })}
+                    />
+                  </div>
+                  <div className="form-control">
+                    <label className="label text-xs font-bold">密钥</label>
+                    <input
+                      type="password"
+                      className="input input-bordered input-sm"
+                      placeholder="填写百度翻译密钥"
+                      value={settings.baidu_translate_secret || ''}
+                      onChange={(event) => updateSettings({ baidu_translate_secret: event.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] opacity-60">
+                  翻译按钮会直接调用百度翻译开放平台，请同时填写 AppID 和密钥。
+                </div>
+              </div>
             </div>
           </section>
 

@@ -1,4 +1,4 @@
-import { Sparkles, Upload, X } from 'lucide-react';
+import { Languages, Sparkles, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { ComfyWorkflowSelector } from '../comfyui/ComfyWorkflowSelector';
 import {
@@ -14,16 +14,15 @@ import {
   type RoomMessage,
   type Settings,
 } from '../../lib/db';
+import { convertImagePromptWithAi, translateImagePromptWithBaidu } from '../../lib/image-prompt-tools';
 import { composeImagePrompt, getActivePromptProfile } from '../../lib/prompt-profiles';
 import { useAppStore } from '../../lib/store';
 
 type ImagePromptModalProps = {
   show: boolean;
   prompt: string;
-  useSdPromptConversion: boolean;
   settings?: Settings;
   onPromptChange: (value: string) => void;
-  onUseSdPromptConversionChange: (checked: boolean) => void;
   onConfirm: (options?: {
     comfyWorkflowId?: string;
     comfyLoraSelections?: Record<string, ComfyWorkflowLoraSelection>;
@@ -47,10 +46,8 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export function ImagePromptModal({
   show,
   prompt,
-  useSdPromptConversion,
   settings,
   onPromptChange,
-  onUseSdPromptConversionChange,
   onConfirm,
   onClose,
 }: ImagePromptModalProps) {
@@ -59,6 +56,7 @@ export function ImagePromptModal({
   const [sourceName, setSourceName] = useState('');
   const [strength, setStrength] = useState(0.65);
   const [loading, setLoading] = useState(false);
+  const [promptToolLoading, setPromptToolLoading] = useState<'ai' | 'translate' | ''>('');
   const [error, setError] = useState('');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
   const [loraSelections, setLoraSelections] = useState<Record<string, ComfyWorkflowLoraSelection>>({});
@@ -86,6 +84,7 @@ export function ImagePromptModal({
     setSourceName('');
     setError('');
     setLoading(false);
+    setPromptToolLoading('');
     onClose();
   };
 
@@ -235,6 +234,52 @@ export function ImagePromptModal({
     }
   };
 
+  const runAiPromptConversion = async () => {
+    if (promptToolLoading || loading) return;
+
+    const state = useAppStore.getState();
+    const currentSettings = settings || state.settings;
+    if (!currentSettings) {
+      setError('设置尚未加载。');
+      return;
+    }
+
+    setPromptToolLoading('ai');
+    setError('');
+
+    try {
+      const convertedPrompt = await convertImagePromptWithAi(prompt, {
+        settings: currentSettings,
+        presets: state.presets,
+        activePresetId: state.activePresetId,
+        activeModel: state.activeModel,
+        promptProfile: getActivePromptProfile(currentSettings),
+        getPresetMode: (preset) => (preset?.api_mode === 'responses' ? 'responses' : 'chat_completions'),
+      });
+      onPromptChange(convertedPrompt);
+    } catch (nextError: any) {
+      setError(nextError?.message || '提示词转换失败。');
+    } finally {
+      setPromptToolLoading('');
+    }
+  };
+
+  const runPromptTranslation = async () => {
+    if (promptToolLoading || loading) return;
+
+    setPromptToolLoading('translate');
+    setError('');
+
+    try {
+      const translatedPrompt = await translateImagePromptWithBaidu(prompt, settings);
+      onPromptChange(translatedPrompt);
+    } catch (nextError: any) {
+      setError(nextError?.message || '翻译失败。');
+    } finally {
+      setPromptToolLoading('');
+    }
+  };
+
   return (
     <div className="modal modal-open text-base-content">
       <div className="modal-box max-w-3xl">
@@ -284,7 +329,34 @@ export function ImagePromptModal({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           placeholder={mode === 'img2img' ? '输入编辑指令...' : '描述你想生成的画面...'}
+          disabled={loading}
         />
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={() => void runAiPromptConversion()}
+            disabled={loading || promptToolLoading === 'translate'}
+          >
+            {promptToolLoading === 'ai' ? <span className="loading loading-spinner loading-xs" /> : <Sparkles size={14} />}
+            AI 转换
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={() => void runPromptTranslation()}
+            disabled={loading || promptToolLoading === 'ai'}
+          >
+            {promptToolLoading === 'translate' ? (
+              <span className="loading loading-spinner loading-xs" />
+            ) : (
+              <Languages size={14} />
+            )}
+            翻译
+          </button>
+          <span className="text-xs opacity-70">后端：<b>{backendLabel}</b></span>
+        </div>
 
         <div className="mt-3">
           <ComfyWorkflowSelector
@@ -302,16 +374,6 @@ export function ImagePromptModal({
             onLoraSelectionsChange={setLoraSelections}
           />
         </div>
-
-        {mode === 'txt2img' && (
-          <div className="mt-3 flex items-center gap-4 text-xs">
-            <label className="flex cursor-pointer items-center gap-2 font-bold">
-              <input type="checkbox" className="checkbox checkbox-primary checkbox-sm" checked={useSdPromptConversion} onChange={(event) => onUseSdPromptConversionChange(event.target.checked)} />
-              启用提示词转换
-            </label>
-            <span className="opacity-70">后端：<b>{backendLabel}</b></span>
-          </div>
-        )}
 
         {error && <div className="alert alert-error mt-4 py-2 text-sm">{error}</div>}
 

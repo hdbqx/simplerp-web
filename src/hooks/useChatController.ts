@@ -32,7 +32,6 @@ type ToastMessage = {
 
 type ImageGenerationOptions = {
   genPrompt: string;
-  useSdPromptConversion: boolean;
   comfyWorkflowId?: string;
   comfyLoraSelections?: Record<string, ComfyWorkflowLoraSelection>;
 };
@@ -595,7 +594,6 @@ export function useChatController({
 
   const handleGenImageAction = async ({
     genPrompt,
-    useSdPromptConversion,
     comfyWorkflowId,
     comfyLoraSelections,
   }: ImageGenerationOptions) => {
@@ -617,22 +615,6 @@ export function useChatController({
     setIsTyping(true);
     try {
       let finalPrompt = rawPrompt;
-
-      if (useSdPromptConversion) {
-        const sdPromptPreset =
-          presets.find((preset) => preset.id === settings.sd_prompt_preset_id) ||
-          presets.find((preset) => preset.id === activePresetId);
-        const sdPromptModel = settings.sd_prompt_model_id || activeModel;
-        if (sdPromptPreset && sdPromptModel) {
-          const llm = new LLMClient(sdPromptPreset.api_base, sdPromptPreset.api_key, getPresetMode(sdPromptPreset));
-          const tags = await llm.generateImageTags(rawPrompt, sdPromptModel, {
-            systemPrompt: promptProfile.sd_system_prompt,
-            userPromptTemplate: promptProfile.sd_user_prompt,
-          });
-          finalPrompt = tags;
-        }
-      }
-
       finalPrompt = composeImagePrompt(promptProfile, finalPrompt);
 
       let reqBody: any = {

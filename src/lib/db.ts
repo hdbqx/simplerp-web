@@ -165,6 +165,8 @@ export interface Settings {
   user_name?: string;
   image_backend?: 'huggingface' | 'openai' | 'modelscope';
   image_execution_mode?: 'sync' | 'async';
+  baidu_translate_appid?: string;
+  baidu_translate_secret?: string;
   modelscope_api_key?: string;
   modelscope_model?: string;
   image_preset_id?: number;
