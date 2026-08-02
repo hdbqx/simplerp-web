@@ -10,7 +10,7 @@ type PromptConversionContext = {
   getPresetMode: (preset?: ApiPreset) => ApiMode;
 };
 
-const BAIDU_TRANSLATE_ENDPOINT = 'https://fanyi-api.baidu.com/api/trans/vip/translate';
+const TRANSLATE_PROXY_ENDPOINT = '/api/translate';
 const CHINESE_CHAR_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/;
 
 function addUnsigned(x: number, y: number): number {
@@ -224,26 +224,26 @@ export async function translateImagePromptWithBaidu(rawPrompt: string, settings?
 
   const salt = `${Date.now()}`;
   const sign = md5(`${appid}${trimmedPrompt}${salt}${secret}`);
-  const body = new URLSearchParams({
+  const body = {
     q: trimmedPrompt,
     from: 'auto',
     to: pickTranslateTarget(trimmedPrompt),
     appid,
     salt,
     sign,
-  });
+  };
 
-  const response = await fetch(BAIDU_TRANSLATE_ENDPOINT, {
+  const response = await fetch(TRANSLATE_PROXY_ENDPOINT, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'Content-Type': 'application/json',
     },
-    body: body.toString(),
+    body: JSON.stringify(body),
   });
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(data?.error_msg || '百度翻译请求失败。');
+    throw new Error(data?.error || data?.error_msg || '百度翻译请求失败。');
   }
 
   if (data?.error_code) {

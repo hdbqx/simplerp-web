@@ -269,7 +269,7 @@ export function SettingsModal({
                   </div>
                 </div>
                 <div className="mt-2 text-[10px] opacity-60">
-                  翻译按钮会直接调用百度翻译开放平台，请同时填写 AppID 和密钥。
+                  翻译按钮会通过本站服务端调用百度翻译开放平台，请同时填写 AppID 和密钥。
                 </div>
               </div>
             </div>
